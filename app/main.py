@@ -9,6 +9,20 @@ app = FastAPI(title="Akıllı EV Rota Asistanı API", version="1.3")
 logger = get_logger("main_api")
 
 
+@app.get("/", tags=["Info"])
+async def root():
+    """API ana sayfası - Hoş geldiniz mesajı"""
+    return {
+        "message": "Akıllı EV Rota Asistanı API'ye Hoş Geldiniz!",
+        "version": "v1.3",
+        "documentation": "/docs",
+        "health_check": "/health",
+        "endpoints": {
+            "optimize_route": "POST /optimize_route"
+        }
+    }
+
+
 @app.get("/health", tags=["Monitoring"])
 async def health():
     """API sağlık kontrolü endpoint'i"""

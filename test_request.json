@@ -1,0 +1,7 @@
+{
+  "start_location": "Istanbul, Turkey",
+  "end_location": "Ankara, Turkey",
+  "vehicle_model_id": "mg4_51kwh",
+  "initial_soc_percent": 85,
+  "extra_load_kg": 150
+}
