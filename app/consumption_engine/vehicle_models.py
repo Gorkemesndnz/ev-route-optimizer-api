@@ -26,6 +26,15 @@ VEHICLE_DB = {
     ),
     # Gelecekte başka bir araç eklersek:
     # "tesla_y_lr": VehicleModel(...)
+    "tesla_model_3_long_range": VehicleModel(
+        model_name="Tesla Model 3 Long Range",
+        base_weight_kg=1847,
+        battery_capacity_kwh=75.0,
+        base_consumption_wh_km=145.0,
+        connector_type="CCS",
+        avg_dc_charge_rate_kw=250.0,
+        avg_ac_charge_rate_kw=11.0,
+    ),
 }
 
 

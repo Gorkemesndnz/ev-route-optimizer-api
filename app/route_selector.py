@@ -25,6 +25,11 @@ async def find_best_route(
             destination=destination
         )
         
+        # Google API status kontrolü
+        google_status = directions_response.get("status")
+        if google_status != "OK":
+            raise ValueError(f"Google Directions API hatası: {google_status} - {directions_response.get('error_message', '')}")
+        
         if not directions_response.get("routes"):
             raise ValueError("Google Directions API'den rota bulunamadı")
         

@@ -54,7 +54,27 @@ class BaseService:
                     )
                 
                 response.raise_for_status()  # 4xx veya 5xx hata varsa exception fırlat
-                return response.json()  # Başarılı olursa JSON'u döndür
+                data = response.json()  # JSON'u parse et
+                
+                # Google Maps API özel kontrolü: HTTP 200 olsa bile status field'ı kontrol et
+                if self.base_url == "https://maps.googleapis.com/maps/api":
+                    google_status = data.get("status")
+                    if google_status != "OK":
+                        error_message = data.get("error_message", f"Google API status: {google_status}")
+                        logger.error(
+                            "Google Maps API error detected",
+                            source=self.base_url,
+                            google_status=google_status,
+                            error_message=error_message,
+                            url=str(response.request.url)
+                        )
+                        raise ExternalAPIError(
+                            source=self.base_url,
+                            status_code=response.status_code,
+                            detail=f"Google API error: {google_status} - {error_message}"
+                        )
+                
+                return data
 
             except httpx.HTTPStatusError as e:
                 logger.error(
