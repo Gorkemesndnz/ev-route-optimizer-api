@@ -1,18 +1,35 @@
-from app.consumption_engine.vehicle_models import VehicleModel
+class LoadEffectCalculator:
+    """
+    Yük (Load) Katmanı:
+    Araç + yolcu + bagaj ağırlığının tüketimi nasıl etkilediğini hesaplar.
+    Burada sadece düz yol ve tırmanış için tüketim artırımı modellenir.
+    Yokuş iniş (regen) etkisi elevation_layer tarafından hesaplanır.
+    """
 
-# Basit bir kural: Her 100kg ekstra yük, tüketimi %3 artırır (bu bir V1 tahminidir)
-LOAD_PENALTY_FACTOR_PER_100KG = 0.03
+    # %10 ekstra yük ≈ %1.5 tüketim artışı (gerçek EV telemetri verilerine yakın)
+    MASS_COEFFICIENT = 0.15  
 
+    AVG_PASSENGER_WEIGHT = 75  # Ortalama kişi ağırlığı (kg)
 
-def get_total_weight_kg(vehicle: VehicleModel, extra_load_kg: int) -> int:
-    """Aracın baz ağırlığı ile ekstra yükü toplar."""
-    return vehicle.base_weight_kg + extra_load_kg
+    @staticmethod
+    def calculate_mass_factor(
+        base_vehicle_weight_kg: float,
+        passenger_count: int,
+        extra_load_kg: float
+    ) -> float:
+        """
+        Toplam ekstra yükün tüketimi ne kadar artıracağını hesaplar.
+        Yokuş aşağı geri kazanım (regen) bu katmanda hesaplanmaz!
+        """
 
+        passengers_weight = passenger_count * LoadEffectCalculator.AVG_PASSENGER_WEIGHT
+        total_extra_mass = passengers_weight + extra_load_kg
 
-def get_load_efficiency_multiplier(extra_load_kg: int) -> float:
-    """Ekstra yüke göre tüketim artış çarpanını hesaplar (1.0 = %0 etki)."""
-    if extra_load_kg <= 0:
-        return 1.0
+        if base_vehicle_weight_kg <= 0:
+            return 1.0
 
-    penalty = (extra_load_kg / 100) * LOAD_PENALTY_FACTOR_PER_100KG
-    return 1.0 + penalty
+        mass_ratio = total_extra_mass / base_vehicle_weight_kg
+
+        mass_factor = 1 + (mass_ratio * LoadEffectCalculator.MASS_COEFFICIENT)
+
+        return max(1.0, mass_factor)
