@@ -1,53 +1,267 @@
-from pydantic import BaseModel
-from typing import List, Literal, Union
+from enum import Enum
+from typing import List, Optional, Union, Literal
+from pydantic import BaseModel, Field, field_validator
+
+# ======================================================
+# 1. ENUMLAR – Standartlaştırma
+# ======================================================
+
+class ChargerType(str, Enum):
+    """İstasyonun genel şarj hızı tipi."""
+    AC = "AC"
+    DC = "DC"
+    HPC = "HPC"  # High Power Charging (>=150kW)
+
+
+class PlugType(str, Enum):
+    """Soket tipleri."""
+    TYPE2 = "Type 2"
+    CCS2 = "CCS2"
+    CHADEMO = "CHAdeMO"
+    TESLA = "Tesla"
+
+
+class WeatherCondition(str, Enum):
+    """Hava durumu tipleri."""
+    CLEAR = "clear"
+    RAIN = "rain"
+    SNOW = "snow"
+    FOG = "fog"
+    WINDY = "windy"
+    CLOUDY = "cloudy"
+
+
+class AmenityType(str, Enum):
+    """Kullanıcının talep edebileceği imkan tipleri."""
+    TOILET = "toilet"
+    FOOD = "food"
+    WIFI = "wifi"
+    SHOPPING = "shopping"
+    PARKING = "parking"
+
+
+# ======================================================
+# 2. TEMEL VERİ YAPILARI (Shared Objects)
+# ======================================================
+
+class GeoPoint(BaseModel):
+    """Coğrafi koordinat modeli."""
+    lat: float = Field(..., ge=-90, le=90, description="Enlem")
+    lon: float = Field(..., ge=-180, le=180, description="Boylam")
+    address: Optional[str] = Field(
+        None,
+        description="İnsan tarafından okunabilir adres (Google Geocoding sonucu)."
+    )
+
+
+class StationAmenity(BaseModel):
+    """İstasyonun sunduğu imkanlar."""
+    has_toilet: bool = False
+    has_food: bool = False
+    has_wifi: bool = False
+    has_shopping: bool = False
+    is_24_7: bool = False
+
+
+class ConnectorInfo(BaseModel):
+    """Bir soket ünitesinin bilgisi."""
+    plug_type: PlugType
+    charger_type: ChargerType
+    power_kw: float = Field(..., gt=0, description="Maksimum güç (kW)")
+    status: Literal["Available", "Occupied", "Unknown", "OutOfOrder"] = "Unknown"
+    price_per_kwh: Optional[float] = Field(
+        None,
+        description="kWh başına ücret. Bilinmiyorsa None."
+    )
+    currency: str = "TRY"
+
+
+class StationInfo(BaseModel):
+    """
+    Şarj istasyonu detayları.
+    Station Finder, Route Selector ve Response tarafında ortak kullanılacak.
+    """
+    id: str
+    name: str
+    operator: Optional[str] = None
+    location: GeoPoint
+    rating: float = Field(0.0, ge=0, le=5, description="Google Maps puanı")
+    user_ratings_total: Optional[int] = Field(
+        None, description="Toplam kullanıcı yorum sayısı (Google)."
+    )
+    connectors: List[ConnectorInfo]
+    amenities: StationAmenity = Field(default_factory=StationAmenity)
+    distance_from_route_km: float = Field(
+        0.0,
+        description="Ana rotadan sapma mesafesi (km) – 0 ise direkt rota üzerindedir."
+    )
+
+
+# ======================================================
+# 3. ARAÇ MODELLERİ
+# ======================================================
+
+class VehicleModel(BaseModel):
+    """
+    vehicle_models.py içinde statik olarak tanımlanacak araç profili.
+    """
+    id: str  # "mg4_51kwh" gibi
+    name: str  # "MG4 51 kWh"
+    battery_kwh: float
+    base_consumption_wh_per_km: float  # WLTP veya ortalama tüketim
+    max_dc_kw: float
+    max_ac_kw: float
+    weight_kg: int
+
+
+# ======================================================
+# 4. HAVA DURUMU MODELLERİ
+# ======================================================
+
+class WeatherInfo(BaseModel):
+    """
+    Belirli bir nokta/zaman için hava durumu.
+    V1 için yeterli, V2 ML için genişletilebilir.
+    """
+    temp_c: float
+    condition: WeatherCondition
+    wind_speed_mps: float = Field(..., ge=0)
+    wind_direction_deg: int = Field(..., ge=0, le=360)
+    precipitation_prob: float = Field(
+        0.0, ge=0.0, le=1.0,
+        description="Yağış ihtimali (0-1 arası)."
+    )
+
+
+# ======================================================
+# 5. ROTA TERCİHLERİ & İSTEK MODELLERİ
+# ======================================================
+
+class RoutePreferences(BaseModel):
+    """
+    Kullanıcının rota oluşturma tercihleri.
+    İleride ML modeline de feature olarak verilebilir.
+    """
+    min_dest_soc: int = Field(
+        10, ge=5, le=50,
+        description="Varışta istenen minimum şarj yüzdesi."
+    )
+    min_station_soc: int = Field(
+        10, ge=5, le=30,
+        description="İstasyona varırken olması gereken minimum güvenlik SOC (%)."
+    )
+    preferred_operators: List[str] = Field(
+        default_factory=list,
+        description="Öncelikli istasyon markaları / operatörleri."
+    )
+    preferred_plug_types: List[PlugType] = Field(
+        default_factory=list,
+        description="Tercih edilen soket tipleri."
+    )
+    amenities_required: List[AmenityType] = Field(
+        default_factory=list,
+        description="Zorunlu istenen imkanlar (WC, yemek, wifi vs.)."
+    )
+    max_detour_km: float = Field(
+        10.0,
+        description="Bir şarj için rotadan max sapma mesafesi (km)."
+    )
 
 
 class RouteRequest(BaseModel):
-    """API'ye /optimize_route endpoint'i için gelecek olan istek modeli."""
-    start_location: str  # Örn: "İstanbul, Türkiye"
-    end_location: str  # Örn: "Ankara, Türkiye"
-    vehicle_model_id: str  # Örn: "mg4_51kwh" (vehicle_models.py'deki anahtar)
-    initial_soc_percent: int  # Mevcut şarj (örn: 85)
-    extra_load_kg: int  # Ekstra yük (örn: 150)
+    """
+    API'ye gelen ana istek modeli (/optimize_route).
+    V1'de start/end koordinat üzerinden çalışacağız.
+    Üst katmanda istenirse geocoding ile string'ten GeoPoint'e çevirilebilir.
+    """
+    start_location: GeoPoint
+    end_location: GeoPoint
+    vehicle_model_id: str = Field(..., description="vehicle_models.py içindeki ID")
+    current_soc_percent: float = Field(..., ge=0, le=100)
+    passenger_count: int = Field(1, ge=1, description="Yolcu sayısı")
+    extra_load_kg: float = Field(0.0, ge=0.0, description="Bagaj vb. ekstra yük")
+    departure_time_iso: Optional[str] = Field(
+        None,
+        description="ISO 8601 formatında çıkış zamanı. (örn: 2025-11-25T12:30:00Z)"
+    )
+    preferences: RoutePreferences = Field(default_factory=RoutePreferences)
+
+    @field_validator("current_soc_percent")
+    @classmethod
+    def validate_soc_range(cls, v: float) -> float:
+        if not (0 <= v <= 100):
+            raise ValueError("current_soc_percent 0-100 arasında olmalıdır.")
+        return v
 
 
-class WeatherPrediction(BaseModel):
-    """Bir istasyona varıştaki tahmini hava durumu."""
-    temperature_celsius: int
-    condition_icon: str  # Örn: "rainy", "clear-day"
-    description: str
-
+# ======================================================
+# 6. ROTA BACAKLARI (Drive / Charge Legs)
+# ======================================================
 
 class DriveLeg(BaseModel):
-    """Planın bir 'Sürüş' bacağını temsil eder."""
+    """
+    A noktasından B noktasına sürüş bacağı.
+    """
     type: Literal["drive"] = "drive"
-    start_point: str
-    end_point: str
+    start_point: GeoPoint
+    end_point: GeoPoint
     distance_km: float
-    duration_minutes: int
-    start_soc_percent: int  # Bu bacağa BAŞLARKEN şarj durumu
-    arrival_soc_percent: int  # Bu bacağı BİTİRİRKEN şarj durumu
-    route_polyline: str  # Google'dan gelen kodlanmış rota
+    duration_minutes: float
+    avg_speed_kmh: float
     consumption_kwh: float
+    start_soc_percent: float
+    end_soc_percent: float
+    elevation_gain_m: float = 0.0
+    elevation_loss_m: float = 0.0
+    polyline: str  # Haritada çizmek için encoded polyline string
+    weather_context: Optional[WeatherInfo] = None
 
 
 class ChargeLeg(BaseModel):
-    """Planın bir 'Şarj' bacağını temsil eder."""
+    """
+    İstasyonda şarj bacağı.
+    """
     type: Literal["charge"] = "charge"
-    station_name: str
-    station_id: str
-    charge_speed_type: Literal["slow", "fast"]  # 'slow' (AC) veya 'fast' (DC)
-    arrival_soc_percent: int  # İstasyona GELDİĞİNDEKİ şarj durumu
-    target_soc_percent: int  # İstasyondan AYRILACAĞI hedef şarj
-    charge_added_kwh: float  # Ne kadar enerji eklendiği
-    charge_duration_minutes: int
-    predicted_weather_at_arrival: WeatherPrediction
+    station: StationInfo
+    arrival_soc_percent: float
+    target_soc_percent: float
+    energy_added_kwh: float
+    duration_minutes: float
+    price_per_kwh: Optional[float] = Field(
+        None, description="Bu şarj seansında uygulanan efektif kWh fiyatı."
+    )
+    estimated_cost: Optional[float] = Field(
+        None, description="Bu şarj için öngörülen toplam maliyet."
+    )
+    currency: str = "TRY"
+    weather_context: Optional[WeatherInfo] = None
 
 
-class MultiStopRouteResponse(BaseModel):
-    """API'den kullanıcıya dönecek olan tam rota planı modeli."""
-    status: str  # Örn: "multi_stop_plan_success" veya "error"
+# ======================================================
+# 7. NİHAİ ROTA CEVABI
+# ======================================================
+
+class RouteResponseStatus(str, Enum):
+    SUCCESS = "success"
+    ERROR = "error"
+    IMPOSSIBLE = "impossible"  # Menziil/koşullar nedeniyle rota kurulamıyorsa
+
+
+class RouteResponse(BaseModel):
+    """
+    Kullanıcıya dönen nihai rota planı.
+    """
+    status: RouteResponseStatus
+    message: Optional[str] = Field(
+        None,
+        description="Özet bilgi veya hata mesajı."
+    )
     total_distance_km: float
-    total_duration_minutes: int  # Toplam sürüş + şarj süresi
-    total_co2_savings_kg: float  # Sürdürülebilirlik modülünden gelen veriler
-    legs: List[Union[DriveLeg, ChargeLeg]]  # Karışık rota bacakları
+    total_duration_minutes: float
+    total_energy_kwh: float
+    total_charging_cost: Optional[float] = 0.0
+    total_co2_savings_kg: Optional[float] = None
+    number_of_charging_stops: int
+    plan_version: str = "v1.0"
+    legs: List[Union[DriveLeg, ChargeLeg]]
+    warning_messages: List[str] = Field(default_factory=list)
