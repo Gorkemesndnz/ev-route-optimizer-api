@@ -1,75 +1,142 @@
+"""
+Cache Manager (Minimal)
+========================
+
+Basit in-memory cache sistemi.
+
+Kullanım:
+    from app.utils.cache_manager import cacheable
+    
+    @cacheable(prefix="directions", ttl_seconds=3600)
+    async def get_directions(...):
+        ...
+"""
+
 import time
 import functools
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Dict, Tuple
 from app.utils.config_manager import config
 
-class BaseCache:
-    """Cache backend'leri için soyut temel sınıf (V2'de Redis'e geçiş için)."""
-    def get(self, key: str) -> Any:
-        raise NotImplementedError
-    
-    def set(self, key: str, value: Any, ttl_seconds: int):
-        raise NotImplementedError
+# =============================================================================
+# MEMORY CACHE
+# =============================================================================
 
-class MemoryCache(BaseCache):
-    """V1 için basit, 'in-memory' (sözlük tabanlı) cache."""
-    _cache: dict = {}
-    _expirations: dict = {}
+class MemoryCache:
+    """Basit in-memory cache with TTL."""
     
-    def get(self, key: str) -> Any:
-        if key in self._expirations and self._expirations[key] < time.time():
-            # Cache süresi dolmuş, sil
-            self._cache.pop(key, None)
-            self._expirations.pop(key, None)
+    def __init__(self):
+        self._store: Dict[str, Tuple[Any, float]] = {}
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Cache'den değer al."""
+        if key not in self._store:
             return None
-        return self._cache.get(key)
+        value, expiration = self._store[key]
+        if expiration < time.time():
+            del self._store[key]
+            return None
+        return value
+    
+    def set(self, key: str, value: Any, ttl: int) -> None:
+        """Cache'e değer yaz."""
+        self._store[key] = (value, time.time() + ttl)
+    
+    def clear(self) -> None:
+        """Cache'i temizle."""
+        self._store.clear()
+    
+    def size(self) -> int:
+        return len(self._store)
 
-    def set(self, key: str, value: Any, ttl_seconds: int):
-        self._cache[key] = value
-        self._expirations[key] = time.time() + ttl_seconds
 
-# V1 için MemoryCache'i varsayılan olarak kullan
-cache_backend = MemoryCache()
+# Singleton
+_cache = MemoryCache()
 
-def cacheable(prefix: str, ttl_seconds: int | None = None):
+
+# =============================================================================
+# TTL HELPER
+# =============================================================================
+
+def _get_ttl(prefix: str) -> int:
+    """Prefix'e göre TTL belirle."""
+    prefix_lower = prefix.lower()
+    if "direction" in prefix_lower:
+        return config.get_cache_ttl_google_directions()
+    if "place" in prefix_lower:
+        return config.get_cache_ttl_google_places()
+    if "weather" in prefix_lower:
+        return config.get_cache_ttl_weather()
+    if "ocm" in prefix_lower:
+        return config.get_cache_ttl_ocm()
+    if "elevation" in prefix_lower:
+        return 86400  # 24 saat (elevation data nadir değişir)
+    return 3600  # Default 1 saat
+
+
+def _make_key(prefix: str, args: tuple, kwargs: dict) -> str:
+    """Cache key oluştur."""
+    parts = [prefix]
+    
+    for arg in args:
+        # self/instance'ları atla (Service, Manager, Calculator vb.)
+        if hasattr(arg, '__class__'):
+            cls_name = arg.__class__.__name__
+            if any(x in cls_name for x in ('Service', 'Manager', 'Calculator', 'Planner')):
+                continue
+        # GeoPoint desteği
+        if hasattr(arg, 'lat') and hasattr(arg, 'lon'):
+            parts.append(f"{arg.lat},{arg.lon}")
+        else:
+            parts.append(str(arg))
+    
+    for k, v in sorted(kwargs.items()):
+        parts.append(f"{k}={v}")
+    
+    return ":".join(parts)
+
+
+# =============================================================================
+# CACHEABLE DECORATOR
+# =============================================================================
+
+def cacheable(prefix: str, ttl_seconds: Optional[int] = None):
     """
-    Fonksiyon sonuçlarını önbelleğe alan dekoratör. TTL (Time-To-Live) 
-    .env'den okunur veya manuel olarak ayarlanır.
+    Async fonksiyon sonuçlarını cache'leyen dekoratör.
+    
+    Args:
+        prefix: Cache key prefix'i
+        ttl_seconds: Cache süresi (saniye), None ise config'den okunur
     """
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # TTL'i belirle
-            if ttl_seconds is not None:
-                effective_ttl = ttl_seconds
-            else:
-                # TTL .env'den okunur (prefix'e göre)
-                if "ocm" in prefix:
-                    effective_ttl = config.get_cache_ttl_ocm()
-                elif "weather" in prefix:
-                    effective_ttl = config.get_cache_ttl_weather()
-                elif "places" in prefix:
-                    effective_ttl = config.get_cache_ttl_google_places()
-                else:
-                    effective_ttl = 3600  # Varsayılan 1 saat
-
-            # Cache anahtarını oluştur
-            key_parts = [prefix] + [str(arg) for arg in args] + \
-                        [f"{k}={v}" for k, v in sorted(kwargs.items())]
-            cache_key = ":".join(key_parts)
-
-            # 1. Cache'i kontrol et
-            cached_result = cache_backend.get(cache_key)
-            if cached_result is not None:
-                return cached_result
-
-            # 2. Cache'de yoksa, fonksiyonu çalıştır
+            ttl = ttl_seconds or _get_ttl(prefix)
+            key = _make_key(prefix, args, kwargs)
+            
+            # Cache hit?
+            cached = _cache.get(key)
+            if cached is not None:
+                return cached
+            
+            # Cache miss - çalıştır ve kaydet
             result = await func(*args, **kwargs)
-
-            # 3. Sonucu cache'e kaydet
             if result is not None:
-                cache_backend.set(cache_key, result, effective_ttl)
-
+                _cache.set(key, result, ttl)
+            
             return result
         return wrapper
     return decorator
+
+
+# =============================================================================
+# UTILITY
+# =============================================================================
+
+def clear_cache() -> None:
+    """Cache'i temizle."""
+    _cache.clear()
+
+
+def get_cache_size() -> int:
+    """Cache boyutu."""
+    return _cache.size()

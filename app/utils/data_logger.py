@@ -1,34 +1,138 @@
+"""
+Data Logger - Minimal Version
+==============================
+
+V2 ML modeli için basit training data logger.
+Kaggle dataset'leri ile offline geliştirme için optimize edilmiş.
+
+Özellikler:
+- Günlük dosyalar (training_data_2025-11-27.jsonl)
+- Flatten JSON (ML-ready, nested değil)
+- Enterprise logger entegrasyonu
+
+Kullanım:
+    from app.utils.data_logger import log_training_data
+    
+    log_training_data({
+        "distance_km": 450,
+        "duration_min": 320,
+        "consumption_kwh": 55.2
+    })
+"""
+
 import json
+import os
 from pathlib import Path
-import datetime
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional
+from app.utils.logger import get_logger
 
-# Proje ana dizininden 'notebooks/future_training_data/' klasörüne gider
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-LOG_DIR = BASE_DIR / "notebooks/future_training_data"
-LOG_FILE = LOG_DIR / "v1_training_data.jsonl"
+LOG_DIR = BASE_DIR / "notebooks" / "future_training_data"
 
-def setup_data_logger():
-    """Log klasörünün ve dosyasının var olduğundan emin olur."""
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+ENABLE_LOGGING = os.getenv("ENABLE_DATA_LOGGING", "true").lower() == "true"
+
+logger = get_logger("DataLogger")
+
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+def _get_daily_log_file() -> Path:
+    """Günlük log dosyası yolu döndür"""
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return LOG_DIR / f"training_data_{date_str}.jsonl"
+
+
+def _setup_log_dir() -> None:
+    """Log dizinini oluştur"""
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        if not LOG_FILE.exists():
-            LOG_FILE.touch()
     except OSError as e:
-        print(f"Hata: Veri log klasörü oluşturulamadı: {e}")
+        logger.error("Log dizini oluşturulamadı", error=str(e), path=str(LOG_DIR))
 
-def log_training_data(decision_data: dict):
-    """ V2 (ML) modeli eğitimi için karar verilerini JSON Lines (jsonl) formatında dosyaya loglar. """
+
+# =============================================================================
+# CORE LOGGING FUNCTION
+# =============================================================================
+def log_training_data(data: Dict[str, Any], category: Optional[str] = None) -> bool:
+    """
+    Training data'yı JSONL formatında logla (ML-ready flatten format).
+    
+    Args:
+        data: Loglanacak veri (dict) - direkt flatten edilir
+        category: Opsiyonel kategori etiketi (route, consumption, api, vb.)
+    
+    Returns:
+        bool: Başarılı ise True
+    
+    Örnek:
+        log_training_data({
+            "distance_km": 450,
+            "duration_min": 320,
+            "vehicle_model": "mg4_51kwh",
+            "consumption_kwh": 55.2
+        }, category="route")
+    
+    Çıktı (flatten, ML-ready):
+        {"timestamp": "...", "category": "route", "distance_km": 450, "duration_min": 320, ...}
+    """
+    if not ENABLE_LOGGING:
+        return False
+    
     try:
-        data_to_log = {
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            **decision_data,
+        # Metadata (başa ekle)
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "environment": ENVIRONMENT,
         }
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(data_to_log, ensure_ascii=False) + "\n")
+        
+        if category:
+            record["category"] = category
+        
+        # Data'yı flatten olarak ekle (nested "data" key yok)
+        record.update(data)
+        
+        # Günlük dosyaya yaz
+        log_file = _get_daily_log_file()
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        
+        return True
+        
     except Exception as e:
-        # Ana operasyonel log'a (logger.py) hata basılmalı
-        # Şimdilik print ile belirtiyoruz:
-        print(f"Hata: Eğitim verisi loglanamadı: {e}")
+        # Enterprise logger ile uyumlu hata logu
+        logger.error(
+            "Training data logging başarısız",
+            error=str(e),
+            error_type=type(e).__name__,
+            category=category,
+            data_keys=list(data.keys()) if data else [],
+            data_size=len(json.dumps(data, default=str)) if data else 0
+        )
+        return False
 
-# Modül yüklendiğinde log klasörünün hazır olmasını sağla
-setup_data_logger()
+
+def log_route_decision(route_data: Dict[str, Any]) -> bool:
+    """Rota kararı logla"""
+    return log_training_data(route_data, category="route")
+
+
+def log_consumption(consumption_data: Dict[str, Any]) -> bool:
+    """Tüketim verisi logla"""
+    return log_training_data(consumption_data, category="consumption")
+
+
+def log_api_metric(api_data: Dict[str, Any]) -> bool:
+    """API metriği logla"""
+    return log_training_data(api_data, category="api")
+
+
+# =============================================================================
+# INITIALIZE
+# =============================================================================
+_setup_log_dir()
