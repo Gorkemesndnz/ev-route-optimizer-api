@@ -348,7 +348,7 @@ async def test_endpoint():
         return {
             "status": "test_mode_active",
             "environment": config.get_environment(),
-            "debug_mode": config.is_debug_mode(),
+            "debug_mode": config.is_debug(),
             "available_vehicles": {
                 vid: {
                     "model": vehicle.model_name,
