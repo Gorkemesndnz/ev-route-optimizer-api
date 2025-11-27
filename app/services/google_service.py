@@ -196,6 +196,49 @@ class GoogleMapsService(BaseService):
 
         return data
 
+    # ============================================================
+    # 5) GEOCODING API → Adres string'ini koordinata çevirir
+    # ============================================================
+    @cacheable(prefix="google_geocode", ttl_seconds=86400)  # 24 saat cache
+    async def geocode(self, address: str) -> GeoPoint:
+        """
+        Adres string'ini GeoPoint koordinatına çevirir.
+        
+        Args:
+            address: Adres string'i (örn: "Istanbul, Turkey")
+            
+        Returns:
+            GeoPoint: {lat, lon} koordinatları
+        """
+        params = {
+            "address": address,
+            "key": self.api_key
+        }
+
+        data = await self.request(
+            method="GET",
+            endpoint="/geocode/json",
+            params=params
+        )
+
+        status = data.get("status")
+        if status != "OK":
+            raise ExternalAPIError("GoogleGeocode", 200, f"status={status}, address={address}")
+
+        results = data.get("results", [])
+        if not results:
+            raise ExternalAPIError("GoogleGeocode", 200, f"No results for address: {address}")
+
+        location = results[0]["geometry"]["location"]
+        
+        logger.info(
+            f"Geocoded address: {address}",
+            lat=location["lat"],
+            lng=location["lng"]
+        )
+        
+        return GeoPoint(lat=location["lat"], lon=location["lng"])
+
 
 # Tek instance
 google_maps = GoogleMapsService()

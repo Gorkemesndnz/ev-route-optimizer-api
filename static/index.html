@@ -475,6 +475,18 @@
             icons.textContent = '👤'.repeat(count);
         }
 
+        // Geocoding fonksiyonu - adres string'ini koordinata çevirir
+        async function geocodeAddress(address) {
+            const response = await fetch(`/geocode?address=${encodeURIComponent(address)}`);
+            const data = await response.json();
+            
+            if (data.status !== 'success') {
+                throw new Error(data.detail || `Adres bulunamadı: ${address}`);
+            }
+            
+            return data.location; // {lat, lon}
+        }
+
         // Form submission
         document.getElementById('routeForm').addEventListener('submit', async function (e) {
             e.preventDefault();
@@ -485,19 +497,25 @@
             document.getElementById('errorCard').style.display = 'none';
             document.getElementById('defaultState').style.display = 'none';
 
-            const formData = {
-                start_location: document.getElementById('startLocation').value,
-                end_location: document.getElementById('endLocation').value,
-                vehicle_model_id: document.getElementById('vehicleModel').value,
-                initial_soc_percent: parseInt(document.getElementById('initialSoc').value),
-                extra_load_kg: parseInt(document.getElementById('extraLoad').value),
-                passenger_count: parseInt(document.getElementById('passengerCount').value),
-                preferred_charging_stops: [],
-                avoid_tolls: false,
-                optimize_for: "efficiency"
-            };
+            const startAddress = document.getElementById('startLocation').value;
+            const endAddress = document.getElementById('endLocation').value;
 
             try {
+                // Adresleri koordinata çevir
+                const [startLocation, endLocation] = await Promise.all([
+                    geocodeAddress(startAddress),
+                    geocodeAddress(endAddress)
+                ]);
+
+                const formData = {
+                    start_location: startLocation,  // {lat, lon}
+                    end_location: endLocation,      // {lat, lon}
+                    vehicle_model_id: document.getElementById('vehicleModel').value,
+                    current_soc_percent: parseInt(document.getElementById('initialSoc').value),
+                    extra_load_kg: parseInt(document.getElementById('extraLoad').value),
+                    passenger_count: parseInt(document.getElementById('passengerCount').value)
+                };
+
                 const response = await fetch('/optimize_route', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

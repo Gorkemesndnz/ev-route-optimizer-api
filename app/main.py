@@ -35,6 +35,7 @@ from app.models import (
 )
 from app.route_planner import plan_full_route
 from app.services.base_service import ExternalAPIError
+from app.services.google_service import google_maps
 from app.utils.logger import get_logger
 from app.utils.config_manager import config
 from app.consumption_engine.vehicle_models import get_vehicle_model, VEHICLE_DB
@@ -416,6 +417,43 @@ async def validate_vehicle(vehicle_id: str):
             "error": str(e),
             "available_vehicles": list(VEHICLE_DB.keys())
         }
+
+
+@app.get("/geocode", tags=["Utilities"])
+async def geocode_address(address: str):
+    """
+    Adres string'ini koordinata çevirir.
+    
+    Frontend'in GeoPoint formatında koordinat alması için kullanılır.
+    
+    Args:
+        address: Adres string'i (örn: "Istanbul, Turkey")
+        
+    Returns:
+        GeoPoint: {lat, lon} koordinatları
+    """
+    try:
+        geo_point = await google_maps.geocode(address)
+        return {
+            "status": "success",
+            "address": address,
+            "location": {
+                "lat": geo_point.lat,
+                "lon": geo_point.lon
+            }
+        }
+    except ExternalAPIError as e:
+        logger.error(f"Geocoding failed for address: {address}", error=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Adres bulunamadı: {address}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected geocoding error: {address}", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Geocoding hatası"
+        )
 
 
 if __name__ == "__main__":
