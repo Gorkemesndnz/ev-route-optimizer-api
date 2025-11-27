@@ -69,3 +69,7 @@ def get_vehicle_model(model_id: str) -> VehicleModel:
     if model is None:
         raise ValueError(f"Unknown vehicle model: {model_id}")
     return model
+
+
+# Alias for main_calculator.py compatibility
+VehiclePhysicsProfile = VehicleModel
