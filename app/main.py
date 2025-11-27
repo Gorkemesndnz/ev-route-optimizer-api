@@ -245,7 +245,7 @@ async def optimize_route(request: RouteRequest) -> MultiStopRouteResponse:
         )
         
         # Add debug info to response
-        if config.is_debug_mode():
+        if config.is_debug():
             plan.debug_info = {
                 "request_id": request_id,
                 "processing_time_ms": round(planning_duration * 1000, 1),
@@ -314,7 +314,7 @@ async def optimize_route(request: RouteRequest) -> MultiStopRouteResponse:
             "request_details": request_details
         }
         
-        if config.is_debug_mode():
+        if config.is_debug():
             debug_info.update({
                 "error_message": str(e),
                 "traceback": error_traceback
@@ -322,7 +322,7 @@ async def optimize_route(request: RouteRequest) -> MultiStopRouteResponse:
         
         return _create_error_response(
             status="error_internal_server",
-            message=f"Sunucu hatası: {str(e)}" if config.is_debug_mode() else "İç sunucu hatası",
+            message=f"Sunucu hatası: {str(e)}" if config.is_debug() else "İç sunucu hatası",
             debug_info=debug_info
         )
 
