@@ -1,7 +1,7 @@
 import math
 from typing import Optional, Dict
 from app.models import DriveLeg, WeatherInfo, GeoPoint, WeatherCondition
-from app.consumption_engine.vehicle_models import VehiclePhysicsProfile
+from app.consumption_engine.vehicle_models import VehicleModel as VehiclePhysicsProfile
 from app.consumption_engine.v1_rule_based.load_layer import LoadEffectCalculator
 from app.consumption_engine.v1_rule_based.elevation_layer import ElevationEffectCalculator
 from app.consumption_engine.v1_rule_based.weather_layer import WeatherEffectCalculator
@@ -235,7 +235,12 @@ class MainCalculator:
         # ---------------------------------------------------
         # 3️⃣ HAVA DURUMU FAKTÖRÜ (aerodinamik direnç)
         # ---------------------------------------------------
-        heading = MainCalculator._calculate_bearing(segment.start_point, segment.end_point)
+        # start_point veya end_point None ise heading=0 varsay (wrapper için)
+        if segment.start_point is not None and segment.end_point is not None:
+            heading = MainCalculator._calculate_bearing(segment.start_point, segment.end_point)
+        else:
+            heading = 0.0  # Varsayılan heading (rüzgar etkisi nötr)
+        
         weather_factor = WeatherEffectCalculator.calculate_weather_factor(
             weather=weather,
             vehicle_heading_deg=heading
