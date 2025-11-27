@@ -331,6 +331,67 @@ class MainCalculator:
         return result
 
 
+# =============================================================================
+# WRAPPER FUNCTIONS (route_planner uyumu için)
+# =============================================================================
+
+def calculate_segment_consumption_kwh(
+    vehicle,
+    segment_distance_km: float,
+    segment_elevation_gain_m: float = 0.0,
+    segment_elevation_loss_m: float = 0.0,
+    temperature_celsius: float = 20.0,
+    extra_load_kg: float = 0.0,
+    passenger_count: int = 1,
+    engine_version: str = "v1"
+) -> float:
+    """
+    Basit wrapper - route_planner.py uyumlu interface.
+    
+    MainCalculator.calculate_segment_consumption kullanır ama 
+    daha basit parametrelerle çalışır.
+    
+    Args:
+        vehicle: VehicleModel veya VehiclePhysicsProfile
+        segment_distance_km: Segment mesafesi (km)
+        segment_elevation_gain_m: Yükselme (m)
+        segment_elevation_loss_m: İniş (m) - opsiyonel
+        temperature_celsius: Sıcaklık (°C)
+        extra_load_kg: Ekstra yük (kg)
+        passenger_count: Yolcu sayısı
+        engine_version: "v1" (kural tabanlı)
+    
+    Returns:
+        Toplam tüketim (kWh)
+    """
+    # MockDriveLeg benzeri basit segment oluştur
+    class SimpleSegment:
+        def __init__(self):
+            self.distance_km = segment_distance_km
+            self.elevation_gain_m = segment_elevation_gain_m
+            self.elevation_loss_m = segment_elevation_loss_m
+            self.duration_minutes = (segment_distance_km / 60) * 60  # Tahmini 60 km/h
+            self.start_point = None
+            self.end_point = None
+            self.weather_context = WeatherInfo(
+                temp_c=temperature_celsius,
+                wind_speed_mps=0.0,
+                wind_direction_deg=0,
+                condition=WeatherCondition.CLEAR
+            )
+    
+    segment = SimpleSegment()
+    
+    result = MainCalculator.calculate_segment_consumption(
+        segment=segment,
+        vehicle=vehicle,
+        passenger_count=passenger_count,
+        extra_load_kg=extra_load_kg
+    )
+    
+    return result.practical_consumption_kwh
+
+
 # ---------------------------------------------------
 # TEST & VALIDATION
 # ---------------------------------------------------

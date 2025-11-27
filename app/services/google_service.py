@@ -69,6 +69,47 @@ class GoogleMapsService(BaseService):
         return legs
 
     # ============================================================
+    # 1b) DIRECTIONS API → Ham JSON (route_selector için)
+    # ============================================================
+    @cacheable(prefix="google_directions_raw", ttl_seconds=3600)
+    async def get_route_alternatives(
+        self, 
+        start: GeoPoint, 
+        end: GeoPoint,
+        alternatives: bool = True
+    ) -> dict:
+        """
+        Google Directions API'den ham JSON döndürür.
+        Route selector için alternatif rotaları karşılaştırmak amacıyla kullanılır.
+        
+        Args:
+            start: Başlangıç noktası
+            end: Bitiş noktası
+            alternatives: True ise 3 alternatif rota alır
+        
+        Returns:
+            Ham Google Directions API response (dict)
+        """
+        origin = f"{start.lat},{start.lon}"
+        destination = f"{end.lat},{end.lon}"
+
+        params = {
+            "origin": origin,
+            "destination": destination,
+            "units": "metric",
+            "alternatives": "true" if alternatives else "false",
+            "key": self.api_key
+        }
+
+        data = await self.request(
+            method="GET",
+            endpoint="/directions/json",
+            params=params
+        )
+
+        return data
+
+    # ============================================================
     # 2) ELEVATION API → path + samples = rota boyunca tırmanış
     # ============================================================
     @cacheable(prefix="google_elevation", ttl_seconds=3600)
