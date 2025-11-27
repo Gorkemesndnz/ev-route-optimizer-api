@@ -1,320 +1,350 @@
-import asyncio
+"""
+Route Planner v2.0
+===================
+
+V1.3 Enterprise Route Planner - Tek DriveLeg ile basit rota planlaması.
+
+Özellikler:
+- Google Directions alternatif rotaları ile optimal seçim
+- Elevation API ile yükselme/iniş hesabı
+- V1 kural tabanlı tüketim motoru
+- CO2 tasarrufu hesaplama
+- ML training data loglama
+
+Kullanım:
+    from app.route_planner import plan_multi_stop_route, plan_full_route
+    
+    response = await plan_full_route(request)
+"""
+
+from typing import Dict, Any, Optional
 from app.models import (
-    RouteRequest, MultiStopRouteResponse, DriveLeg, ChargeLeg, WeatherPrediction
+    RouteRequest, 
+    MultiStopRouteResponse, 
+    DriveLeg, 
+    GeoPoint
 )
 from app.route_selector import find_best_route
-from app.station_finder import find_best_station
 from app.consumption_engine.main_calculator import calculate_segment_consumption_kwh
-from app.consumption_engine.vehicle_models import get_vehicle_model, VehicleModel
+from app.consumption_engine.vehicle_models import get_vehicle_model
 from app.sustainability_calculator import calculate_co2_savings
 from app.utils.logger import get_logger
 from app.utils.data_logger import log_training_data
-from app.services.google_service import maps_service
+from app.services.google_service import google_maps
 from app.services.base_service import ExternalAPIError
 
-# Constants
+# =============================================================================
+# CONSTANTS
+# =============================================================================
 logger = get_logger("route_planner")
+
 SIMULATION_SEGMENT_KM = 1.0
 DEFAULT_TARGET_SOC_PERCENT = 80
 SOC_SAFETY_BUFFER_PERCENT = 15.0
+DEFAULT_TEMPERATURE_C = 20.0
 
 
-async def plan_full_route(request: RouteRequest) -> MultiStopRouteResponse:
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def _create_error_response(status: str, message: str = None) -> MultiStopRouteResponse:
+    """Hata durumunda standart response oluştur."""
+    return MultiStopRouteResponse(
+        status=status,
+        total_distance_km=0,
+        total_duration_minutes=0,
+        total_co2_savings_kg=0,
+        legs=[],
+        message=message
+    )
+
+
+def _safe_soc_percent(soc_kwh: float, battery_kwh: float) -> float:
+    """SOC'u güvenli yüzdeye çevir (0-100 arası)."""
+    if battery_kwh <= 0:
+        return 0.0
+    percent = (soc_kwh / battery_kwh) * 100
+    return max(0.0, min(100.0, percent))
+
+
+# =============================================================================
+# MAIN PLANNER FUNCTION
+# =============================================================================
+
+async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse:
     """
-    V1.3 "Main Orchestrator" - Tam çok duraklı rota planlaması
+    V1.3 Enterprise Route Planner
+    ==============================
+    
+    Tek DriveLeg ile basit rota planlaması yapar.
+    Şarj durakları V2'de eklenecek.
+    
+    Args:
+        request: RouteRequest - başlangıç/bitiş, araç ve SOC bilgileri
+    
+    Returns:
+        MultiStopRouteResponse: Planlanmış rota ve tüketim bilgileri
+    
+    Flow:
+        1. Araç bilgilerini al
+        2. Route selector ile en iyi rotayı seç
+        3. Elevation API'den yükselme/iniş verisi al
+        4. Consumption engine ile tüketim hesapla
+        5. CO2 tasarrufu hesapla
+        6. Training data logla
+        7. Response döndür
     """
+    logger.debug(
+        "Route planning initiated",
+        start=f"{request.start_location.lat},{request.start_location.lon}",
+        end=f"{request.end_location.lat},{request.end_location.lon}",
+        vehicle=request.vehicle_model_id,
+        initial_soc=request.current_soc_percent
+    )
+    
     try:
-        # --- STEP A: Araç bilgilerini al ---
-        vehicle = get_vehicle_model(request.vehicle_model_id)
-        if not vehicle:
-            logger.error(
-                "Araç modeli bulunamadı",
-                vehicle_model_id=request.vehicle_model_id
-            )
-            return MultiStopRouteResponse(
-                status="error_vehicle_not_found",
-                total_distance_km=0,
-                total_duration_minutes=0,
-                total_co2_savings_kg=0,
-                legs=[]
+        # =====================================================================
+        # STEP A: Araç bilgilerini al
+        # =====================================================================
+        try:
+            vehicle = get_vehicle_model(request.vehicle_model_id)
+        except ValueError as e:
+            logger.error("Vehicle model not found", vehicle_id=request.vehicle_model_id, error=str(e))
+            return _create_error_response(
+                "error_vehicle_not_found",
+                f"Araç modeli bulunamadı: {request.vehicle_model_id}"
             )
         
         logger.info(
-            "Rota planlaması başlatıldı",
-            start=request.start_location,
-            end=request.end_location,
+            "Route planning started",
+            start=f"{request.start_location.lat},{request.start_location.lon}",
+            end=f"{request.end_location.lat},{request.end_location.lon}",
             vehicle=vehicle.model_name,
-            initial_soc=request.initial_soc_percent
-        )
-        
-        # --- STEP B: En iyi rotayı seç ---
-        route_result = await find_best_route(
-            origin=request.start_location,
-            destination=request.end_location,
-            vehicle_model_id=request.vehicle_model_id,
+            battery_kwh=vehicle.battery_capacity_kwh,
+            initial_soc=request.current_soc_percent,
             extra_load_kg=request.extra_load_kg
         )
         
+        # =====================================================================
+        # STEP B: En iyi rotayı seç (route_selector)
+        # =====================================================================
+        try:
+            route_result = await find_best_route(
+                origin=request.start_location,
+                destination=request.end_location,
+                vehicle_model_id=request.vehicle_model_id,
+                extra_load_kg=request.extra_load_kg
+            )
+        except Exception as e:
+            logger.exception("Route selector failed", error=str(e))
+            return _create_error_response(
+                "error_route_selector_failed",
+                f"Rota seçimi başarısız: {str(e)}"
+            )
+        
         selected_route = route_result["selected_route"]
         selection_reason = route_result["selection_reason"]
+        polyline = route_result.get("polyline", "")
         
         logger.info(
-            "Rota seçildi",
-            selection_reason=selection_reason
+            "Route selected",
+            selection_reason=selection_reason,
+            distance_km=route_result.get("selected_distance_km"),
+            duration_min=route_result.get("selected_duration_min")
         )
         
-        # --- STEP C: Rakım verilerini al ---
-        polyline = selected_route["overview_polyline"]["points"]
-        elevation_response = await maps_service.get_elevation_for_path(polyline)
-        
-        elevation_points = []
-        if elevation_response.get("results"):
-            elevation_points = elevation_response["results"]
-        
-        logger.info(f"{len(elevation_points)} rakım noktası alındı")
-        
-        # --- STEP D: Başlangıç durumunu ayarla ---
-        legs = []
-        current_soc_kwh = vehicle.battery_capacity_kwh * (request.initial_soc_percent / 100)
-        safety_buffer_kwh = vehicle.battery_capacity_kwh * (SOC_SAFETY_BUFFER_PERCENT / 100)
-        target_soc_kwh = vehicle.battery_capacity_kwh * (DEFAULT_TARGET_SOC_PERCENT / 100)
-        
-        # Rota koordinatlarını al
-        route_leg = selected_route["legs"][0]
-        start_coords = route_leg["start_location"]
-        end_coords = route_leg["end_location"]
-        
-        current_lat = start_coords["lat"]
-        current_lon = start_coords["lng"]
-        
-        # --- STEP E & F: Segment simülasyonu ve şarj kontrolü ---
-        total_distance_km = 0
-        total_duration_min = 0
-        
-        # Basitleştirilmiş segment simülasyonu (V1 için)
-        route_distance_km = route_leg["distance"]["value"] / 1000
-        route_duration_min = route_leg["duration"]["value"] / 60
-        
-        # Rota boyunca ilerle ve şarj noktalarını belirle
-        remaining_distance = route_distance_km
-        segment_start_lat = current_lat
-        segment_start_lon = current_lon
-        last_charge_location = (current_lat, current_lon)
-        
-        # Segment bazında simülasyon (her 50km'de şarj kontrolü)
-        segment_size_km = 50.0
-        segments_processed = 0
-        
-        while remaining_distance > 0:
-            current_segment_distance = min(segment_size_km, remaining_distance)
+        # =====================================================================
+        # STEP C: Rota verilerini çıkar
+        # =====================================================================
+        try:
+            route_leg = selected_route["legs"][0]
+            start_coords = route_leg["start_location"]
+            end_coords = route_leg["end_location"]
             
-            # Basit rakım tahmini (V1 için)
-            elevation_gain_m = 0
-            if elevation_points:
-                # Segment başı ve sonu için rakım tahmini
-                start_idx = int((segments_processed * segment_size_km / route_distance_km) * len(elevation_points))
-                end_idx = int(((segments_processed * segment_size_km + current_segment_distance) / route_distance_km) * len(elevation_points))
+            route_distance_km = route_leg["distance"]["value"] / 1000  # metre → km
+            route_duration_min = route_leg["duration"]["value"] / 60   # saniye → dakika
+            
+            # Polyline yoksa route'dan al
+            if not polyline:
+                polyline = selected_route.get("overview_polyline", {}).get("points", "")
                 
-                if 0 <= start_idx < len(elevation_points) and 0 <= end_idx < len(elevation_points):
-                    start_elev = elevation_points[start_idx]["elevation"]
-                    end_elev = elevation_points[end_idx]["elevation"]
-                    elevation_gain_m = end_elev - start_elev
-            
-            # Segment tüketimini hesapla
+        except (KeyError, IndexError) as e:
+            logger.error("Route data extraction failed", error=str(e))
+            return _create_error_response(
+                "error_no_route_legs_found",
+                "Google Directions verisi eksik"
+            )
+        
+        logger.info(
+            "Route data extracted",
+            distance_km=round(route_distance_km, 1),
+            duration_min=round(route_duration_min, 1)
+        )
+        
+        # =====================================================================
+        # STEP D: Elevation verisi al
+        # =====================================================================
+        elevation_gain_m = 0.0
+        elevation_loss_m = 0.0
+        
+        if polyline:
+            try:
+                elevation_stats = await google_maps.get_elevation_stats(polyline)
+                elevation_gain_m = elevation_stats.get("gain_m", 0.0)
+                elevation_loss_m = elevation_stats.get("loss_m", 0.0)
+                
+                logger.info(
+                    "Elevation data retrieved",
+                    gain_m=round(elevation_gain_m, 1),
+                    loss_m=round(elevation_loss_m, 1)
+                )
+            except Exception as e:
+                logger.warning("Elevation API failed, using defaults", error=str(e))
+        
+        # =====================================================================
+        # STEP E: Tüketim hesapla (V1 Engine)
+        # =====================================================================
+        try:
             segment_consumption_kwh = calculate_segment_consumption_kwh(
                 vehicle=vehicle,
-                segment_distance_km=current_segment_distance,
+                segment_distance_km=route_distance_km,
                 segment_elevation_gain_m=elevation_gain_m,
-                temperature_celsius=20.0,  # V1 için sabat
+                segment_elevation_loss_m=elevation_loss_m,
+                temperature_celsius=DEFAULT_TEMPERATURE_C,
                 extra_load_kg=request.extra_load_kg,
+                passenger_count=request.passenger_count,
                 engine_version="v1"
             )
-            
-            # SOC'u güncelle
-            current_soc_kwh -= segment_consumption_kwh
-            total_distance_km += current_segment_distance
-            segments_processed += 1
-            remaining_distance -= current_segment_distance
-            
-            # --- Şarj kontrolü ---
-            if current_soc_kwh < safety_buffer_kwh and remaining_distance > 0:
-                logger.info(
-                    "Şarj gerekli",
-                    current_soc_kwh=round(current_soc_kwh, 2),
-                    safety_buffer_kwh=round(safety_buffer_kwh, 2)
-                )
-                
-                # Mevcut DriveLeg'i ekle
-                drive_leg = DriveLeg(
-                    type="drive",
-                    start_point=f"{segment_start_lat},{segment_start_lon}",
-                    end_point=f"{current_lat},{current_lon}",
-                    distance_km=total_distance_km - sum(leg.distance_km for leg in legs if leg.type == "drive"),
-                    duration_minutes=int(route_duration_min * (total_distance_km / route_distance_km)),
-                    start_soc_percent=int((current_soc_kwh + segment_consumption_kwh) / vehicle.battery_capacity_kwh * 100),
-                    arrival_soc_percent=int(current_soc_kwh / vehicle.battery_capacity_kwh * 100),
-                    route_polyline=polyline,  # Basitleştirme
-                    consumption_kwh=segment_consumption_kwh
-                )
-                legs.append(drive_leg)
-                
-                # İstasyon ara
-                station, weather_forecast = await find_best_station(
-                    latitude=current_lat,
-                    longitude=current_lon,
-                    vehicle=vehicle
-                )
-                
-                if not station:
-                    logger.error("Şarj istasyonu bulunamadı")
-                    return MultiStopRouteResponse(
-                        status="error_no_station_found",
-                        total_distance_km=total_distance_km,
-                        total_duration_minutes=total_duration_min,
-                        total_co2_savings_kg=0,
-                        legs=legs
-                    )
-                
-                # Şarj süresini hesapla
-                charge_needed_kwh = target_soc_kwh - current_soc_kwh
-                charge_power_kw = station.get("_max_power_kw", 50)  # Varsayılan 50kW
-                
-                if charge_power_kw > 40:  # DC
-                    charge_rate_kw = vehicle.avg_dc_charge_rate_kw
-                else:  # AC
-                    charge_rate_kw = vehicle.avg_ac_charge_rate_kw
-                
-                charge_duration_min = int((charge_needed_kwh / min(charge_rate_kw, charge_power_kw)) * 60)
-                
-                # Hava durumu tahmini
-                weather_prediction = WeatherPrediction(
-                    temperature_celsius=20,  # V1 için sabit
-                    condition_icon="clear-day",
-                    description="Açık hava"
-                )
-                
-                if weather_forecast and weather_forecast.get("list"):
-                    first_weather = weather_forecast["list"][0]
-                    weather_prediction = WeatherPrediction(
-                        temperature_celsius=int(first_weather["main"]["temp"]),
-                        condition_icon=first_weather["weather"][0]["icon"].replace("n", "d"),  # Gündüz ikonu
-                        description=first_weather["weather"][0]["description"]
-                    )
-                
-                # ChargeLeg oluştur
-                charge_leg = ChargeLeg(
-                    type="charge",
-                    station_name=station.get("AddressInfo", {}).get("Title", "Bilinmeyen İstasyon"),
-                    station_id=str(station.get("ID")),
-                    charge_speed_type="fast" if charge_power_kw > 40 else "slow",
-                    arrival_soc_percent=int(current_soc_kwh / vehicle.battery_capacity_kwh * 100),
-                    target_soc_percent=DEFAULT_TARGET_SOC_PERCENT,
-                    charge_added_kwh=charge_needed_kwh,
-                    charge_duration_minutes=charge_duration_min,
-                    predicted_weather_at_arrival=weather_prediction
-                )
-                legs.append(charge_leg)
-                
-                # SOC'u sıfırla
-                current_soc_kwh = target_soc_kwh
-                total_duration_min += charge_duration_min
-                
-                # İstasyon koordinatlarını güncelle
-                station_address = station.get("AddressInfo", {})
-                current_lat = station_address.get("Latitude", current_lat)
-                current_lon = station_address.get("Longitude", current_lon)
-                segment_start_lat = current_lat
-                segment_start_lon = current_lon
-                
-                logger.info(
-                    "Şarj eklendi",
-                    station_name=charge_leg.station_name,
-                    charge_added_kwh=round(charge_needed_kwh, 2),
-                    charge_duration_min=charge_duration_min
-                )
+        except Exception as e:
+            logger.exception("Consumption calculation failed", error=str(e))
+            return _create_error_response(
+                "error_consumption_failed",
+                f"Tüketim hesaplaması başarısız: {str(e)}"
+            )
         
-        # --- STEP G: Son DriveLeg'i ekle ---
-        final_drive_leg = DriveLeg(
-            type="drive",
-            start_point=f"{segment_start_lat},{segment_start_lon}",
-            end_point=f"{end_coords['lat']},{end_coords['lng']}",
-            distance_km=route_distance_km - total_distance_km,
-            duration_minutes=int(route_duration_min - total_duration_min),
-            start_soc_percent=int(current_soc_kwh / vehicle.battery_capacity_kwh * 100),
-            arrival_soc_percent=int(max(0, current_soc_kwh - segment_consumption_kwh) / vehicle.battery_capacity_kwh * 100),
-            route_polyline=polyline,
-            consumption_kwh=segment_consumption_kwh
-        )
-        legs.append(final_drive_leg)
+        # =====================================================================
+        # STEP F: SOC hesapla
+        # =====================================================================
+        battery_kwh = vehicle.battery_capacity_kwh
+        start_soc_kwh = battery_kwh * (request.current_soc_percent / 100)
+        arrival_soc_kwh = start_soc_kwh - segment_consumption_kwh
         
-        total_distance_km = route_distance_km
-        total_duration_min = route_duration_min + sum(
-            leg.charge_duration_minutes for leg in legs if leg.type == "charge"
-        )
+        start_soc_percent = _safe_soc_percent(start_soc_kwh, battery_kwh)
+        arrival_soc_percent = _safe_soc_percent(arrival_soc_kwh, battery_kwh)
         
-        # --- STEP H: CO2 tasarrufunu hesapla ---
-        co2_savings = calculate_co2_savings(total_distance_km)
-        
-        # --- STEP I: Eğitim verisini logla ---
-        training_data = {
-            "request": request.dict(),
-            "selected_route_summary": {
-                "selection_reason": selection_reason,
-                "total_distance_km": total_distance_km,
-                "total_duration_min": total_duration_min,
-                "charge_stops": len([leg for leg in legs if leg.type == "charge"])
-            },
-            "vehicle_info": {
-                "model": vehicle.model_name,
-                "battery_capacity_kwh": vehicle.battery_capacity_kwh,
-                "base_consumption_wh_km": vehicle.base_consumption_wh_km
-            }
-        }
-        
-        log_training_data(training_data)
-        
-        # --- STEP J: Başarılı response döndür ---
         logger.info(
-            "Rota planlaması tamamlandı",
-            total_distance_km=round(total_distance_km, 1),
-            total_duration_min=total_duration_min,
-            total_charge_stops=len([leg for leg in legs if leg.type == "charge"]),
-            co2_savings_kg=co2_savings
+            "Battery calculation completed",
+            start_soc_percent=round(start_soc_percent, 1),
+            arrival_soc_percent=round(arrival_soc_percent, 1),
+            consumption_kwh=round(segment_consumption_kwh, 2)
+        )
+        
+        # =====================================================================
+        # STEP G: DriveLeg oluştur
+        # =====================================================================
+        avg_speed_kmh = (route_distance_km / route_duration_min) * 60 if route_duration_min > 0 else 0
+        
+        drive_leg = DriveLeg(
+            type="drive",
+            start_point=GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"]),
+            end_point=GeoPoint(lat=end_coords["lat"], lon=end_coords["lng"]),
+            distance_km=round(route_distance_km, 1),
+            duration_minutes=round(route_duration_min, 1),
+            avg_speed_kmh=round(avg_speed_kmh, 1),
+            consumption_kwh=round(segment_consumption_kwh, 2),
+            start_soc_percent=round(start_soc_percent, 1),
+            end_soc_percent=round(arrival_soc_percent, 1),
+            elevation_gain_m=round(elevation_gain_m, 1),
+            elevation_loss_m=round(elevation_loss_m, 1),
+            polyline=polyline
+        )
+        
+        # =====================================================================
+        # STEP H: CO2 tasarrufu hesapla
+        # =====================================================================
+        try:
+            co2_savings = calculate_co2_savings(route_distance_km)
+        except Exception as e:
+            logger.warning("CO2 calculation failed", error=str(e))
+            co2_savings = 0.0
+        
+        # =====================================================================
+        # STEP I: Training data logla
+        # =====================================================================
+        try:
+            training_data = {
+                "start_lat": request.start_location.lat,
+                "start_lon": request.start_location.lon,
+                "end_lat": request.end_location.lat,
+                "end_lon": request.end_location.lon,
+                "vehicle_model": vehicle.model_name,
+                "battery_kwh": battery_kwh,
+                "initial_soc_percent": request.current_soc_percent,
+                "distance_km": route_distance_km,
+                "duration_min": route_duration_min,
+                "elevation_gain_m": elevation_gain_m,
+                "elevation_loss_m": elevation_loss_m,
+                "consumption_kwh": segment_consumption_kwh,
+                "arrival_soc_percent": arrival_soc_percent,
+                "selection_reason": selection_reason,
+                "co2_savings_kg": co2_savings
+            }
+            log_training_data(training_data, category="route")
+        except Exception as e:
+            logger.warning("Training data logging failed", error=str(e))
+        
+        # =====================================================================
+        # STEP J: Response döndür
+        # =====================================================================
+        logger.info(
+            "Route planning completed successfully",
+            total_distance_km=round(route_distance_km, 1),
+            total_duration_min=round(route_duration_min, 1),
+            consumption_kwh=round(segment_consumption_kwh, 2),
+            co2_savings_kg=round(co2_savings, 2)
         )
         
         return MultiStopRouteResponse(
-            status="multi_stop_plan_success",
-            total_distance_km=round(total_distance_km, 1),
-            total_duration_minutes=total_duration_min,
-            total_co2_savings_kg=co2_savings,
-            legs=legs
+            status="success",
+            total_distance_km=round(route_distance_km, 1),
+            total_duration_minutes=round(route_duration_min, 1),
+            total_co2_savings_kg=round(co2_savings, 2),
+            legs=[drive_leg],
+            charge_stops=0
         )
         
     except ExternalAPIError as e:
         logger.error(
-            "API hatası nedeniyle rota planlaması başarısız",
+            "External API error",
             source=e.source,
             status_code=e.status_code,
-            detail=e.detail
+            detail=str(e)
         )
-        return MultiStopRouteResponse(
-            status="error_api_failed",
-            total_distance_km=0,
-            total_duration_minutes=0,
-            total_co2_savings_kg=0,
-            legs=[]
+        return _create_error_response(
+            f"error_api_{e.source.lower()}",
+            f"API hatası ({e.source}): {str(e)}"
         )
         
     except Exception as e:
-        logger.error(
-            "Rota planlaması başarısız",
+        logger.exception(
+            "Route planning failed with unexpected error",
             error=str(e),
             error_type=type(e).__name__
         )
-        return MultiStopRouteResponse(
-            status="error_unknown",
-            total_distance_km=0,
-            total_duration_minutes=0,
-            total_co2_savings_kg=0,
-            legs=[]
+        return _create_error_response(
+            "error_unknown",
+            f"Beklenmeyen hata: {str(e)}"
         )
+
+
+# =============================================================================
+# ALIAS FOR MAIN.PY COMPATIBILITY
+# =============================================================================
+
+async def plan_full_route(request: RouteRequest) -> MultiStopRouteResponse:
+    """
+    plan_multi_stop_route için alias.
+    main.py'de bu isimle import ediliyor.
+    """
+    return await plan_multi_stop_route(request)
