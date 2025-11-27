@@ -201,20 +201,35 @@ class RouteRequest(BaseModel):
 class DriveLeg(BaseModel):
     """
     A noktasından B noktasına sürüş bacağı.
+    
+    start_point ve end_point hem GeoPoint hem de "lat,lon" string formatında kabul edilir.
     """
     type: Literal["drive"] = "drive"
-    start_point: GeoPoint
-    end_point: GeoPoint
+    start_point: Union[GeoPoint, str]
+    end_point: Union[GeoPoint, str]
     distance_km: float
     duration_minutes: float
-    avg_speed_kmh: float
-    consumption_kwh: float
-    start_soc_percent: float
-    end_soc_percent: float
+    avg_speed_kmh: float = 0.0  # Opsiyonel - hesaplanabilir
+    consumption_kwh: float = 0.0
+    start_soc_percent: float = 0.0
+    end_soc_percent: float = 0.0  # arrival_soc_percent alias
     elevation_gain_m: float = 0.0
     elevation_loss_m: float = 0.0
-    polyline: str  # Haritada çizmek için encoded polyline string
+    polyline: str = ""  # Haritada çizmek için encoded polyline string
+    route_polyline: Optional[str] = None  # Backward compat alias
     weather_context: Optional[WeatherInfo] = None
+    
+    # Alias for backward compatibility
+    arrival_soc_percent: Optional[float] = None
+    
+    def model_post_init(self, __context) -> None:
+        """Post-init: alias'ları senkronize et."""
+        # route_polyline → polyline
+        if self.route_polyline and not self.polyline:
+            object.__setattr__(self, 'polyline', self.route_polyline)
+        # arrival_soc_percent → end_soc_percent  
+        if self.arrival_soc_percent is not None:
+            object.__setattr__(self, 'end_soc_percent', self.arrival_soc_percent)
 
 
 class ChargeLeg(BaseModel):
@@ -265,3 +280,24 @@ class RouteResponse(BaseModel):
     plan_version: str = "v1.0"
     legs: List[Union[DriveLeg, ChargeLeg]]
     warning_messages: List[str] = Field(default_factory=list)
+
+
+# ======================================================
+# 8. MULTI-STOP RESPONSE (Basitleştirilmiş V1.3)
+# ======================================================
+
+class MultiStopRouteResponse(BaseModel):
+    """
+    V1.3 Çok duraklı rota planı response modeli.
+    Route planner tarafından döndürülür.
+    """
+    status: str = Field(
+        ...,
+        description="Sonuç durumu: multi_stop_plan_success, error_vehicle_not_found, error_api_failed, vb."
+    )
+    total_distance_km: float = Field(0.0, description="Toplam mesafe (km)")
+    total_duration_minutes: float = Field(0.0, description="Toplam süre (dakika)")
+    total_co2_savings_kg: float = Field(0.0, description="CO2 tasarrufu (kg)")
+    legs: List[DriveLeg] = Field(default_factory=list, description="Sürüş bacakları")
+    message: Optional[str] = Field(None, description="Ek bilgi veya hata mesajı")
+    charge_stops: int = Field(0, description="Şarj durağı sayısı")
