@@ -293,7 +293,7 @@ class MultiStopRouteResponse(BaseModel):
     """
     status: str = Field(
         ...,
-        description="Sonuç durumu: multi_stop_plan_success, error_vehicle_not_found, error_api_failed, vb."
+        description="Sonuç durumu: success, error_vehicle_not_found, error_api_failed, vb."
     )
     total_distance_km: float = Field(0.0, description="Toplam mesafe (km)")
     total_duration_minutes: float = Field(0.0, description="Toplam süre (dakika)")
@@ -301,3 +301,7 @@ class MultiStopRouteResponse(BaseModel):
     legs: List[DriveLeg] = Field(default_factory=list, description="Sürüş bacakları")
     message: Optional[str] = Field(None, description="Ek bilgi veya hata mesajı")
     charge_stops: int = Field(0, description="Şarj durağı sayısı")
+    debug_info: Optional[dict] = Field(
+        default=None, 
+        description="Debug bilgileri (sadece development modunda)"
+    )
