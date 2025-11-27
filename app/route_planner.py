@@ -290,7 +290,66 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
             logger.warning("Weather API failed, using defaults", error=str(e))
         
         # =====================================================================
-        # STEP H: Multi-Leg Route with Charging Algorithm
+        # STEP H: Average weather hesapla ve consumption engine'e geç
+        # =====================================================================
+        from app.models import WeatherInfo, WeatherCondition
+        
+        # Average weather hesapla (start + end)
+        avg_weather = None
+        if start_weather and end_weather:
+            avg_temp_c = (start_weather.temp_c + end_weather.temp_c) / 2
+            avg_wind_speed_mps = (start_weather.wind_speed_mps + end_weather.wind_speed_mps) / 2
+            avg_wind_direction_deg = (start_weather.wind_direction_deg + end_weather.wind_direction_deg) / 2
+            avg_precipitation_prob = (start_weather.precipitation_prob + end_weather.precipitation_prob) / 2
+            
+            # Condition: daha kötü hava durumunu seç
+            if start_weather.condition in (WeatherCondition.RAIN, WeatherCondition.SNOW) or end_weather.condition in (WeatherCondition.RAIN, WeatherCondition.SNOW):
+                avg_condition = WeatherCondition.RAIN
+            elif start_weather.condition == WeatherCondition.FOG or end_weather.condition == WeatherCondition.FOG:
+                avg_condition = WeatherCondition.FOG
+            elif start_weather.condition == WeatherCondition.WINDY or end_weather.condition == WeatherCondition.WINDY:
+                avg_condition = WeatherCondition.WINDY
+            else:
+                avg_condition = WeatherCondition.CLEAR
+            
+            avg_weather = WeatherInfo(
+                temp_c=avg_temp_c,
+                condition=avg_condition,
+                wind_speed_mps=avg_wind_speed_mps,
+                wind_direction_deg=int(avg_wind_direction_deg),
+                precipitation_prob=avg_precipitation_prob
+            )
+            
+            logger.info(
+                "Average weather calculated",
+                avg_temp_c=round(avg_temp_c, 1),
+                avg_condition=avg_condition.value,
+                avg_wind_speed_mps=round(avg_wind_speed_mps, 1)
+            )
+        
+        # =====================================================================
+        # STEP I: Tüketim hesapla (V1 Engine with REAL weather)
+        # =====================================================================
+        try:
+            segment_consumption_kwh = calculate_segment_consumption_kwh(
+                vehicle=vehicle,
+                segment_distance_km=route_distance_km,
+                segment_elevation_gain_m=elevation_gain_m,
+                segment_elevation_loss_m=elevation_loss_m,
+                temperature_celsius=avg_weather.temp_c if avg_weather else DEFAULT_TEMPERATURE_C,
+                extra_load_kg=request.extra_load_kg,
+                passenger_count=request.passenger_count,
+                engine_version="v1"
+            )
+        except Exception as e:
+            logger.exception("Consumption calculation failed", error=str(e))
+            return _create_error_response(
+                "error_consumption_failed",
+                f"Tüketim hesaplaması başarısız: {str(e)}"
+            )
+        
+        # =====================================================================
+        # STEP J: Multi-Leg Route with Charging Algorithm
         # =====================================================================
         legs = []
         charge_stops = 0
