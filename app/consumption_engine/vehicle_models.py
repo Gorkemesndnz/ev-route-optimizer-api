@@ -20,13 +20,13 @@ class VehicleModel:
     # Tüketim (Wh/km) → MainCalculator'da kwh/100km'e çevriliyor
     base_consumption_wh_km: float     
 
-    # Yardımcı sistemler (HVAC, farlar, elektronik)
-    auxiliary_power_kw: float = 1.2   # ✅ V1.6: HVAC hesaplamaları için
-
     # Şarj özellikleri
     connector_type: str               # "CCS" | "CHAdeMO" | "Type2"
     avg_dc_charge_rate_kw: float      # 10 → 80 arası ortalama
     avg_ac_charge_rate_kw: float
+
+    # Yardımcı sistemler (HVAC, farlar, elektronik)
+    auxiliary_power_kw: float = 1.2   # ✅ V1.6: HVAC hesaplamaları için
 
 VEHICLE_DB = {
     "mg4_51kwh": VehicleModel(

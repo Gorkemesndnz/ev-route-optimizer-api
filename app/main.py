@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
         "EV Route Optimizer API starting up",
         version="v1.3",
         environment=config.get_environment(),
-        debug_mode=config.is_debug_mode()
+        debug_mode=config.log_level() == "DEBUG"
     )
     
     # Log available vehicles

@@ -1,5 +1,19 @@
-fastapi
-uvicorn[standard]
-httpx
-pydantic
-structlog
+# =============================================================================
+# EV Route Optimizer API - Dependencies
+# =============================================================================
+
+# Core Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# HTTP Client (async requests)
+httpx>=0.25.0
+
+# Data Validation & Serialization
+pydantic>=2.5.0
+
+# Environment Variables (.env file support)
+python-dotenv>=1.0.0
+
+# Optional: Async file operations (for data logging)
+# aiofiles>=23.0.0
