@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional, Union, Literal
+from typing import List, Optional, Union, Literal, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 
 # ======================================================
@@ -217,7 +217,7 @@ class DriveLeg(BaseModel):
     elevation_loss_m: float = 0.0
     polyline: str = ""  # Haritada çizmek için encoded polyline string
     route_polyline: Optional[str] = None  # Backward compat alias
-    weather_context: Optional[WeatherInfo] = None
+    weather_context: Optional[Dict[str, Any]] = None  # start_weather & end_weather
     
     # Alias for backward compatibility
     arrival_soc_percent: Optional[float] = None

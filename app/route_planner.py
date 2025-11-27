@@ -17,6 +17,7 @@ Kullanım:
     response = await plan_full_route(request)
 """
 
+import asyncio
 from typing import Dict, Any, Optional
 from app.models import (
     RouteRequest, 
@@ -24,6 +25,8 @@ from app.models import (
     DriveLeg, 
     GeoPoint
 )
+from app.services.ocm_service import ocm_service
+from app.services.weather_service import WeatherService
 from app.route_selector import find_best_route
 from app.consumption_engine.main_calculator import calculate_segment_consumption_kwh
 from app.consumption_engine.vehicle_models import get_vehicle_model
@@ -37,6 +40,7 @@ from app.services.base_service import ExternalAPIError
 # CONSTANTS
 # =============================================================================
 logger = get_logger("route_planner")
+weather_service = WeatherService()
 
 SIMULATION_SEGMENT_KM = 1.0
 DEFAULT_TARGET_SOC_PERCENT = 80
@@ -246,7 +250,47 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
         )
         
         # =====================================================================
-        # STEP G: Multi-Leg Route with Charging Algorithm
+        # STEP G: Weather verisi al (başlangıç ve varış noktaları)
+        # =====================================================================
+        start_weather = None
+        end_weather = None
+        
+        try:
+            # Parallel weather API calls
+            start_weather_task = weather_service.get_weather_at_point(
+                lat=request.start_location.lat,
+                lon=request.start_location.lon
+            )
+            end_weather_task = weather_service.get_weather_at_point(
+                lat=request.end_location.lat,
+                lon=request.end_location.lon
+            )
+            
+            start_weather, end_weather = await asyncio.gather(
+                start_weather_task,
+                end_weather_task,
+                return_exceptions=True
+            )
+            
+            # Exception handling
+            if isinstance(start_weather, Exception):
+                logger.warning("Start weather fetch failed", error=str(start_weather))
+                start_weather = None
+            if isinstance(end_weather, Exception):
+                logger.warning("End weather fetch failed", error=str(end_weather))
+                end_weather = None
+                
+            logger.info(
+                "Weather data retrieved",
+                start_temp=start_weather.temp_c if start_weather else None,
+                end_temp=end_weather.temp_c if end_weather else None
+            )
+            
+        except Exception as e:
+            logger.warning("Weather API failed, using defaults", error=str(e))
+        
+        # =====================================================================
+        # STEP H: Multi-Leg Route with Charging Algorithm
         # =====================================================================
         legs = []
         charge_stops = 0
@@ -306,7 +350,21 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
             end_soc_percent=round(arrival_soc_percent, 1),
             elevation_gain_m=round(elevation_gain_m, 1),
             elevation_loss_m=round(elevation_loss_m, 1),
-            polyline=polyline
+            polyline=polyline,
+            weather_context={
+                "start_weather": {
+                    "temp_c": start_weather.temp_c if start_weather else None,
+                    "condition": start_weather.condition.value if start_weather else None,
+                    "wind_speed_mps": start_weather.wind_speed_mps if start_weather else None,
+                    "precipitation_prob": start_weather.precipitation_prob if start_weather else None
+                },
+                "end_weather": {
+                    "temp_c": end_weather.temp_c if end_weather else None,
+                    "condition": end_weather.condition.value if end_weather else None,
+                    "wind_speed_mps": end_weather.wind_speed_mps if end_weather else None,
+                    "precipitation_prob": end_weather.precipitation_prob if end_weather else None
+                }
+            }
         )
         legs.append(drive_leg)
         

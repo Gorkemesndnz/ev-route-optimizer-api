@@ -604,13 +604,88 @@
                 </div>
                 ` : ''}
 
+                <!-- Weather Information -->
+                ${leg.weather_context ? `
+                <div class="bg-white/5 rounded-xl p-5 mb-6">
+                    <h4 class="text-white font-medium mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"/>
+                        </svg>
+                        Hava Durumu
+                    </h4>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Start Weather -->
+                        <div class="bg-white/5 rounded-lg p-4">
+                            <div class="flex items-center gap-3 mb-3">
+                                <div class="w-8 h-8 bg-green-500/20 rounded-full flex items-center justify-center">
+                                    <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <p class="text-white text-sm font-medium">Başlangıç</p>
+                                    <p class="text-gray-500 text-xs">${document.getElementById('startLocation').value}</p>
+                                </div>
+                            </div>
+                            ${leg.weather_context.start_weather.temp_c !== null ? `
+                                <div class="space-y-2">
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-400">Sıcaklık:</span>
+                                        <span class="text-white">${leg.weather_context.start_weather.temp_c}°C</span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-400">Durum:</span>
+                                        <span class="text-white">${leg.weather_context.start_weather.condition}</span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-400">Rüzgar:</span>
+                                        <span class="text-white">${leg.weather_context.start_weather.wind_speed_mps} m/s</span>
+                                    </div>
+                                </div>
+                            ` : '<p class="text-gray-500 text-sm">Hava durumu bilgisi alınamadı</p>'}
+                        </div>
+                        
+                        <!-- End Weather -->
+                        <div class="bg-white/5 rounded-lg p-4">
+                            <div class="flex items-center gap-3 mb-3">
+                                <div class="w-8 h-8 bg-red-500/20 rounded-full flex items-center justify-center">
+                                    <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <p class="text-white text-sm font-medium">Varış</p>
+                                    <p class="text-gray-500 text-xs">${document.getElementById('endLocation').value}</p>
+                                </div>
+                            </div>
+                            ${leg.weather_context.end_weather.temp_c !== null ? `
+                                <div class="space-y-2">
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-400">Sıcaklık:</span>
+                                        <span class="text-white">${leg.weather_context.end_weather.temp_c}°C</span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-400">Durum:</span>
+                                        <span class="text-white">${leg.weather_context.end_weather.condition}</span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-400">Rüzgar:</span>
+                                        <span class="text-white">${leg.weather_context.end_weather.wind_speed_mps} m/s</span>
+                                    </div>
+                                </div>
+                            ` : '<p class="text-gray-500 text-sm">Hava durumu bilgisi alınamadı</p>'}
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+
                 <!-- Route Details -->
                 <div class="bg-white/5 rounded-xl p-5">
                     <h4 class="text-white font-medium mb-4 flex items-center gap-2">
                         <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
-                    </svg>
-                    <span class="text-white font-medium">Rota Detayları</span>
+                        </svg>
                         Rota Detayları
                     </h4>
                     <div class="space-y-3">
