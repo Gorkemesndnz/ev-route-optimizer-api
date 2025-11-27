@@ -56,9 +56,21 @@ class MainCalculator:
     @staticmethod
     def _get_base_consumption_kwh_per_km(vehicle: VehiclePhysicsProfile) -> float:
         """Araç baz tüketimi (ideal koşullar: 20°C, rüzgarsız, boş)"""
+        # Önce base_consumption_kwh_per_100km dene
         base_100km = getattr(vehicle, "base_consumption_kwh_per_100km", None)
         if isinstance(base_100km, (int, float)) and base_100km > 0:
             return base_100km / 100.0
+        
+        # Yoksa base_consumption_wh_km kullan
+        base_wh_per_km = getattr(vehicle, "base_consumption_wh_km", None)
+        if isinstance(base_wh_per_km, (int, float)) and base_wh_per_km > 0:
+            base_kwh_per_100km = base_wh_per_km / 1000.0 * 100.0  # Wh/km → kWh/100km
+            logger.info(
+                "Using vehicle consumption data",
+                base_wh_per_km=base_wh_per_km,
+                base_kwh_per_100km=round(base_kwh_per_100km, 2)
+            )
+            return base_kwh_per_100km / 100.0
         
         logger.warning("Vehicle base consumption not found, using 18 kWh/100km default")
         return 0.18
@@ -316,7 +328,7 @@ class MainCalculator:
         # ---------------------------------------------------
         # 7️⃣ DETAYLI LOGLAMA
         # ---------------------------------------------------
-        logger.debug(
+        logger.info(
             "Segment consumption calculated (V1.6 FINAL)",
             distance_km=round(distance_km, 2),
             temp_c=round(weather.temp_c, 1),

@@ -200,7 +200,12 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
                     loss_m=round(elevation_loss_m, 1)
                 )
             except Exception as e:
-                logger.warning("Elevation API failed, using defaults", error=str(e))
+                logger.warning(
+                    "Elevation API failed, using defaults", 
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    polyline_length=len(polyline) if polyline else 0
+                )
         
         # =====================================================================
         # STEP E: Tüketim hesapla (V1 Engine)
@@ -241,8 +246,52 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
         )
         
         # =====================================================================
-        # STEP G: DriveLeg oluştur
+        # STEP G: Multi-Leg Route with Charging Algorithm
         # =====================================================================
+        legs = []
+        charge_stops = 0
+        total_distance = route_distance_km
+        total_duration = route_duration_min
+        
+        # Max range hesapla (mevcut SOC ile)
+        available_kwh = (request.current_soc_percent / 100.0) * battery_kwh
+        usable_kwh = available_kwh * (1.0 - SOC_SAFETY_BUFFER_PERCENT / 100.0)
+        consumption_per_km = vehicle.base_consumption_wh_km / 1000.0  # Wh/km -> kWh/km
+        max_range_km = usable_kwh / consumption_per_km if consumption_per_km > 0 else 0
+        
+        logger.info(
+            "Route segment analysis",
+            current_soc=round(request.current_soc_percent, 1),
+            available_kwh=round(available_kwh, 2),
+            usable_kwh=round(usable_kwh, 2),
+            max_range_km=round(max_range_km, 1),
+            route_distance_km=round(route_distance_km, 1)
+        )
+        
+        # Şarj gerekli mi kontrol et
+        charging_needed = max_range_km < route_distance_km
+        route_message = None
+        
+        if charging_needed:
+            deficit_km = route_distance_km - max_range_km
+            required_stops = int(deficit_km / max_range_km) + 1
+            
+            logger.info(
+                "Charging needed",
+                max_range_km=round(max_range_km, 1),
+                route_distance_km=round(route_distance_km, 1),
+                deficit_km=round(deficit_km, 1),
+                estimated_stops=required_stops
+            )
+            
+            route_message = f"⚠️ Şarj gerekli! Menzil: {round(max_range_km)}km, Rota: {round(route_distance_km)}km. Tahmini {required_stops} şarj durağı gerekiyor."
+            
+            # TODO: OCM ile istasyon ara ve multi-leg route oluştur
+            logger.warning("Charging stations search not fully implemented yet")
+        else:
+            route_message = f"✅ Şarj gerekmez. Menzil: {round(max_range_km)}km, Rota: {round(route_distance_km)}km"
+        
+        # DriveLeg oluştur
         avg_speed_kmh = (route_distance_km / route_duration_min) * 60 if route_duration_min > 0 else 0
         
         drive_leg = DriveLeg(
@@ -259,6 +308,7 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
             elevation_loss_m=round(elevation_loss_m, 1),
             polyline=polyline
         )
+        legs.append(drive_leg)
         
         # =====================================================================
         # STEP H: CO2 tasarrufu hesapla
@@ -307,11 +357,12 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
         
         return MultiStopRouteResponse(
             status="success",
-            total_distance_km=round(route_distance_km, 1),
-            total_duration_minutes=round(route_duration_min, 1),
+            total_distance_km=round(total_distance, 1),
+            total_duration_minutes=round(total_duration, 1),
             total_co2_savings_kg=round(co2_savings, 2),
-            legs=[drive_leg],
-            charge_stops=0
+            legs=legs,
+            charge_stops=charge_stops,
+            message=route_message
         )
         
     except ExternalAPIError as e:

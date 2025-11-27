@@ -117,22 +117,33 @@ class GoogleMapsService(BaseService):
         """
         Rota polyline üzerinden örnekleme yaparak toplam yükseliş/iniş döndürür.
         """
-        encoded = urllib.parse.quote(polyline)
-
+        # Polyline zaten Google'dan encoded geliyor, tekrar quote etme!
         params = {
-            "path": f"enc:{encoded}",
+            "path": f"enc:{polyline}",
             "samples": samples,
             "key": self.api_key
         }
+        
+        logger.info(
+            "Elevation API request",
+            polyline_length=len(polyline),
+            samples=samples
+        )
 
         data = await self.request(
             method="GET",
             endpoint="/elevation/json",
             params=params
         )
-
-        if data.get("status") != "OK":
-            raise ExternalAPIError("GoogleElevation", 200, f"status={data.get('status')}")
+        
+        status = data.get("status")
+        if status != "OK":
+            logger.error(
+                "Elevation API error",
+                status=status,
+                error_message=data.get("error_message", "Unknown")
+            )
+            raise ExternalAPIError("GoogleElevation", 200, f"status={status}, error={data.get('error_message')}")
 
         elevations = [p["elevation"] for p in data.get("results", [])]
 
