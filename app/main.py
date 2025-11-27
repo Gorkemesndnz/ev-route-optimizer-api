@@ -96,6 +96,17 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # =============================================================================
+# ROOT ROUTE - Serve index.html
+# =============================================================================
+
+@app.get("/")
+async def read_index():
+    """Serve the main index.html file"""
+    from fastapi.responses import FileResponse
+    return FileResponse("static/index.html")
+
+
+# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 

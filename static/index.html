@@ -4,11 +4,68 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EV Rota Optimizasyonu</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title>EV Route Optimizer | Akıllı Rota Planlama</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'bounce-slow': 'bounce 2s infinite',
+                        'gradient': 'gradient 8s ease infinite',
+                    },
+                    keyframes: {
+                        gradient: {
+                            '0%, 100%': { backgroundPosition: '0% 50%' },
+                            '50%': { backgroundPosition: '100% 50%' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
     <style>
+        .gradient-bg {
+            background: linear-gradient(-45deg, #0f172a, #1e3a5f, #134e4a, #0f172a);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .input-glow:focus {
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+        }
+
+        .btn-glow {
+            box-shadow: 0 0 30px rgba(34, 197, 94, 0.4);
+            transition: all 0.3s ease;
+        }
+
+        .btn-glow:hover {
+            box-shadow: 0 0 50px rgba(34, 197, 94, 0.6);
+            transform: translateY(-2px);
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(34, 197, 94, 0.05));
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+
         .result-card {
-            margin-top: 20px;
             display: none;
         }
 
@@ -16,186 +73,544 @@
             display: none;
         }
 
-        .route-info {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
+        .car-animation {
+            animation: drive 2s ease-in-out infinite;
+        }
+
+        @keyframes drive {
+
+            0%,
+            100% {
+                transform: translateX(0);
+            }
+
+            50% {
+                transform: translateX(10px);
+            }
+        }
+
+        .battery-fill {
+            transition: width 1s ease-in-out;
         }
     </style>
 </head>
 
-<body>
-    <div class="container mt-5">
-        <div class="row justify-content-center">
-            <div class="col-md-8">
-                <div class="card">
-                    <div class="card-header bg-primary text-white">
-                        <h3 class="mb-0">🚗 EV Rota Optimizasyonu</h3>
-                    </div>
-                    <div class="card-body">
-                        <form id="routeForm">
-                            <div class="mb-3">
-                                <label for="startLocation" class="form-label">Başlangıç Noktası</label>
-                                <input type="text" class="form-control" id="startLocation"
+<body class="gradient-bg min-h-screen font-sans">
+    <!-- Header -->
+    <header class="py-6 px-4">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div
+                    class="w-12 h-12 bg-gradient-to-br from-green-400 to-emerald-600 rounded-xl flex items-center justify-center shadow-lg">
+                    <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-white">EV Route Optimizer</h1>
+                    <p class="text-xs text-gray-400">v1.3 Enterprise</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <a href="/docs" target="_blank"
+                    class="text-gray-400 hover:text-green-400 transition-colors text-sm flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    API Docs
+                </a>
+                <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span class="text-green-400 text-sm">Online</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="px-4 pb-12">
+        <div class="max-w-6xl mx-auto">
+            <!-- Hero Section -->
+            <div class="text-center mb-12">
+                <h2 class="text-4xl md:text-5xl font-bold text-white mb-4">
+                    Akıllı <span class="text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-500">EV
+                        Rota</span> Planlama
+                </h2>
+                <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+                    Yapay zeka destekli rota optimizasyonu ile elektrikli aracınız için en verimli güzergahı bulun.
+                </p>
+            </div>
+
+            <div class="grid lg:grid-cols-5 gap-8">
+                <!-- Form Section -->
+                <div class="lg:col-span-2">
+                    <div class="glass-card rounded-2xl p-6">
+                        <div class="flex items-center gap-2 mb-6">
+                            <div class="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center">
+                                <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                                </svg>
+                            </div>
+                            <h3 class="text-white font-semibold text-lg">Rota Bilgileri</h3>
+                        </div>
+
+                        <form id="routeForm" class="space-y-5">
+                            <!-- Start Location -->
+                            <div>
+                                <label class="block text-gray-400 text-sm mb-2">
+                                    <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd"
+                                                d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
+                                                clip-rule="evenodd" />
+                                        </svg>
+                                        Başlangıç Noktası
+                                    </span>
+                                </label>
+                                <input type="text" id="startLocation"
+                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 input-glow transition-all"
                                     placeholder="Örn: İstanbul, Türkiye" value="İstanbul, Türkiye" required>
                             </div>
 
-                            <div class="mb-3">
-                                <label for="endLocation" class="form-label">Varış Noktası</label>
-                                <input type="text" class="form-control" id="endLocation"
+                            <!-- End Location -->
+                            <div>
+                                <label class="block text-gray-400 text-sm mb-2">
+                                    <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd"
+                                                d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
+                                                clip-rule="evenodd" />
+                                        </svg>
+                                        Varış Noktası
+                                    </span>
+                                </label>
+                                <input type="text" id="endLocation"
+                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 input-glow transition-all"
                                     placeholder="Örn: Ankara, Türkiye" value="Ankara, Türkiye" required>
                             </div>
 
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label for="vehicleModel" class="form-label">Araç Modeli</label>
-                                    <select class="form-select" id="vehicleModel" required>
-                                        <option value="mg4_51kwh">MG4 Electric 51 kWh</option>
-                                        <option value="tesla_model_3_long_range">Tesla Model 3 Long Range</option>
-                                    </select>
-                                </div>
+                            <!-- Vehicle Model -->
+                            <div>
+                                <label class="block text-gray-400 text-sm mb-2">
+                                    <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" />
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                                        </svg>
+                                        Araç Modeli
+                                    </span>
+                                </label>
+                                <select id="vehicleModel"
+                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all appearance-none cursor-pointer"
+                                    required>
+                                    <option value="mg4_51kwh" class="bg-slate-800">🚗 MG4 Electric 51 kWh</option>
+                                    <option value="tesla_model_3_long_range" class="bg-slate-800">⚡ Tesla Model 3 Long
+                                        Range</option>
+                                    <option value="opel_frontera_44" class="bg-slate-800">🚙 Opel Frontera 44 kWh
+                                    </option>
+                                </select>
+                            </div>
 
-                                <div class="col-md-6 mb-3">
-                                    <label for="passengerCount" class="form-label">Yolcu Sayısı</label>
-                                    <input type="number" class="form-control" id="passengerCount" placeholder="1"
-                                        value="1" min="1" max="5" required>
+                            <!-- Battery & Load Row -->
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-gray-400 text-sm mb-2">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-yellow-400" fill="currentColor"
+                                                viewBox="0 0 20 20">
+                                                <path
+                                                    d="M2 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H3a1 1 0 01-1-1V4zM8 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H9a1 1 0 01-1-1V4zM15 3a1 1 0 00-1 1v12a1 1 0 001 1h2a1 1 0 001-1V4a1 1 0 00-1-1h-2z" />
+                                            </svg>
+                                            Batarya %
+                                        </span>
+                                    </label>
+                                    <input type="number" id="initialSoc"
+                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all"
+                                        value="85" min="10" max="100" required>
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 text-sm mb-2">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                                            </svg>
+                                            Yük (kg)
+                                        </span>
+                                    </label>
+                                    <input type="number" id="extraLoad"
+                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all"
+                                        value="0" min="0" max="500">
                                 </div>
                             </div>
 
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label for="initialSoc" class="form-label">Başlangıç Batarya (%)</label>
-                                    <input type="number" class="form-control" id="initialSoc" placeholder="80"
-                                        value="80" min="10" max="100" required>
-                                </div>
-
-                                <div class="col-md-6 mb-3">
-                                    <label for="extraLoad" class="form-label">Ek Yük (kg)</label>
-                                    <input type="number" class="form-control" id="extraLoad" placeholder="0" value="0"
-                                        min="0" max="500">
+                            <!-- Passengers -->
+                            <div>
+                                <label class="block text-gray-400 text-sm mb-2">
+                                    <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-cyan-400" fill="currentColor" viewBox="0 0 20 20">
+                                            <path
+                                                d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
+                                        </svg>
+                                        Yolcu Sayısı
+                                    </span>
+                                </label>
+                                <div class="flex items-center gap-3">
+                                    <button type="button" onclick="adjustPassengers(-1)"
+                                        class="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors">-</button>
+                                    <input type="number" id="passengerCount"
+                                        class="w-20 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-center focus:outline-none"
+                                        value="1" min="1" max="5" readonly>
+                                    <button type="button" onclick="adjustPassengers(1)"
+                                        class="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors">+</button>
+                                    <div class="flex gap-1 ml-2">
+                                        <span id="passengerIcons" class="text-cyan-400">👤</span>
+                                    </div>
                                 </div>
                             </div>
 
-                            <div class="d-grid">
-                                <button type="submit" class="btn btn-primary btn-lg">
-                                    🗺️ Rota Planla
-                                </button>
-                            </div>
+                            <!-- Submit Button -->
+                            <button type="submit"
+                                class="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold py-4 px-6 rounded-xl btn-glow flex items-center justify-center gap-3 mt-6">
+                                <svg class="w-5 h-5 car-animation" fill="none" stroke="currentColor"
+                                    viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                                Rotayı Optimize Et
+                            </button>
                         </form>
 
-                        <div class="loading text-center mt-3">
-                            <div class="spinner-border text-primary" role="status">
-                                <span class="visually-hidden">Yükleniyor...</span>
+                        <!-- Loading State -->
+                        <div class="loading mt-6">
+                            <div class="flex flex-col items-center justify-center py-8">
+                                <div class="relative">
+                                    <div class="w-16 h-16 border-4 border-green-500/20 rounded-full"></div>
+                                    <div
+                                        class="w-16 h-16 border-4 border-green-500 border-t-transparent rounded-full absolute top-0 left-0 animate-spin">
+                                    </div>
+                                </div>
+                                <p class="text-gray-400 mt-4 animate-pulse">Rota hesaplanıyor...</p>
+                                <p class="text-gray-500 text-sm mt-1">API'ler ile iletişim kuruluyor</p>
                             </div>
-                            <p class="mt-2">Rota hesaplanıyor...</p>
                         </div>
                     </div>
                 </div>
 
-                <div id="resultCard" class="card result-card">
-                    <div class="card-header bg-success text-white">
-                        <h4 class="mb-0">📍 Rota Sonuçları</h4>
+                <!-- Results Section -->
+                <div class="lg:col-span-3">
+                    <!-- Default State -->
+                    <div id="defaultState"
+                        class="glass-card rounded-2xl p-8 h-full flex flex-col items-center justify-center text-center">
+                        <div
+                            class="w-24 h-24 bg-gradient-to-br from-green-500/20 to-emerald-500/20 rounded-full flex items-center justify-center mb-6">
+                            <svg class="w-12 h-12 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                    d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                            </svg>
+                        </div>
+                        <h3 class="text-xl font-semibold text-white mb-2">Rota Sonuçları Burada Görünecek</h3>
+                        <p class="text-gray-400 max-w-md">
+                            Başlangıç ve varış noktalarını girin, aracınızı seçin ve "Rotayı Optimize Et" butonuna
+                            tıklayın.
+                        </p>
+                        <div class="flex items-center gap-4 mt-8 text-sm text-gray-500">
+                            <div class="flex items-center gap-2">
+                                <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd"
+                                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                        clip-rule="evenodd" />
+                                </svg>
+                                Tüketim Hesaplama
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd"
+                                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                        clip-rule="evenodd" />
+                                </svg>
+                                CO2 Tasarrufu
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd"
+                                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                        clip-rule="evenodd" />
+                                </svg>
+                                Batarya Analizi
+                            </div>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <div id="routeResults"></div>
-                    </div>
-                </div>
 
-                <div id="errorCard" class="card result-card border-danger">
-                    <div class="card-header bg-danger text-white">
-                        <h4 class="mb-0">❌ Hata</h4>
+                    <!-- Success Results -->
+                    <div id="resultCard" class="result-card">
+                        <div class="glass-card rounded-2xl overflow-hidden">
+                            <!-- Header -->
+                            <div
+                                class="bg-gradient-to-r from-green-500/20 to-emerald-500/20 p-6 border-b border-white/10">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 bg-green-500 rounded-xl flex items-center justify-center">
+                                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-white font-semibold text-lg">Rota Başarıyla Planlandı</h3>
+                                        <p class="text-gray-400 text-sm">Optimum güzergah hesaplandı</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Content -->
+                            <div class="p-6">
+                                <div id="routeResults"></div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <div id="errorResults"></div>
+
+                    <!-- Error Results -->
+                    <div id="errorCard" class="result-card">
+                        <div class="glass-card rounded-2xl overflow-hidden border border-red-500/30">
+                            <!-- Header -->
+                            <div class="bg-gradient-to-r from-red-500/20 to-orange-500/20 p-6 border-b border-white/10">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 bg-red-500 rounded-xl flex items-center justify-center">
+                                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-white font-semibold text-lg">Bir Hata Oluştu</h3>
+                                        <p class="text-gray-400 text-sm">Lütfen bilgileri kontrol edin</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Content -->
+                            <div class="p-6">
+                                <div id="errorResults"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
+
+            <!-- Features Section -->
+            <div class="mt-16 grid md:grid-cols-4 gap-6">
+                <div class="glass-card rounded-xl p-5 text-center">
+                    <div class="w-12 h-12 bg-blue-500/20 rounded-xl flex items-center justify-center mx-auto mb-3">
+                        <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                    </div>
+                    <h4 class="text-white font-medium mb-1">Gerçek Zamanlı</h4>
+                    <p class="text-gray-500 text-sm">Anlık trafik ve hava durumu</p>
+                </div>
+                <div class="glass-card rounded-xl p-5 text-center">
+                    <div class="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center mx-auto mb-3">
+                        <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                    </div>
+                    <h4 class="text-white font-medium mb-1">Akıllı Şarj</h4>
+                    <p class="text-gray-500 text-sm">Optimal şarj noktaları</p>
+                </div>
+                <div class="glass-card rounded-xl p-5 text-center">
+                    <div class="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center mx-auto mb-3">
+                        <svg class="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9.663 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
+                        </svg>
+                    </div>
+                    <h4 class="text-white font-medium mb-1">Fizik Motoru</h4>
+                    <p class="text-gray-500 text-sm">Hassas tüketim hesabı</p>
+                </div>
+                <div class="glass-card rounded-xl p-5 text-center">
+                    <div class="w-12 h-12 bg-emerald-500/20 rounded-xl flex items-center justify-center mx-auto mb-3">
+                        <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </div>
+                    <h4 class="text-white font-medium mb-1">Çevre Dostu</h4>
+                    <p class="text-gray-500 text-sm">CO2 tasarrufu takibi</p>
+                </div>
+            </div>
         </div>
-    </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="py-6 px-4 border-t border-white/5">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+            <p class="text-gray-500 text-sm"> 2024 EV Route Optimizer API v1.3 Enterprise</p>
+            <div class="flex items-center gap-6 text-sm">
+                <a href="/docs" class="text-gray-400 hover:text-green-400 transition-colors">API Documentation</a>
+                <a href="/health" class="text-gray-400 hover:text-green-400 transition-colors">Health Check</a>
+            </div>
+        </div>
+    </footer>
 
     <script>
+        // Passenger adjustment
+        function adjustPassengers(delta) {
+            const input = document.getElementById('passengerCount');
+            let value = parseInt(input.value) + delta;
+            value = Math.max(1, Math.min(5, value));
+            input.value = value;
+            updatePassengerIcons(value);
+        }
+
+        function updatePassengerIcons(count) {
+            const icons = document.getElementById('passengerIcons');
+            icons.textContent = '👤'.repeat(count);
+        }
+
+        // Form submission
         document.getElementById('routeForm').addEventListener('submit', async function (e) {
             e.preventDefault();
 
-            // Loading göster
+            // Show loading, hide results
             document.querySelector('.loading').style.display = 'block';
             document.getElementById('resultCard').style.display = 'none';
             document.getElementById('errorCard').style.display = 'none';
+            document.getElementById('defaultState').style.display = 'none';
 
-            // Form verilerini al
             const formData = {
                 start_location: document.getElementById('startLocation').value,
                 end_location: document.getElementById('endLocation').value,
                 vehicle_model_id: document.getElementById('vehicleModel').value,
                 initial_soc_percent: parseInt(document.getElementById('initialSoc').value),
                 extra_load_kg: parseInt(document.getElementById('extraLoad').value),
+                passenger_count: parseInt(document.getElementById('passengerCount').value),
                 preferred_charging_stops: [],
                 avoid_tolls: false,
-                optimize_for: "time"
+                optimize_for: "efficiency"
             };
 
             try {
                 const response = await fetch('/optimize_route', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(formData)
                 });
 
                 const data = await response.json();
-
-                // Loading gizle
                 document.querySelector('.loading').style.display = 'none';
 
-                if (data.status === 'success' || data.status === 'multi_stop_plan_success' || data.total_distance_km > 0) {
+                if (data.status === 'success' || data.total_distance_km > 0) {
                     showResults(data);
                 } else {
                     showError(data);
                 }
-
             } catch (error) {
                 document.querySelector('.loading').style.display = 'none';
-                showError({ status: 'error', detail: error.message });
+                showError({ status: 'error', message: error.message });
             }
         });
 
         function showResults(data) {
             const resultsDiv = document.getElementById('routeResults');
+            const leg = data.legs[0] || {};
+
+            const hours = Math.floor(data.total_duration_minutes / 60);
+            const mins = Math.round(data.total_duration_minutes % 60);
+            const durationStr = hours > 0 ? `${hours}s ${mins}dk` : `${mins}dk`;
 
             let html = `
-                <div class="route-info">
-                    <h5>📊 Rota Özeti</h5>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <p><strong>Toplam Mesafe:</strong> ${data.total_distance_km.toFixed(1)} km</p>
-                            <p><strong>Tahmini Süre:</strong> ${data.total_duration_minutes} dakika</p>
-                            <p><strong>Toplam Tüketim:</strong> ${data.legs[0]?.consumption_kwh?.toFixed(2) || 'N/A'} kWh</p>
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div class="stat-card rounded-xl p-4 text-center">
+                        <p class="text-gray-400 text-xs mb-1">Mesafe</p>
+                        <p class="text-2xl font-bold text-white">${data.total_distance_km.toFixed(0)}</p>
+                        <p class="text-green-400 text-sm">km</p>
+                    </div>
+                    <div class="stat-card rounded-xl p-4 text-center">
+                        <p class="text-gray-400 text-xs mb-1">Süre</p>
+                        <p class="text-2xl font-bold text-white">${durationStr}</p>
+                        <p class="text-blue-400 text-sm">tahmini</p>
+                    </div>
+                    <div class="stat-card rounded-xl p-4 text-center">
+                        <p class="text-gray-400 text-xs mb-1">Tüketim</p>
+                        <p class="text-2xl font-bold text-white">${leg.consumption_kwh?.toFixed(1) || 'N/A'}</p>
+                        <p class="text-yellow-400 text-sm">kWh</p>
+                    </div>
+                    <div class="stat-card rounded-xl p-4 text-center">
+                        <p class="text-gray-400 text-xs mb-1">CO2 Tasarrufu</p>
+                        <p class="text-2xl font-bold text-white">${data.total_co2_savings_kg.toFixed(1)}</p>
+                        <p class="text-emerald-400 text-sm">kg</p>
+                    </div>
+                </div>
+
+                <!-- Battery Status -->
+                <div class="bg-white/5 rounded-xl p-5 mb-6">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-gray-400 text-sm">Batarya Durumu</span>
+                        <span class="text-white font-medium">${leg.start_soc_percent?.toFixed(0) || 0}% → ${leg.end_soc_percent?.toFixed(0) || 0}%</span>
+                    </div>
+                    <div class="relative h-6 bg-white/10 rounded-full overflow-hidden">
+                        <div class="absolute left-0 top-0 h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all battery-fill" style="width: ${leg.start_soc_percent || 0}%"></div>
+                        <div class="absolute left-0 top-0 h-full bg-gradient-to-r from-yellow-500 to-orange-400 rounded-full transition-all battery-fill" style="width: ${leg.end_soc_percent || 0}%"></div>
+                    </div>
+                    <div class="flex justify-between mt-2 text-xs text-gray-500">
+                        <span>Başlangıç: ${leg.start_soc_percent?.toFixed(0) || 0}%</span>
+                        <span>Varış: ${leg.end_soc_percent?.toFixed(0) || 0}%</span>
+                    </div>
+                </div>
+
+                <!-- Route Details -->
+                <div class="bg-white/5 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+                        </svg>
+                        Rota Detayları
+                    </h4>
+                    <div class="space-y-3">
+                        <div class="flex items-center gap-3 p-3 bg-white/5 rounded-lg">
+                            <div class="w-8 h-8 bg-green-500/20 rounded-full flex items-center justify-center">
+                                <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+                            </div>
+                            <div class="flex-1">
+                                <p class="text-white text-sm">${document.getElementById('startLocation').value}</p>
+                                <p class="text-gray-500 text-xs">Başlangıç Noktası</p>
+                            </div>
                         </div>
-                        <div class="col-md-6">
-                            <p><strong>Başlangıç Batarya:</strong> ${data.legs[0]?.start_soc_percent || 'N/A'}%</p>
-                            <p><strong>Varış Batarya:</strong> ${data.legs[0]?.arrival_soc_percent || 'N/A'}%</p>
-                            <p><strong>CO2 Tasarrufu:</strong> ${data.total_co2_savings_kg.toFixed(2)} kg</p>
+                        <div class="flex items-center gap-3 p-3 bg-white/5 rounded-lg">
+                            <div class="w-8 h-8 bg-red-500/20 rounded-full flex items-center justify-center">
+                                <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+                            </div>
+                            <div class="flex-1">
+                                <p class="text-white text-sm">${document.getElementById('endLocation').value}</p>
+                                <p class="text-gray-500 text-xs">Varış Noktası</p>
+                            </div>
                         </div>
                     </div>
                 </div>
-            `;
 
-            if (data.legs && data.legs.length > 0) {
-                html += '<div class="route-info"><h5>🛣️ Rota Detayları</h5>';
-                data.legs.forEach((leg, index) => {
-                    html += `
-                        <div class="mb-3 p-3 border rounded">
-                            <p><strong>Bölüm ${index + 1}:</strong> ${leg.type === 'drive' ? '🚗 Sürüş' : '🔌 Şarj'}</p>
-                            <p><strong>Mesafe:</strong> ${leg.distance_km.toFixed(1)} km</p>
-                            <p><strong>Süre:</strong> ${leg.duration_minutes} dakika</p>
-                            ${leg.consumption_kwh ? `<p><strong>Tüketim:</strong> ${leg.consumption_kwh.toFixed(2)} kWh</p>` : ''}
-                        </div>
-                    `;
-                });
-                html += '</div>';
-            }
+                <!-- Efficiency Metrics -->
+                <div class="mt-6 p-4 bg-gradient-to-r from-green-500/10 to-emerald-500/10 rounded-xl border border-green-500/20">
+                    <div class="flex items-center gap-2 mb-2">
+                        <svg class="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"/>
+                        </svg>
+                        <span class="text-green-400 font-medium text-sm">Çevre Dostu Sürüş</span>
+                    </div>
+                    <p class="text-gray-400 text-sm">
+                        Bu rotada <span class="text-white font-medium">${data.total_co2_savings_kg.toFixed(1)} kg</span> CO2 tasarrufu sağladınız. 
+                        Bu, yaklaşık <span class="text-white font-medium">${Math.round(data.total_co2_savings_kg / 21)}</span> ağacın yıllık CO2 absorpsiyonuna eşdeğer!
+                    </p>
+                </div>
+            `;
 
             resultsDiv.innerHTML = html;
             document.getElementById('resultCard').style.display = 'block';
@@ -205,18 +620,17 @@
             const errorDiv = document.getElementById('errorResults');
 
             let html = `
-                <div class="alert alert-danger">
-                    <h5>Hata Türü: ${data.status}</h5>
-                    <p>${data.detail || data.error || 'Bilinmeyen hata oluştu.'}</p>
+                <div class="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+                    <p class="text-red-400 font-medium mb-1">${data.status || 'Hata'}</p>
+                    <p class="text-gray-400 text-sm">${data.message || data.detail || 'Bilinmeyen bir hata oluştu.'}</p>
                 </div>
             `;
 
             if (data.status === 'error_no_station_found') {
                 html += `
-                    <div class="alert alert-warning">
-                        <h6>⚠️ Not:</h6>
-                        <p>Rota başarıyla hesaplandı ancak şarj istasyonları bulunamadı. 
-                        Bu normal bir durumdur - Google Maps API entegrasyonu çalışıyor.</p>
+                    <div class="mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4">
+                        <p class="text-yellow-400 font-medium mb-1">💡 Bilgi</p>
+                        <p class="text-gray-400 text-sm">Rota hesaplandı ancak şarj istasyonları bulunamadı. Bu normal bir durum olabilir.</p>
                     </div>
                 `;
             }
