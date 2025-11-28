@@ -27,7 +27,22 @@ function adjustPassengers(delta) {
  */
 function updatePassengerIcons(count) {
     const icons = document.getElementById('passengerIcons');
-    icons.textContent = '👤'.repeat(count);
+    if (icons) icons.textContent = '👤'.repeat(count);
+}
+
+// ============================================
+// CHILD CONTROLS
+// ============================================
+
+/**
+ * Çocuk sayısını artır/azalt
+ * @param {number} delta - Değişim miktarı (+1 veya -1)
+ */
+function adjustChildren(delta) {
+    const input = document.getElementById('childCount');
+    let value = parseInt(input.value) + delta;
+    value = Math.max(0, Math.min(4, value));
+    input.value = value;
 }
 
 // ============================================
@@ -43,7 +58,7 @@ function toggleAdvancedSoc() {
     advancedSocEnabled = !advancedSocEnabled;
     const inputs = document.getElementById('socInputs');
     const icon = document.getElementById('toggleIcon');
-    
+
     if (advancedSocEnabled) {
         inputs.style.display = 'grid';
         icon.textContent = '▼ Kapat';

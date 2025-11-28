@@ -47,8 +47,15 @@ async function handleFormSubmit(e) {
             charge_min_soc_percent: parseInt(document.getElementById('chargeMinSoc').value),
             charge_target_soc_percent: parseInt(document.getElementById('chargeTargetSoc').value),
             extra_load_kg: parseInt(document.getElementById('extraLoad').value),
-            passenger_count: parseInt(document.getElementById('passengerCount').value)
+            passenger_count: parseInt(document.getElementById('passengerCount').value),
+            child_count: parseInt(document.getElementById('childCount').value) || 0
         };
+
+        // DEBUG: Form verilerini kontrol et
+        console.log('🔍 Form verileri:', formData);
+        console.log('👤 Yetişkin:', document.getElementById('passengerCount').value);
+        console.log('👶 Çocuk:', document.getElementById('childCount').value);
+        console.log('🎯 Varış %:', document.getElementById('targetArrivalSoc').value);
 
         // API isteği
         const response = await fetch('/optimize_route', {

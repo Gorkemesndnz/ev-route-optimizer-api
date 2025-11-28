@@ -177,7 +177,8 @@ class MainCalculator:
         segment: DriveLeg,
         vehicle: VehiclePhysicsProfile,
         passenger_count: int = 1,
-        extra_load_kg: float = 0.0
+        extra_load_kg: float = 0.0,
+        child_count: int = 0
     ) -> ConsumptionResult:
         """
         🎯 V1.6 FINAL - Fiziksel Olarak Doğru Tüketim Hesaplaması
@@ -237,7 +238,8 @@ class MainCalculator:
         mass_factor = LoadEffectCalculator.calculate_mass_factor(
             base_vehicle_weight_kg=vehicle.curb_weight_kg,
             passenger_count=passenger_count,
-            extra_load_kg=extra_load_kg
+            extra_load_kg=extra_load_kg,
+            child_count=child_count
         )
 
         # Yük etkisi hem düz yol hem elevationda geçerli
@@ -360,6 +362,7 @@ def calculate_segment_consumption_kwh(
     temperature_celsius: float = 20.0,
     extra_load_kg: float = 0.0,
     passenger_count: int = 1,
+    child_count: int = 0,
     engine_version: str = "v1"
 ) -> float:
     """
@@ -375,7 +378,8 @@ def calculate_segment_consumption_kwh(
         segment_elevation_loss_m: İniş (m) - opsiyonel
         temperature_celsius: Sıcaklık (°C)
         extra_load_kg: Ekstra yük (kg)
-        passenger_count: Yolcu sayısı
+        passenger_count: Yetişkin yolcu sayısı
+        child_count: Çocuk yolcu sayısı (30 kg/çocuk)
         engine_version: "v1" (kural tabanlı)
     
     Returns:
@@ -403,7 +407,8 @@ def calculate_segment_consumption_kwh(
         segment=segment,
         vehicle=vehicle,
         passenger_count=passenger_count,
-        extra_load_kg=extra_load_kg
+        extra_load_kg=extra_load_kg,
+        child_count=child_count
     )
     
     return result.practical_consumption_kwh

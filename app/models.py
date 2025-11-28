@@ -190,7 +190,8 @@ class RouteRequest(BaseModel):
         80.0, ge=50, le=100,
         description="Şarj istasyonundan çıkış hedefi (default %80)"
     )
-    passenger_count: int = Field(1, ge=1, description="Yolcu sayısı")
+    passenger_count: int = Field(1, ge=1, description="Yetişkin yolcu sayısı")
+    child_count: int = Field(0, ge=0, le=4, description="Çocuk yolcu sayısı (30 kg/çocuk)")
     extra_load_kg: float = Field(0.0, ge=0.0, description="Bagaj vb. ekstra yük")
     departure_time_iso: Optional[str] = Field(
         None,

@@ -169,93 +169,86 @@
                                 </select>
                             </div>
 
-                            <!-- Battery & Load Row -->
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label class="block text-gray-400 text-sm mb-2">
-                                        <span class="flex items-center gap-2">
-                                            <svg class="w-4 h-4 text-yellow-400" fill="currentColor"
-                                                viewBox="0 0 20 20">
-                                                <path
-                                                    d="M2 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H3a1 1 0 01-1-1V4zM8 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H9a1 1 0 01-1-1V4zM15 3a1 1 0 00-1 1v12a1 1 0 001 1h2a1 1 0 001-1V4a1 1 0 00-1-1h-2z" />
-                                            </svg>
-                                            Batarya %
-                                        </span>
-                                    </label>
-                                    <input type="number" id="initialSoc"
-                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all"
-                                        value="85" min="10" max="100" required>
-                                </div>
-                                <div>
-                                    <label class="block text-gray-400 text-sm mb-2">
-                                        <span class="flex items-center gap-2">
-                                            <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor"
-                                                viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                    d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                                            </svg>
-                                            Yük (kg)
-                                        </span>
-                                    </label>
-                                    <input type="number" id="extraLoad"
-                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all"
-                                        value="0" min="0" max="500">
-                                </div>
-                            </div>
-
-                            <!-- Passengers -->
+                            <!-- Battery -->
                             <div>
                                 <label class="block text-gray-400 text-sm mb-2">
                                     <span class="flex items-center gap-2">
-                                        <svg class="w-4 h-4 text-cyan-400" fill="currentColor" viewBox="0 0 20 20">
+                                        <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
                                             <path
-                                                d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
+                                                d="M2 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H3a1 1 0 01-1-1V4zM8 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H9a1 1 0 01-1-1V4zM15 3a1 1 0 00-1 1v12a1 1 0 001 1h2a1 1 0 001-1V4a1 1 0 00-1-1h-2z" />
                                         </svg>
-                                        Yolcu Sayısı
+                                        Mevcut Batarya %
                                     </span>
                                 </label>
-                                <div class="flex items-center gap-3">
-                                    <button type="button" onclick="adjustPassengers(-1)"
-                                        class="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors">-</button>
-                                    <input type="number" id="passengerCount"
-                                        class="w-20 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-center focus:outline-none"
-                                        value="1" min="1" max="5" readonly>
-                                    <button type="button" onclick="adjustPassengers(1)"
-                                        class="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors">+</button>
-                                    <div class="flex gap-1 ml-2">
-                                        <span id="passengerIcons" class="text-cyan-400">👤</span>
-                                    </div>
-                                </div>
+                                <input type="number" id="initialSoc"
+                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all"
+                                    value="85" min="10" max="100" required>
                             </div>
 
-                            <!-- V1.5: Advanced SOC Settings (Optional) -->
+                            <!-- V1.5: Advanced Settings (Optional) -->
                             <div class="bg-white/5 rounded-xl p-4 border border-white/10">
                                 <div class="flex items-center justify-between mb-3 cursor-pointer hover:bg-white/5 rounded-lg p-2 -m-2"
                                     onclick="toggleAdvancedSoc()">
-                                    <span class="text-gray-400 text-sm">⚙️ Gelişmiş Şarj Ayarları</span>
+                                    <span class="text-gray-400 text-sm">⚙️ Gelişmiş Ayarlar</span>
                                     <span id="toggleIcon" class="text-gray-500 text-xs">▶ Aç</span>
                                 </div>
-                                <div id="socInputs" class="grid grid-cols-3 gap-3" style="display:none">
-                                    <div>
-                                        <label class="block text-gray-500 text-xs mb-1">🎯 Varış %</label>
-                                        <input type="number" id="targetArrivalSoc"
-                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500/50 input-glow transition-all"
-                                            value="20" min="5" max="50">
+                                <div id="socInputs" style="display:none">
+                                    <!-- Yolcu & Yük -->
+                                    <div class="grid grid-cols-3 gap-3 mb-3">
+                                        <div>
+                                            <label class="block text-gray-500 text-xs mb-1">� Yetişkin</label>
+                                            <div class="flex items-center gap-1">
+                                                <button type="button" onclick="adjustPassengers(-1)"
+                                                    class="w-7 h-7 bg-white/10 hover:bg-white/20 rounded text-white text-xs">-</button>
+                                                <input type="number" id="passengerCount"
+                                                    class="w-10 bg-white/5 border border-white/10 rounded px-1 py-1 text-white text-sm text-center"
+                                                    value="1" min="1" max="5" readonly>
+                                                <button type="button" onclick="adjustPassengers(1)"
+                                                    class="w-7 h-7 bg-white/10 hover:bg-white/20 rounded text-white text-xs">+</button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-500 text-xs mb-1">👶 Çocuk</label>
+                                            <div class="flex items-center gap-1">
+                                                <button type="button" onclick="adjustChildren(-1)"
+                                                    class="w-7 h-7 bg-white/10 hover:bg-white/20 rounded text-white text-xs">-</button>
+                                                <input type="number" id="childCount"
+                                                    class="w-10 bg-white/5 border border-white/10 rounded px-1 py-1 text-white text-sm text-center"
+                                                    value="0" min="0" max="4" readonly>
+                                                <button type="button" onclick="adjustChildren(1)"
+                                                    class="w-7 h-7 bg-white/10 hover:bg-white/20 rounded text-white text-xs">+</button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-500 text-xs mb-1">📦 Yük (kg)</label>
+                                            <input type="number" id="extraLoad"
+                                                class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                                                value="0" min="0" max="500">
+                                        </div>
                                     </div>
-                                    <div>
-                                        <label class="block text-gray-500 text-xs mb-1">🔋 Şarj Eşiği %</label>
-                                        <input type="number" id="chargeMinSoc"
-                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500/50 input-glow transition-all"
-                                            value="20" min="10" max="40">
-                                    </div>
-                                    <div>
-                                        <label class="block text-gray-500 text-xs mb-1">⚡ Şarj Hedefi %</label>
-                                        <input type="number" id="chargeTargetSoc"
-                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500/50 input-glow transition-all"
-                                            value="80" min="50" max="100">
+                                    <!-- Şarj Ayarları -->
+                                    <div class="grid grid-cols-3 gap-3">
+                                        <div>
+                                            <label class="block text-gray-500 text-xs mb-1">🎯 Varış %</label>
+                                            <input type="number" id="targetArrivalSoc"
+                                                class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                                                value="20" min="5" max="50">
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-500 text-xs mb-1">🔋 Şarj Eşiği %</label>
+                                            <input type="number" id="chargeMinSoc"
+                                                class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                                                value="20" min="10" max="40">
+                                        </div>
+                                        <div>
+                                            <label class="block text-gray-500 text-xs mb-1">⚡ Şarj Hedefi %</label>
+                                            <input type="number" id="chargeTargetSoc"
+                                                class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                                                value="80" min="50" max="100">
+                                        </div>
                                     </div>
                                 </div>
-                                <p class="text-gray-600 text-xs mt-2">Varsayılan: Otomatik optimal değerler</p>
+                                <p class="text-gray-500 text-xs mt-2">Varsayılan: 1 yolcu, 0 kg yük, otomatik şarj</p>
                             </div>
 
                             <!-- Submit Button -->

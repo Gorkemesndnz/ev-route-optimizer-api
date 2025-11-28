@@ -303,6 +303,23 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
         )
         
         # =====================================================================
+        # STEP A: INPUT VALIDATION
+        # =====================================================================
+        logger.info("Route optimization request received", 
+                   start=request.start_location, 
+                   end=request.end_location, 
+                   vehicle=request.vehicle_model_id)
+        
+        # DEBUG: Gelişmiş ayarları logla
+        logger.info("🔍 DEBUG - Form verileri:",
+                   passengers=request.passenger_count,
+                   children=request.child_count,
+                   extra_load=request.extra_load_kg,
+                   target_arrival_soc=request.target_arrival_soc_percent,
+                   charge_min=request.charge_min_soc_percent,
+                   charge_target=request.charge_target_soc_percent)
+        
+        # =====================================================================
         # STEP B: En iyi rotayı seç (route_selector)
         # =====================================================================
         try:
@@ -395,6 +412,7 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
                 temperature_celsius=DEFAULT_TEMPERATURE_C,
                 extra_load_kg=request.extra_load_kg,
                 passenger_count=request.passenger_count,
+                child_count=request.child_count,
                 engine_version="v1"
             )
         except Exception as e:
@@ -511,6 +529,7 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
                 temperature_celsius=avg_weather.temp_c if avg_weather else DEFAULT_TEMPERATURE_C,
                 extra_load_kg=request.extra_load_kg,
                 passenger_count=request.passenger_count,
+                child_count=request.child_count,
                 engine_version="v1"
             )
         except Exception as e:
