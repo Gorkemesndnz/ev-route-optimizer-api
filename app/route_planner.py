@@ -550,7 +550,30 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
         # Max range hesapla (mevcut SOC ile)
         available_kwh = (request.current_soc_percent / 100.0) * battery_kwh
         usable_kwh = available_kwh * (1.0 - SOC_SAFETY_BUFFER_PERCENT / 100.0)
-        consumption_per_km = vehicle.base_consumption_wh_km / 1000.0  # Wh/km -> kWh/km
+        
+        # V1.6: Yük faktörünü hesapla (yetişkin 75kg, çocuk 30kg)
+        from app.consumption_engine.v1_rule_based.load_layer import LoadEffectCalculator
+        load_factor = LoadEffectCalculator.calculate_mass_factor(
+            base_vehicle_weight_kg=vehicle.curb_weight_kg,
+            passenger_count=request.passenger_count,
+            extra_load_kg=request.extra_load_kg,
+            child_count=request.child_count
+        )
+        
+        # Base tüketim + yük faktörü
+        base_consumption_per_km = vehicle.base_consumption_wh_km / 1000.0  # Wh/km -> kWh/km
+        consumption_per_km = base_consumption_per_km * load_factor
+        
+        logger.info(
+            "Load factor calculated",
+            passengers=request.passenger_count,
+            children=request.child_count,
+            extra_load_kg=request.extra_load_kg,
+            load_factor=round(load_factor, 3),
+            base_consumption=round(base_consumption_per_km, 4),
+            adjusted_consumption=round(consumption_per_km, 4)
+        )
+        
         max_range_km = usable_kwh / consumption_per_km if consumption_per_km > 0 else 0
         
         logger.info(
