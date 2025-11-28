@@ -30,7 +30,12 @@ from app.models import (
 )
 
 from app.route_segmenter import RouteSegmenter, RouteSegment
-from app.soc_simulator import SOCSimulator, ChargeHotspot, SegmentWithConsumption
+from app.soc_simulator import (
+    SOCSimulator, 
+    ChargeHotspot, 
+    SegmentWithConsumption,
+    ChargePlanOptimizer  # Yeni: Durak sayısını minimize eden optimizer
+)
 from app.consumption_engine.main_calculator import calculate_route_consumption
 from app.consumption_engine.vehicle_models import get_vehicle_model
 from app.route_selector import find_best_route
@@ -72,7 +77,7 @@ def _resolve_defaults(request: RouteRequest) -> tuple:
     return passenger_count, child_count, extra_load_kg
 
 
-def _calculate_smart_soc_params(
+def _calculate_base_soc_params(
     battery_kwh: float,
     start_soc: float,
     total_consumption_kwh: float,
@@ -80,22 +85,22 @@ def _calculate_smart_soc_params(
     request: RouteRequest
 ) -> tuple:
     """
-    Şarj parametrelerini akıllıca hesapla (V1 kural tabanlı).
+    Temel SOC parametrelerini hesapla (charge_min_soc ve arrival_soc).
+    
+    NOT: charge_target_soc artık ChargePlanOptimizer tarafından dinamik olarak belirlenir.
+    80% sabit hedef KALDIRILDI - optimizer 75-95% arasında en iyi değeri seçer.
+    
     Kullanıcı değer girdiyse aynen kullan, None ise optimize et.
     
-    V2'de bu fonksiyon ML modeli ile değiştirilecek.
-    
     Returns:
-        (charge_min_soc, charge_target_soc, arrival_soc)
+        (charge_min_soc, user_target_soc_override, arrival_soc)
+        user_target_soc_override: Kullanıcı değer girdiyse o değer, yoksa None
     """
     # Mevcut enerji ve ihtiyaç
     current_energy_kwh = (start_soc / 100) * battery_kwh
     
-    # Tek şarjla gidebilir miyiz? (veya hiç şarj gerekmez mi?)
+    # Tek şarjla gidebilir miyiz?
     can_complete_direct = current_energy_kwh >= total_consumption_kwh * 1.15  # %15 güvenlik
-    
-    # Kullanıcı değer girdiyse → aynen kullan
-    # None ise → akıllı hesapla
     
     # 1. Varış SOC
     if request.target_arrival_soc_percent is not None:
@@ -121,44 +126,15 @@ def _calculate_smart_soc_params(
         else:
             charge_min_soc = 25.0  # Uzun rota - daha güvenli
     
-    # 3. Şarj Hedefi (target_soc) - EN ÖNEMLİ OPTİMİZASYON
-    if request.charge_target_soc_percent is not None:
-        charge_target_soc = request.charge_target_soc_percent
-    else:
-        # Tek şarjla varılabilir mi hesapla
-        # Mantık: Yüksek şarjla (örn %95) tek durakla gidebilir miyiz?
-        
-        # Mevcut enerjiyle ne kadar gidebiliriz?
-        safe_energy = current_energy_kwh * 0.85  # %15 güvenlik payı bırak
-        
-        # İlk şarj noktasına kadar tahmini tüketim (mevcut enerjinin yarısı kadar gideriz)
-        consumption_to_first_charge = min(safe_energy, total_consumption_kwh * 0.4)
-        
-        # Şarj sonrası gereken enerji
-        remaining_after_first_charge = total_consumption_kwh - consumption_to_first_charge
-        
-        # %95 şarjla yeterli mi?
-        energy_at_95 = battery_kwh * 0.95
-        can_complete_with_single_high_charge = energy_at_95 >= remaining_after_first_charge + (arrival_soc / 100 * battery_kwh)
-        
-        if can_complete_with_single_high_charge:
-            # Tek şarj yeterli - %95'e kadar şarj et
-            # Tam olarak ne kadar gerektiğini hesapla
-            required_energy = remaining_after_first_charge + (arrival_soc / 100 * battery_kwh) + (battery_kwh * 0.05)  # +5% güvenlik
-            target_percent = (required_energy / battery_kwh) * 100
-            charge_target_soc = min(95.0, max(80.0, target_percent))
-        else:
-            # Birden fazla şarj gerekli - hızlı şarj için %80
-            charge_target_soc = 80.0
+    # 3. Kullanıcı target_soc override'ı (None ise optimizer belirler)
+    user_target_soc_override = request.charge_target_soc_percent
     
     logger.info(
-        f"Smart SOC params: min={charge_min_soc}%, target={charge_target_soc}%, arrival={arrival_soc}% "
-        f"(user_override: min={request.charge_min_soc_percent is not None}, "
-        f"target={request.charge_target_soc_percent is not None}, "
-        f"arrival={request.target_arrival_soc_percent is not None})"
+        f"Base SOC params: min={charge_min_soc}%, arrival={arrival_soc}% "
+        f"(user_target_override={user_target_soc_override})"
     )
     
-    return charge_min_soc, charge_target_soc, arrival_soc
+    return charge_min_soc, user_target_soc_override, arrival_soc
 
 
 def _create_error_response(status: str, message: str = None) -> MultiStopRouteResponse:
@@ -420,8 +396,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         total_consumption = sum(s.consumption_kwh for s in segments_with_consumption)
         logger.info(f"Total consumption calculated: {round(total_consumption, 2)}kWh")
         
-        # STEP 8: Akıllı SOC Parametreleri (V1 kural tabanlı, V2'de ML)
-        charge_min_soc, charge_target_soc, arrival_soc = _calculate_smart_soc_params(
+        # STEP 8: Temel SOC Parametreleri (min_soc, arrival_soc)
+        charge_min_soc, user_target_soc_override, arrival_soc = _calculate_base_soc_params(
             battery_kwh=battery_kwh,
             start_soc=request.current_soc_percent,
             total_consumption_kwh=total_consumption,
@@ -429,28 +405,53 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             request=request
         )
         
-        # STEP 9: SOC Simulator - Hotspot tespiti
-        simulator = SOCSimulator(
-            battery_capacity_kwh=battery_kwh,
-            start_soc=request.current_soc_percent,
-            target_arrival_soc=arrival_soc,
-            charge_min_soc=charge_min_soc,
-            charge_target_soc=charge_target_soc
-        )
+        # STEP 9: ChargePlanOptimizer - Durak sayısını minimize eden optimal target_soc
+        # Kullanıcı target_soc verdiyse → doğrudan kullan (override)
+        # Kullanıcı vermediyse → optimizer 75-95% arasında en iyi değeri seçer
         
-        # STEP 9+10: SOC Simülasyonu + İstasyon Bulma (TEK ADIMDA)
-        sim_with_stations = await simulator.simulate_with_stations(
-            segments_with_consumption, 
-            route_distance_km,
-            request.vehicle_model_id
-        )
+        avg_speed_kmh = (route_distance_km / route_duration_min) * 60 if route_duration_min > 0 else 80.0
         
-        hotspots = sim_with_stations.hotspots
-        charge_stops = sim_with_stations.charge_stops_count
+        if user_target_soc_override is not None:
+            # Kullanıcı override → eski yöntem (sabit target_soc)
+            charge_target_soc = user_target_soc_override
+            simulator = SOCSimulator(
+                battery_capacity_kwh=battery_kwh,
+                start_soc=request.current_soc_percent,
+                target_arrival_soc=arrival_soc,
+                charge_min_soc=charge_min_soc,
+                charge_target_soc=charge_target_soc
+            )
+            sim_result = simulator.simulate(segments_with_consumption, route_distance_km)
+            logger.info(f"User override target_soc={charge_target_soc}%, stops={len(sim_result.hotspots)}")
+        else:
+            # Optimizer → 75-95% arasında en az durak üreten target_soc'u bul
+            optimizer = ChargePlanOptimizer(battery_capacity_kwh=battery_kwh)
+            charge_target_soc, sim_result = optimizer.find_optimal_plan(
+                segments_with_consumption=segments_with_consumption,
+                total_distance_km=route_distance_km,
+                battery_capacity_kwh=battery_kwh,
+                start_soc=request.current_soc_percent,
+                target_arrival_soc=arrival_soc,
+                charge_min_soc=charge_min_soc,
+                avg_speed_kmh=avg_speed_kmh
+            )
+        
+        # STEP 10: Hotspotlar için istasyon bulma
+        hotspots = sim_result.hotspots
+        station_results = []
+        
+        if hotspots:
+            from app.station_finder import find_stations_for_hotspots
+            station_results = await find_stations_for_hotspots(
+                hotspots,
+                request.vehicle_model_id
+            )
+        
+        charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0
         
         logger.info(
             f"SOC simulation + stations: {len(hotspots)} hotspots, "
-            f"{charge_stops} stations, final_soc={sim_with_stations.final_soc}%"
+            f"{charge_stops} stations, final_soc={sim_result.final_soc}%"
         )
         
         # STEP 11: Multi-Leg Builder
@@ -461,14 +462,14 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             total_duration_min=route_duration_min,
             total_consumption_kwh=total_consumption,
             start_soc=request.current_soc_percent,
-            final_soc=sim_with_stations.final_soc,
+            final_soc=sim_result.final_soc,
             hotspots=hotspots,
-            station_results=sim_with_stations.station_results,
+            station_results=station_results,
             charge_target_soc=charge_target_soc,
             polyline=polyline
         )
         
-        end_soc = sim_with_stations.final_soc
+        end_soc = sim_result.final_soc
         
         # STEP 12: CO2 tasarrufu
         try:
@@ -479,7 +480,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         # Mesaj oluştur
         if charge_stops > 0:
             message = f"{charge_stops} şarj durağı gerekli (hedef: %{round(charge_target_soc)})"
-        elif sim_with_stations.simulation.can_complete_without_charging:
+        elif sim_result.can_complete_without_charging:
             message = f"Şarj gerekmez. Varış SOC: %{round(end_soc)}"
         else:
             message = f"Dikkat! Varış SOC: %{round(end_soc)}"

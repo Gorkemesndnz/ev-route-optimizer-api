@@ -45,6 +45,12 @@ SAFETY_BUFFER_PERCENT = 10.0  # Güvenlik marjı
 MIN_CHARGE_THRESHOLD_PERCENT = 15.0  # Minimum şarj seviyesi
 MIN_DISTANCE_BETWEEN_STOPS_KM = 50.0  # Şarj durakları arası minimum mesafe
 
+# Optimizer sabitleri
+STOP_PENALTY_MINUTES = 15.0  # Her ek durak için zaman penaltisi (dk)
+SHORT_INTERVAL_PENALTY_MINUTES = 10.0  # Kısa aralıklı durak penaltisi (dk)
+MIN_DRIVING_INTERVAL_MINUTES = 45.0  # Bu süreden kısa sürüş aralıkları penalize edilir
+TARGET_SOC_CANDIDATES = [75.0, 80.0, 85.0, 90.0, 95.0]  # Denenecek hedef SOC değerleri
+
 
 # =============================================================================
 # DATA CLASSES
@@ -409,3 +415,174 @@ def simulate_route_soc(
         charge_target_soc=charge_target_soc
     )
     return simulator.simulate(segments_with_consumption, total_distance_km)
+
+
+# =============================================================================
+# CHARGE PLAN OPTIMIZER
+# =============================================================================
+
+class ChargePlanOptimizer:
+    """
+    Şarj Planı Optimize Edici v1.0
+    
+    Farklı target_soc değerlerini deneyerek minimum durak sayısı ve
+    optimal toplam süre için en iyi planı seçer.
+    
+    Prensipler:
+    1. 80% sabit hedef YOK - 75-95% arasında dinamik seçim
+    2. Durak sayısını minimize et (1-2 durak >> 3+ durak)
+    3. Kısa aralıklı durakları (30-40 dk) penalize et
+    4. Toplam süreyi optimize et (şarj süresi + penaltiler)
+    
+    Kullanım:
+        optimizer = ChargePlanOptimizer()
+        optimal_soc, result = optimizer.find_optimal_plan(
+            segments, distance, battery, start_soc, arrival_soc, min_soc
+        )
+    """
+    
+    def __init__(self, battery_capacity_kwh: float = 51.0):
+        """
+        Args:
+            battery_capacity_kwh: Batarya kapasitesi (şarj süresi hesabı için)
+        """
+        self.battery_capacity_kwh = battery_capacity_kwh
+    
+    def find_optimal_plan(
+        self,
+        segments_with_consumption: List[SegmentWithConsumption],
+        total_distance_km: float,
+        battery_capacity_kwh: float,
+        start_soc: float,
+        target_arrival_soc: float,
+        charge_min_soc: float,
+        avg_speed_kmh: float = 80.0
+    ) -> tuple:
+        """
+        75-95% arasında target_soc denerek en iyi plan bulunur.
+        
+        Args:
+            segments_with_consumption: Tüketimli segmentler
+            total_distance_km: Toplam rota mesafesi
+            battery_capacity_kwh: Batarya kapasitesi
+            start_soc: Başlangıç SOC
+            target_arrival_soc: Varışta hedef SOC
+            charge_min_soc: Şarj eşiği (bu %'e düşünce şarj et)
+            avg_speed_kmh: Ortalama hız (kısa aralık hesabı için)
+        
+        Returns:
+            tuple: (optimal_target_soc, best_result: SimulationResult)
+        """
+        self.battery_capacity_kwh = battery_capacity_kwh
+        
+        best_score = float('inf')
+        best_target_soc = 80.0
+        best_result = None
+        
+        logger.info(
+            f"ChargePlanOptimizer: Testing {len(TARGET_SOC_CANDIDATES)} target SOC candidates"
+        )
+        
+        for target_soc in TARGET_SOC_CANDIDATES:
+            # Bu target_soc ile simülasyon yap
+            simulator = SOCSimulator(
+                battery_capacity_kwh=battery_capacity_kwh,
+                start_soc=start_soc,
+                target_arrival_soc=target_arrival_soc,
+                charge_min_soc=charge_min_soc,
+                charge_target_soc=target_soc
+            )
+            
+            result = simulator.simulate(segments_with_consumption, total_distance_km)
+            
+            # Plan skorunu hesapla
+            score = self._calculate_plan_score(result, target_soc, avg_speed_kmh)
+            
+            logger.debug(
+                f"  target_soc={target_soc}%: "
+                f"stops={len(result.hotspots)}, score={score:.1f}"
+            )
+            
+            # En iyi planı güncelle
+            if score < best_score:
+                best_score = score
+                best_target_soc = target_soc
+                best_result = result
+        
+        logger.info(
+            f"ChargePlanOptimizer: Optimal plan found - "
+            f"target_soc={best_target_soc}%, stops={len(best_result.hotspots)}, "
+            f"score={best_score:.1f}"
+        )
+        
+        return best_target_soc, best_result
+    
+    def _calculate_plan_score(
+        self,
+        result: SimulationResult,
+        target_soc: float,
+        avg_speed_kmh: float
+    ) -> float:
+        """
+        Plan skoru hesapla (düşük skor = daha iyi plan).
+        
+        Skor Bileşenleri:
+        1. Durak penaltisi: Her durak için STOP_PENALTY_MINUTES dk
+        2. Şarj süresi: Tahmini toplam şarj süresi
+        3. Kısa aralık penaltisi: 45 dk'dan kısa sürüş aralıkları için
+        
+        Args:
+            result: Simülasyon sonucu
+            target_soc: Şarj hedefi %
+            avg_speed_kmh: Ortalama hız
+        
+        Returns:
+            float: Toplam skor (dakika cinsinden)
+        """
+        num_stops = len(result.hotspots)
+        
+        # Şarj gerekmiyorsa en iyi skor
+        if num_stops == 0:
+            return 0.0
+        
+        # 1. DURAK PENALTİSİ (ağır)
+        # Her ek durak = park et, bul, tak, bekle, çık → 15 dk kayıp
+        stop_penalty = num_stops * STOP_PENALTY_MINUTES
+        
+        # 2. TAHMİNİ ŞARJ SÜRESİ
+        # Gerçekçi model: DC şarj ~1 kW/dk (50kW şarjda ~1%/dk bir 50kWh batarya için)
+        total_charge_time = 0.0
+        for hotspot in result.hotspots:
+            soc_to_add = target_soc - hotspot.soc_at_point
+            # kWh = (soc_to_add / 100) * battery_kwh
+            kwh_to_add = (soc_to_add / 100) * self.battery_capacity_kwh
+            # 50kW şarjcı varsayımı → dakika = kwh / 50 * 60
+            charge_time_minutes = (kwh_to_add / 50.0) * 60
+            total_charge_time += max(5, charge_time_minutes)  # Min 5 dk
+        
+        # 3. KISA ARALIK PENALTİSİ
+        # 45 dk'dan kısa sürüş aralıkları kötü kullanıcı deneyimi
+        short_interval_penalty = 0.0
+        prev_km = 0.0
+        
+        for hotspot in result.hotspots:
+            interval_km = hotspot.distance_from_start_km - prev_km
+            interval_minutes = (interval_km / avg_speed_kmh) * 60 if avg_speed_kmh > 0 else 0
+            
+            if interval_minutes < MIN_DRIVING_INTERVAL_MINUTES and interval_km > 0:
+                # Ne kadar kısa, o kadar penaltı
+                penalty_factor = 1 - (interval_minutes / MIN_DRIVING_INTERVAL_MINUTES)
+                short_interval_penalty += SHORT_INTERVAL_PENALTY_MINUTES * penalty_factor
+            
+            prev_km = hotspot.distance_from_start_km
+        
+        # 4. YÜKSEK SOC PENALTİSİ (küçük)
+        # 90%+ şarj etmek zaman alır (şarj eğrisi yavaşlar)
+        high_soc_penalty = 0.0
+        if target_soc > 90:
+            # %90 üzeri için ek süre (eğri yavaşlaması)
+            high_soc_penalty = (target_soc - 90) * 0.5 * num_stops
+        
+        total_score = stop_penalty + total_charge_time + short_interval_penalty + high_soc_penalty
+        
+        return total_score
