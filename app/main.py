@@ -33,7 +33,7 @@ from app.models import (
     MultiStopRouteResponse, 
     GeoPoint
 )
-from app.route_planner import plan_route_v2 as plan_full_route  # V2.0 Clean Architecture
+from app.route_planner import plan_route
 from app.services.base_service import ExternalAPIError
 from app.services.google_service import google_maps
 from app.utils.logger import get_logger
@@ -231,7 +231,7 @@ async def optimize_route(request: RouteRequest) -> MultiStopRouteResponse:
             step="planning_start"
         )
         
-        plan = await plan_full_route(request)
+        plan = await plan_route(request)
         
         planning_duration = time.time() - request_start_time
         

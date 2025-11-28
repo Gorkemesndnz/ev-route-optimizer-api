@@ -178,21 +178,21 @@ class RouteRequest(BaseModel):
     end_location: GeoPoint
     vehicle_model_id: str = Field(..., description="vehicle_models.py içindeki ID")
     current_soc_percent: float = Field(..., ge=0, le=100)
-    target_arrival_soc_percent: float = Field(
-        20.0, ge=5, le=50,
-        description="Varışta hedef batarya yüzdesi (default %20)"
+    target_arrival_soc_percent: Optional[float] = Field(
+        None, ge=5, le=50,
+        description="Varışta hedef batarya yüzdesi. None ise otomatik hesaplanır (10-25%)"
     )
-    charge_min_soc_percent: float = Field(
-        20.0, ge=10, le=40,
-        description="Şarj istasyonuna varış eşiği - bu %'e düşünce şarj et (default %20)"
+    charge_min_soc_percent: Optional[float] = Field(
+        None, ge=10, le=40,
+        description="Şarj eşiği - bu %'e düşünce şarj et. None ise otomatik hesaplanır (15-25%)"
     )
-    charge_target_soc_percent: float = Field(
-        80.0, ge=50, le=100,
-        description="Şarj istasyonundan çıkış hedefi (default %80)"
+    charge_target_soc_percent: Optional[float] = Field(
+        None, ge=50, le=100,
+        description="Şarj hedefi - istasyondan çıkış SOC. None ise otomatik hesaplanır (75-95%)"
     )
-    passenger_count: int = Field(1, ge=1, description="Yetişkin yolcu sayısı")
-    child_count: int = Field(0, ge=0, le=4, description="Çocuk yolcu sayısı (30 kg/çocuk)")
-    extra_load_kg: float = Field(0.0, ge=0.0, description="Bagaj vb. ekstra yük")
+    passenger_count: Optional[int] = Field(None, ge=1, description="Yetişkin yolcu sayısı. None ise 1")
+    child_count: Optional[int] = Field(None, ge=0, le=4, description="Çocuk sayısı. None ise 0")
+    extra_load_kg: Optional[float] = Field(None, ge=0.0, description="Bagaj yükü (kg). None ise 0")
     departure_time_iso: Optional[str] = Field(
         None,
         description="ISO 8601 formatında çıkış zamanı. (örn: 2025-11-25T12:30:00Z)"

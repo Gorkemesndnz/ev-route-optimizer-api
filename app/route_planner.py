@@ -25,7 +25,8 @@ from app.models import (
     StationInfo,
     ConnectorInfo,
     PlugType,
-    ChargerType
+    ChargerType,
+    WeatherInfo
 )
 
 from app.route_segmenter import RouteSegmenter, RouteSegment
@@ -39,10 +40,125 @@ from app.services.google_service import google_maps
 from app.sustainability_calculator import calculate_co2_savings
 from app.utils.logger import get_logger
 
-logger = get_logger("route_planner_v2")
+logger = get_logger("route_planner")
 weather_service = WeatherService()
 
 DEFAULT_TEMPERATURE_C = 20.0
+
+# =============================================================================
+# VARSAYILAN DEĞERLER
+# =============================================================================
+DEFAULT_PASSENGER_COUNT = 1
+DEFAULT_CHILD_COUNT = 0
+DEFAULT_EXTRA_LOAD_KG = 0.0
+
+# Şarj parametreleri aralıkları (V1 kural tabanlı)
+MIN_SOC_RANGE = (15.0, 25.0)      # Şarj eşiği
+TARGET_SOC_RANGE = (75.0, 95.0)   # Şarj hedefi
+ARRIVAL_SOC_RANGE = (10.0, 25.0)  # Varış hedefi
+
+
+def _resolve_defaults(request: RouteRequest) -> tuple:
+    """
+    Yolcu ve yük için varsayılanları çöz.
+    
+    Returns:
+        (passenger_count, child_count, extra_load_kg)
+    """
+    passenger_count = request.passenger_count if request.passenger_count is not None else DEFAULT_PASSENGER_COUNT
+    child_count = request.child_count if request.child_count is not None else DEFAULT_CHILD_COUNT
+    extra_load_kg = request.extra_load_kg if request.extra_load_kg is not None else DEFAULT_EXTRA_LOAD_KG
+    
+    return passenger_count, child_count, extra_load_kg
+
+
+def _calculate_smart_soc_params(
+    battery_kwh: float,
+    start_soc: float,
+    total_consumption_kwh: float,
+    route_distance_km: float,
+    request: RouteRequest
+) -> tuple:
+    """
+    Şarj parametrelerini akıllıca hesapla (V1 kural tabanlı).
+    Kullanıcı değer girdiyse aynen kullan, None ise optimize et.
+    
+    V2'de bu fonksiyon ML modeli ile değiştirilecek.
+    
+    Returns:
+        (charge_min_soc, charge_target_soc, arrival_soc)
+    """
+    # Mevcut enerji ve ihtiyaç
+    current_energy_kwh = (start_soc / 100) * battery_kwh
+    
+    # Tek şarjla gidebilir miyiz? (veya hiç şarj gerekmez mi?)
+    can_complete_direct = current_energy_kwh >= total_consumption_kwh * 1.15  # %15 güvenlik
+    
+    # Kullanıcı değer girdiyse → aynen kullan
+    # None ise → akıllı hesapla
+    
+    # 1. Varış SOC
+    if request.target_arrival_soc_percent is not None:
+        arrival_soc = request.target_arrival_soc_percent
+    else:
+        if can_complete_direct:
+            # Şarj gerekmiyorsa, kalan SOC'u hesapla
+            remaining_percent = ((current_energy_kwh - total_consumption_kwh) / battery_kwh) * 100
+            arrival_soc = max(ARRIVAL_SOC_RANGE[0], min(remaining_percent, ARRIVAL_SOC_RANGE[1]))
+        else:
+            # Şarj gerekiyorsa, minimum varış hedefi
+            arrival_soc = 15.0
+    
+    # 2. Şarj Eşiği (min_soc)
+    if request.charge_min_soc_percent is not None:
+        charge_min_soc = request.charge_min_soc_percent
+    else:
+        # Rota uzunluğuna göre ayarla
+        if route_distance_km < 200:
+            charge_min_soc = 15.0  # Kısa rota
+        elif route_distance_km < 400:
+            charge_min_soc = 20.0  # Orta rota
+        else:
+            charge_min_soc = 25.0  # Uzun rota - daha güvenli
+    
+    # 3. Şarj Hedefi (target_soc) - EN ÖNEMLİ OPTİMİZASYON
+    if request.charge_target_soc_percent is not None:
+        charge_target_soc = request.charge_target_soc_percent
+    else:
+        # Tek şarjla varılabilir mi hesapla
+        # Mantık: Yüksek şarjla (örn %95) tek durakla gidebilir miyiz?
+        
+        # Mevcut enerjiyle ne kadar gidebiliriz?
+        safe_energy = current_energy_kwh * 0.85  # %15 güvenlik payı bırak
+        
+        # İlk şarj noktasına kadar tahmini tüketim (mevcut enerjinin yarısı kadar gideriz)
+        consumption_to_first_charge = min(safe_energy, total_consumption_kwh * 0.4)
+        
+        # Şarj sonrası gereken enerji
+        remaining_after_first_charge = total_consumption_kwh - consumption_to_first_charge
+        
+        # %95 şarjla yeterli mi?
+        energy_at_95 = battery_kwh * 0.95
+        can_complete_with_single_high_charge = energy_at_95 >= remaining_after_first_charge + (arrival_soc / 100 * battery_kwh)
+        
+        if can_complete_with_single_high_charge:
+            # Tek şarj yeterli - %95'e kadar şarj et
+            # Tam olarak ne kadar gerektiğini hesapla
+            required_energy = remaining_after_first_charge + (arrival_soc / 100 * battery_kwh) + (battery_kwh * 0.05)  # +5% güvenlik
+            target_percent = (required_energy / battery_kwh) * 100
+            charge_target_soc = min(95.0, max(80.0, target_percent))
+        else:
+            # Birden fazla şarj gerekli - hızlı şarj için %80
+            charge_target_soc = 80.0
+    
+    logger.info(
+        f"Smart SOC params: min={charge_min_soc}%, target={charge_target_soc}%, arrival={arrival_soc}% "
+        f"(user_override: min={request.charge_min_soc_percent is not None}, "
+        f"target={request.charge_target_soc_percent is not None}, "
+        f"arrival={request.target_arrival_soc_percent is not None})"
+    )
+    
+    return charge_min_soc, charge_target_soc, arrival_soc
 
 
 def _create_error_response(status: str, message: str = None) -> MultiStopRouteResponse:
@@ -189,11 +305,21 @@ def _build_multi_legs(
     return legs
 
 
-async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
+async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
     """
-    V2.0 Route Planner - Clean Architecture.
+    Route Planner - Clean Architecture.
+    
+    Akış:
+    1-4: Rota seçimi, elevation, hava durumu
+    5: Varsayılanları çöz (yolcu, yük)
+    6: Segmentasyon
+    7: Tüketim hesabı (MainCalculator)
+    8: Akıllı SOC parametreleri (V1 kural tabanlı, V2'de ML)
+    9-10: SOC simülasyonu + İstasyon bulma
+    11: Multi-leg oluşturma
+    12: CO2 tasarrufu
     """
-    logger.info("V2.0 Route planning started", 
+    logger.info("Route planning started", 
                 start=f"{request.start_location.lat},{request.start_location.lon}",
                 end=f"{request.end_location.lat},{request.end_location.lon}")
     
@@ -265,7 +391,11 @@ async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
         except Exception as e:
             logger.warning(f"Weather API failed: {e}")
         
-        # STEP 5: Route Segmenter V2 - Geometrik segmentasyon
+        # STEP 5: Varsayılanları Çöz (yolcu, yük)
+        passenger_count, child_count, extra_load_kg = _resolve_defaults(request)
+        logger.info(f"Resolved defaults: passengers={passenger_count}, children={child_count}, load={extra_load_kg}kg")
+        
+        # STEP 6: Route Segmenter - Geometrik segmentasyon
         segmenter = RouteSegmenter(segment_length_km=10.0)
         segments = segmenter.create_segments(
             polyline=polyline,
@@ -275,31 +405,40 @@ async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
         
         logger.info(f"Segments created: {len(segments)} segments")
         
-        # STEP 6: Main Calculator - Her segment icin tuketim (TEK KAYNAK)
+        # STEP 7: Main Calculator - Her segment için tüketim (TEK KAYNAK)
         segments_with_consumption = calculate_route_consumption(
             vehicle=vehicle,
             segments=segments,
             temperature_celsius=avg_weather.temp_c if avg_weather else DEFAULT_TEMPERATURE_C,
             wind_speed_mps=avg_weather.wind_speed_mps if avg_weather else 0.0,
             weather_condition=avg_weather.condition.value if avg_weather else "clear",
-            extra_load_kg=request.extra_load_kg,
-            passenger_count=request.passenger_count,
-            child_count=request.child_count
+            extra_load_kg=extra_load_kg,
+            passenger_count=passenger_count,
+            child_count=child_count
         )
         
         total_consumption = sum(s.consumption_kwh for s in segments_with_consumption)
         logger.info(f"Total consumption calculated: {round(total_consumption, 2)}kWh")
         
-        # STEP 7: SOC Simulator - Hotspot tespiti
+        # STEP 8: Akıllı SOC Parametreleri (V1 kural tabanlı, V2'de ML)
+        charge_min_soc, charge_target_soc, arrival_soc = _calculate_smart_soc_params(
+            battery_kwh=battery_kwh,
+            start_soc=request.current_soc_percent,
+            total_consumption_kwh=total_consumption,
+            route_distance_km=route_distance_km,
+            request=request
+        )
+        
+        # STEP 9: SOC Simulator - Hotspot tespiti
         simulator = SOCSimulator(
             battery_capacity_kwh=battery_kwh,
             start_soc=request.current_soc_percent,
-            target_arrival_soc=request.target_arrival_soc_percent,
-            charge_min_soc=request.charge_min_soc_percent,
-            charge_target_soc=request.charge_target_soc_percent
+            target_arrival_soc=arrival_soc,
+            charge_min_soc=charge_min_soc,
+            charge_target_soc=charge_target_soc
         )
         
-        # STEP 7+8: SOC Simülasyonu + İstasyon Bulma (TEK ADIMDA)
+        # STEP 9+10: SOC Simülasyonu + İstasyon Bulma (TEK ADIMDA)
         sim_with_stations = await simulator.simulate_with_stations(
             segments_with_consumption, 
             route_distance_km,
@@ -314,7 +453,7 @@ async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
             f"{charge_stops} stations, final_soc={sim_with_stations.final_soc}%"
         )
         
-        # STEP 9: Multi-Leg Builder
+        # STEP 11: Multi-Leg Builder
         legs = _build_multi_legs(
             start_point=GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"]),
             end_point=GeoPoint(lat=end_coords["lat"], lon=end_coords["lng"]),
@@ -325,27 +464,27 @@ async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
             final_soc=sim_with_stations.final_soc,
             hotspots=hotspots,
             station_results=sim_with_stations.station_results,
-            charge_target_soc=request.charge_target_soc_percent,
+            charge_target_soc=charge_target_soc,
             polyline=polyline
         )
         
         end_soc = sim_with_stations.final_soc
         
-        # STEP 10: CO2 tasarrufu
+        # STEP 12: CO2 tasarrufu
         try:
             co2_savings = calculate_co2_savings(route_distance_km)
         except:
             co2_savings = 0.0
         
-        # Mesaj olustur
+        # Mesaj oluştur
         if charge_stops > 0:
-            message = f"V2.0: {charge_stops} sarj duragi gerekli"
+            message = f"{charge_stops} şarj durağı gerekli (hedef: %{round(charge_target_soc)})"
         elif sim_with_stations.simulation.can_complete_without_charging:
-            message = f"V2.0: Sarj gerekmez. Varis SOC: %{round(end_soc)}"
+            message = f"Şarj gerekmez. Varış SOC: %{round(end_soc)}"
         else:
-            message = f"V2.0: Dikkat! Varis SOC: %{round(end_soc)}"
+            message = f"Dikkat! Varış SOC: %{round(end_soc)}"
         
-        logger.info(f"V2.0 Route planning completed: {message}")
+        logger.info(f"Route planning completed: {message}")
         
         return MultiStopRouteResponse(
             status="success",
@@ -359,5 +498,5 @@ async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
         )
         
     except Exception as e:
-        logger.exception(f"V2.0 Route planning failed: {e}")
+        logger.exception(f"Route planning failed: {e}")
         return _create_error_response("error_unknown", str(e))
