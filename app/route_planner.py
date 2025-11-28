@@ -203,12 +203,16 @@ def _create_charge_leg(
     Args:
         station: İstasyon bilgisi
         arrival_soc: Varış SOC (%)
-        target_soc: Hedef SOC (%)
+        target_soc: Hedef SOC (%) - Max 100
         battery_kwh: Batarya kapasitesi
         
     Returns:
         ChargeLeg modeli
     """
+    # V1.5 FIX: Max %100 limiti
+    target_soc = min(100.0, target_soc)
+    arrival_soc = max(0.0, min(100.0, arrival_soc))
+    
     # En yüksek güçlü connector'ı bul
     max_power = max((c.power_kw for c in station.connectors), default=50.0)
     
@@ -224,7 +228,7 @@ def _create_charge_leg(
     energy_added = ((target_soc - arrival_soc) / 100.0) * battery_kwh
     
     # Fiyat tahmini (ortalama 8 TL/kWh)
-    price_per_kwh = 8.0
+    price_per_kwh = 13.0
     estimated_cost = energy_added * price_per_kwh
     
     return ChargeLeg(
@@ -558,12 +562,22 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
                 # 1️⃣ Route Segmentation - Polyline'ı parçalara ayır
                 # V1.5: Kullanıcıdan gelen hedef SOC değerlerini kullan
                 target_arrival_soc = getattr(request, 'target_arrival_soc_percent', 20.0)
+                charge_min_soc = getattr(request, 'charge_min_soc_percent', 20.0)
                 charge_target_soc = getattr(request, 'charge_target_soc_percent', 80.0)
+                
+                logger.info(
+                    "V1.5 SOC settings",
+                    target_arrival=target_arrival_soc,
+                    charge_min=charge_min_soc,
+                    charge_target=charge_target_soc
+                )
                 
                 segmenter = RouteSegmenter(
                     vehicle=vehicle,
                     start_soc=request.current_soc_percent,
-                    target_arrival_soc=target_arrival_soc
+                    target_arrival_soc=target_arrival_soc,
+                    charge_min_soc=charge_min_soc,
+                    charge_target_soc=charge_target_soc
                 )
                 
                 segments = segmenter.create_segments_from_polyline(
@@ -619,8 +633,25 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
                             legs.append(drive_leg)
                             
                             # ChargeLeg - İstasyonda şarj
-                            # V1.5: Kullanıcının belirlediği şarj hedefi veya minimum gerekli
-                            actual_charge_target = max(charge_target_soc, hotspot.min_required_soc + 10)
+                            # V1.5 FIX: Akıllı şarj hedefi
+                            is_last_stop = (i == len(search_results) - 1) or not any(
+                                r.best_station for r in search_results[i+1:]
+                            )
+                            
+                            if is_last_stop:
+                                # Son durak: Varışa yetecek kadar şarj et
+                                remaining_km = route_distance_km - drive_distance
+                                soc_needed = (remaining_km * consumption_per_km / battery_kwh) * 100
+                                min_required = soc_needed + target_arrival_soc
+                            else:
+                                # Ara durak: Sonraki durağa yetecek kadar + kullanıcı eşiği
+                                next_hotspot_km = search_results[i+1].hotspot.segment_index * 10.0
+                                distance_to_next = next_hotspot_km - drive_distance
+                                soc_needed = (distance_to_next * consumption_per_km / battery_kwh) * 100
+                                min_required = soc_needed + charge_min_soc  # Sonrakine varınca şarj eşiğinde ol
+                            
+                            # Kullanıcı hedefi yeterliyse onu kullan, yetmezse minimum gerekli
+                            actual_charge_target = min(100.0, max(charge_target_soc, min_required))
                             
                             charge_leg = _create_charge_leg(
                                 station=station_info,
@@ -775,11 +806,18 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
             co2_savings_kg=round(co2_savings, 2)
         )
         
+        # V1.5: Toplam tüketimi hesapla
+        total_consumption_kwh = sum(
+            leg.consumption_kwh for leg in legs 
+            if hasattr(leg, 'consumption_kwh') and leg.consumption_kwh
+        )
+        
         return MultiStopRouteResponse(
             status="success",
             total_distance_km=round(total_distance, 1),
             total_duration_minutes=round(total_duration, 1),
             total_co2_savings_kg=round(co2_savings, 2),
+            consumption_kwh=round(total_consumption_kwh, 1),
             legs=legs,
             charge_stops=charge_stops,
             message=route_message

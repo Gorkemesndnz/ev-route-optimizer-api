@@ -203,6 +203,8 @@ class RouteSegmenter:
         vehicle: VehicleModel,
         start_soc: float = 100.0,
         target_arrival_soc: float = 20.0,
+        charge_min_soc: float = 20.0,
+        charge_target_soc: float = 80.0,
         segment_length_km: float = DEFAULT_SEGMENT_KM
     ):
         """
@@ -210,11 +212,15 @@ class RouteSegmenter:
             vehicle: Araç modeli
             start_soc: Başlangıç batarya yüzdesi
             target_arrival_soc: Varışta hedef batarya yüzdesi
+            charge_min_soc: Şarj istasyonuna varış eşiği (bu %'e düşünce şarj et)
+            charge_target_soc: Şarj istasyonunda hedef % (max 100)
             segment_length_km: Her segment uzunluğu
         """
         self.vehicle = vehicle
         self.start_soc = start_soc
         self.target_arrival_soc = target_arrival_soc
+        self.charge_min_soc = charge_min_soc
+        self.charge_target_soc = min(100.0, charge_target_soc)  # Max %100
         self.segment_length_km = segment_length_km
         
         self.segments: List[RouteSegment] = []
@@ -406,30 +412,50 @@ class RouteSegmenter:
         hotspots = []
         simulated_soc = self.start_soc  # Simüle edilen SOC
         last_hotspot_km = 0.0  # Son hotspot mesafesi
-        min_distance_between_stops = 150.0  # Min 150km aralık (daha az durak)
+        min_distance_between_stops = 100.0  # Min 100km aralık
+        
+        # V1.5: Kullanıcının belirlediği şarj eşikleri
+        user_charge_threshold = self.charge_min_soc  # Bu %'e düşünce şarj et
+        user_charge_target = self.charge_target_soc  # Bu %'e kadar şarj et (max 100)
+        
+        logger.info(
+            f"Hotspot detection started",
+            user_threshold=user_charge_threshold,
+            user_target=user_charge_target,
+            start_soc=self.start_soc
+        )
         
         for segment in self.segments:
             # Simüle edilen SOC ile segment tüketimini hesapla
             consumption_percent = (segment.consumption_kwh / self.battery_capacity_kwh) * 100
             simulated_soc = max(0, simulated_soc - consumption_percent)
             
-            # Kalan mesafe ve minimum gerekli SOC
+            # Kalan mesafe
             remaining_distance = self.total_distance_km - segment.cumulative_distance_km
-            min_required = self._calculate_min_required_soc(remaining_distance)
+            
+            # V1.5 FIX: SADECE kullanıcının belirlediği eşiğe düşünce şarj et
+            # Emergency: Sadece batarya %10'un altına düşerse (güvenlik için)
+            emergency_charge = simulated_soc <= 10.0
+            
+            # Kullanıcı eşiği: simulated_soc kullanıcının belirlediği değere düştüyse
+            charge_needed = simulated_soc <= user_charge_threshold or emergency_charge
             
             # Şarj gerekli mi? (Ve son hotspot'tan yeterli mesafe var mı?)
             distance_since_last = segment.cumulative_distance_km - last_hotspot_km
             
-            if simulated_soc < min_required and distance_since_last >= min_distance_between_stops:
-                # Önerilen şarj hedefi
-                recommended_charge = min(80.0, min_required + 25.0)
+            if charge_needed and distance_since_last >= min_distance_between_stops:
+                # V1.5 FIX: Kullanıcının hedefini kullan, max %100
+                recommended_charge = min(100.0, user_charge_target)
+                
+                # Kalan mesafe için gereken minimum SOC
+                min_to_finish = (remaining_distance * self.base_consumption_wh_km / 1000) / self.battery_capacity_kwh * 100
                 
                 hotspot = ChargeHotspot(
                     segment_index=segment.index,
                     location=segment.end_point,
                     soc_at_point=round(simulated_soc, 1),
                     remaining_distance_km=round(remaining_distance, 1),
-                    min_required_soc=round(min_required, 1),
+                    min_required_soc=round(min_to_finish + self.target_arrival_soc, 1),
                     recommended_charge_to=round(recommended_charge, 1)
                 )
                 hotspots.append(hotspot)
@@ -441,9 +467,9 @@ class RouteSegmenter:
                 logger.info(
                     f"Charge hotspot found",
                     segment=segment.index,
-                    location=f"({segment.end_point.lat:.4f}, {segment.end_point.lon:.4f})",
-                    soc=hotspot.soc_at_point,
-                    recommended_charge=hotspot.recommended_charge_to
+                    arrival_soc=hotspot.soc_at_point,
+                    target_soc=hotspot.recommended_charge_to,
+                    emergency=emergency_charge
                 )
         
         logger.info(f"Total hotspots found: {len(hotspots)}")

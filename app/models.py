@@ -182,9 +182,13 @@ class RouteRequest(BaseModel):
         20.0, ge=5, le=50,
         description="Varışta hedef batarya yüzdesi (default %20)"
     )
+    charge_min_soc_percent: float = Field(
+        20.0, ge=10, le=40,
+        description="Şarj istasyonuna varış eşiği - bu %'e düşünce şarj et (default %20)"
+    )
     charge_target_soc_percent: float = Field(
         80.0, ge=50, le=100,
-        description="Şarj istasyonunda hedef batarya yüzdesi (default %80)"
+        description="Şarj istasyonundan çıkış hedefi (default %80)"
     )
     passenger_count: int = Field(1, ge=1, description="Yolcu sayısı")
     extra_load_kg: float = Field(0.0, ge=0.0, description="Bagaj vb. ekstra yük")
@@ -306,6 +310,7 @@ class MultiStopRouteResponse(BaseModel):
     total_distance_km: float = Field(0.0, description="Toplam mesafe (km)")
     total_duration_minutes: float = Field(0.0, description="Toplam süre (dakika)")
     total_co2_savings_kg: float = Field(0.0, description="CO2 tasarrufu (kg)")
+    consumption_kwh: float = Field(0.0, description="Toplam tüketim (kWh)")
     legs: List[Union[DriveLeg, ChargeLeg]] = Field(default_factory=list, description="Sürüş ve şarj bacakları")
     message: Optional[str] = Field(None, description="Ek bilgi veya hata mesajı")
     charge_stops: int = Field(0, description="Şarj durağı sayısı")
