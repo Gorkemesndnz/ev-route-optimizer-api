@@ -47,10 +47,10 @@ MIN_CHARGE_THRESHOLD_PERCENT = 15.0  # Minimum şarj seviyesi
 MIN_DISTANCE_BETWEEN_STOPS_KM = 50.0  # Şarj durakları arası minimum mesafe
 
 # Optimizer sabitleri
-STOP_PENALTY_MINUTES = 15.0  # Her ek durak için zaman penaltisi (dk)
-SHORT_INTERVAL_PENALTY_MINUTES = 10.0  # Kısa aralıklı durak penaltisi (dk)
-MIN_DRIVING_INTERVAL_MINUTES = 45.0  # Bu süreden kısa sürüş aralıkları penalize edilir
-TARGET_SOC_CANDIDATES = [75.0, 80.0, 85.0, 90.0, 95.0]  # Denenecek hedef SOC değerleri
+STOP_PENALTY_MINUTES = 25.0  # Her ek durak için zaman penaltisi (dk) - AĞIR
+SHORT_INTERVAL_PENALTY_MINUTES = 15.0  # Kısa aralıklı durak penaltisi (dk)
+MIN_DRIVING_INTERVAL_MINUTES = 60.0  # 1 saatten kısa sürüş aralıkları penalize edilir
+TARGET_SOC_CANDIDATES = [80.0, 85.0, 90.0, 95.0]  # Yüksek hedefler - az durak için
 
 
 # =============================================================================
@@ -294,16 +294,16 @@ class SOCSimulator:
         avg_consumption_per_km: float
     ) -> None:
         """
-        Her hotspot için bağımsız şarj hedefi hesapla.
+        Her hotspot için akıllı şarj hedefi hesapla.
         
-        Mantık:
-        - Son durak: Hedefe yetecek kadar (arrival_soc + kalan mesafe tüketimi + güvenlik)
-        - Ara duraklar: Bir sonraki durağa yetecek kadar (charge_min_soc + aradaki tüketim + güvenlik)
+        YENİ MANTIK (durak sayısını minimize et):
+        - ARA DURAKLAR: Optimizer'ın bulduğu yüksek hedefi KORU (charge_target_soc)
+          → Yüksek şarjla daha uzun gidilir, daha az durak gerekir
+        - SON DURAK: Hedefe tam yetecek kadar (gereksiz yüksek şarj önlenir)
         
-        Böylece:
-        - Gereksiz yüksek şarj önlenir
-        - Her durak bağımsız optimize edilir
-        - Şarj süresi minimize edilir
+        ESKİ YANLIŞ MANTIK: Her durağı "sonrakine yetecek" şarj ediyordu
+        → Bu çok düşük hedefler üretiyordu (%58, %69)
+        → Sonuç: Sürekli şarj gerekiyor, 3-4 durak
         """
         num_hotspots = len(hotspots)
         
@@ -311,7 +311,7 @@ class SOCSimulator:
             is_last_stop = (i == num_hotspots - 1)
             
             if is_last_stop:
-                # SON DURAK: Hedefe yetecek kadar
+                # SON DURAK: Hedefe yetecek kadar (gereksiz şarj önle)
                 remaining_km = hotspot.remaining_distance_km
                 required_kwh = remaining_km * avg_consumption_per_km
                 required_soc = (required_kwh / self.battery_capacity_kwh) * 100
@@ -319,22 +319,17 @@ class SOCSimulator:
                 # Hedef = varış SOC + kalan mesafe tüketimi + güvenlik
                 target = self.target_arrival_soc + required_soc + SAFETY_BUFFER_PERCENT
                 
-            else:
-                # ARA DURAK: Bir sonraki durağa yetecek kadar
-                next_hotspot = hotspots[i + 1]
-                distance_to_next = next_hotspot.distance_from_start_km - hotspot.distance_from_start_km
-                required_kwh = distance_to_next * avg_consumption_per_km
-                required_soc = (required_kwh / self.battery_capacity_kwh) * 100
+                # Sınırla: min %50, max %95
+                target = max(50.0, min(95.0, target))
                 
-                # Hedef = sonraki durağa varış SOC (charge_min_soc) + aradaki tüketim + güvenlik
-                target = self.charge_min_soc + required_soc + SAFETY_BUFFER_PERCENT
+            else:
+                # ARA DURAK: Optimizer'ın bulduğu YÜKSEK hedefi KORU
+                # Yüksek şarj = daha uzun menzil = daha az durak = daha iyi UX
+                target = self.charge_target_soc
             
-            # Sınırla: min %50, max %95
-            target = max(50.0, min(95.0, target))
-            
-            # Mevcut SOC'dan düşük olamaz (zaten şarjlıysa artırma)
-            target = max(target, hotspot.soc_at_point + 10)  # En az %10 şarj et
-            target = min(95.0, target)  # Yine de %95'i aşma
+            # Mevcut SOC'dan düşük olamaz (en az %15 şarj et)
+            target = max(target, hotspot.soc_at_point + 15)
+            target = min(95.0, target)
             
             old_target = hotspot.recommended_charge_to
             hotspot.recommended_charge_to = round(target, 0)
@@ -342,7 +337,7 @@ class SOCSimulator:
             logger.info(
                 f"Smart charge target: Hotspot {i+1}/{num_hotspots} - "
                 f"{old_target}% → {hotspot.recommended_charge_to}% "
-                f"({'son durak' if is_last_stop else 'ara durak'})"
+                f"({'SON - hedefe yetecek' if is_last_stop else 'ARA - yüksek şarj'})"
             )
     
     def _calculate_min_required_soc(self, remaining_distance_km: float, avg_consumption_per_km: float) -> float:
