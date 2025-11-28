@@ -348,16 +348,18 @@ class SOCSimulator:
         avg_consumption_per_km: float
     ) -> None:
         """
-        Her hotspot için akıllı şarj hedefi hesapla.
+        Her hotspot için DİNAMİK şarj hedefi hesapla.
         
-        YENİ MANTIK (durak sayısını minimize et):
-        - ARA DURAKLAR: Optimizer'ın bulduğu yüksek hedefi KORU (charge_target_soc)
-          → Yüksek şarjla daha uzun gidilir, daha az durak gerekir
-        - SON DURAK: Hedefe tam yetecek kadar (gereksiz yüksek şarj önlenir)
+        MANTIK:
+        - SON DURAK: Hedefe tam yetecek kadar (gereksiz şarj önle)
+        - ARA DURAKLAR: Sonraki durağa yetecek + güvenlik payı
+          → Ama minimum %70 (çok düşük olmasın, UX kötüleşir)
+          → Maximum %90 (gereksiz uzun şarj önle)
         
-        ESKİ YANLIŞ MANTIK: Her durağı "sonrakine yetecek" şarj ediyordu
-        → Bu çok düşük hedefler üretiyordu (%58, %69)
-        → Sonuç: Sürekli şarj gerekiyor, 3-4 durak
+        Bu sayede:
+        - Her durak FARKLI hedeflere şarj eder (dinamik)
+        - Son durak gereksiz yüksek şarj yapmaz
+        - Ara duraklar makul seviyede kalır
         """
         num_hotspots = len(hotspots)
         
@@ -365,7 +367,7 @@ class SOCSimulator:
             is_last_stop = (i == num_hotspots - 1)
             
             if is_last_stop:
-                # SON DURAK: Hedefe yetecek kadar (gereksiz şarj önle)
+                # SON DURAK: Hedefe yetecek kadar
                 remaining_km = hotspot.remaining_distance_km
                 required_kwh = remaining_km * avg_consumption_per_km
                 required_soc = (required_kwh / self.battery_capacity_kwh) * 100
@@ -373,25 +375,34 @@ class SOCSimulator:
                 # Hedef = varış SOC + kalan mesafe tüketimi + güvenlik
                 target = self.target_arrival_soc + required_soc + SAFETY_BUFFER_PERCENT
                 
-                # Sınırla: min %50, max %95
-                target = max(50.0, min(95.0, target))
+                # Sınırla: min %50, max %90 (son durak için yüksek şarj gereksiz)
+                target = max(50.0, min(90.0, target))
                 
             else:
-                # ARA DURAK: Optimizer'ın bulduğu YÜKSEK hedefi KORU
-                # Yüksek şarj = daha uzun menzil = daha az durak = daha iyi UX
-                target = self.charge_target_soc
+                # ARA DURAK: Sonraki durağa yetecek + güvenlik (DİNAMİK)
+                next_hotspot = hotspots[i + 1]
+                distance_to_next = next_hotspot.distance_from_start_km - hotspot.distance_from_start_km
+                required_kwh = distance_to_next * avg_consumption_per_km
+                required_soc = (required_kwh / self.battery_capacity_kwh) * 100
+                
+                # Hedef = sonraki durağa varış için gereken + güvenlik payı (%20)
+                # Sonraki durağa %25-30 civarı SOC ile varmayı hedefle
+                target = 30.0 + required_soc + SAFETY_BUFFER_PERCENT
+                
+                # Sınırla: min %70 (çok düşük olmasın), max %90
+                target = max(70.0, min(90.0, target))
             
-            # Mevcut SOC'dan düşük olamaz (en az %15 şarj et)
-            target = max(target, hotspot.soc_at_point + 15)
+            # Mevcut SOC'dan düşük olamaz (en az %20 şarj et)
+            target = max(target, hotspot.soc_at_point + 20)
             target = min(95.0, target)
             
             old_target = hotspot.recommended_charge_to
             hotspot.recommended_charge_to = round(target, 0)
             
             logger.info(
-                f"Smart charge target: Hotspot {i+1}/{num_hotspots} - "
+                f"Dynamic charge target: Hotspot {i+1}/{num_hotspots} - "
                 f"{old_target}% → {hotspot.recommended_charge_to}% "
-                f"({'SON - hedefe yetecek' if is_last_stop else 'ARA - yüksek şarj'})"
+                f"({'SON DURAK' if is_last_stop else f'ARA DURAK - sonraki {distance_to_next:.0f}km'})"
             )
     
     def _calculate_min_required_soc(self, remaining_distance_km: float, avg_consumption_per_km: float) -> float:
