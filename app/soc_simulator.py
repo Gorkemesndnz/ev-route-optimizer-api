@@ -246,23 +246,26 @@ class SOCSimulator:
         """
         Kalan mesafe için gereken minimum SOC hesapla.
         
-        Formül:
-        min_required = target_arrival_soc + safety_buffer + remaining_consumption_percent
+        Basit ve güvenilir mantık:
+        - Varışa yetecek kadar SOC var mı kontrol et
+        - Yoksa şarj gerekli
         """
-        # Ortalama tüketim tahmini (basit)
-        # Not: Bu değer MainCalculator'dan gelebilir ama şimdilik basit tutalım
-        avg_consumption_per_km = 0.18  # kWh/km (varsayılan)
+        avg_consumption_per_km = 0.20  # kWh/km
         
-        remaining_consumption_kwh = avg_consumption_per_km * remaining_distance_km
-        remaining_consumption_percent = (remaining_consumption_kwh / self.battery_capacity_kwh) * 100
+        # Kalan mesafe için gereken enerji
+        required_kwh = avg_consumption_per_km * remaining_distance_km
+        required_percent = (required_kwh / self.battery_capacity_kwh) * 100
         
-        min_required = (
-            self.target_arrival_soc + 
-            SAFETY_BUFFER_PERCENT + 
-            remaining_consumption_percent
-        )
+        # Varışa ulaşmak için gereken minimum SOC
+        # = kalan mesafe tüketimi + varış hedefi + güvenlik
+        min_required = self.target_arrival_soc + required_percent + SAFETY_BUFFER_PERCENT
         
-        return min(100.0, max(MIN_CHARGE_THRESHOLD_PERCENT, min_required))
+        # Eğer 100%'ü aşıyorsa, ara şarj kaçınılmaz
+        # Bu durumda sadece charge_min_soc + güvenlik döndür
+        if min_required > 100.0:
+            return self.charge_min_soc + SAFETY_BUFFER_PERCENT  # 30%
+        
+        return max(MIN_CHARGE_THRESHOLD_PERCENT, min_required)
     
     def _should_create_hotspot(
         self,
