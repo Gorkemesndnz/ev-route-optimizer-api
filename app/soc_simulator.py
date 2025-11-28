@@ -259,6 +259,13 @@ class SOCSimulator:
                     distance_km=segment.cumulative_distance_km
                 )
         
+        # Çok yakın hotspotları birleştir (36 dk gibi kısa aralıkları önle)
+        if len(hotspots) > 1:
+            original_count = len(hotspots)
+            hotspots = self._merge_close_hotspots(hotspots, avg_consumption_per_km)
+            if len(hotspots) < original_count:
+                logger.info(f"Hotspots merged: {original_count} → {len(hotspots)}")
+        
         # Sonuç
         can_complete = len(hotspots) == 0 or current_soc >= self.target_arrival_soc
         
@@ -286,6 +293,53 @@ class SOCSimulator:
             )
         
         return result
+    
+    def _merge_close_hotspots(
+        self,
+        hotspots: List[ChargeHotspot],
+        avg_consumption_per_km: float,
+        avg_speed_kmh: float = 80.0
+    ) -> List[ChargeHotspot]:
+        """
+        Birbirine çok yakın hotspotları birleştir.
+        
+        36 dk gibi kısa sürüş aralıklarını önler.
+        İlk hotspot'u korur (daha erken şarj = daha güvenli).
+        
+        Args:
+            hotspots: Hotspot listesi
+            avg_consumption_per_km: Ortalama tüketim
+            avg_speed_kmh: Ortalama hız (sürüş süresi hesabı için)
+        
+        Returns:
+            Birleştirilmiş hotspot listesi
+        """
+        if len(hotspots) <= 1:
+            return hotspots
+        
+        merged = [hotspots[0]]
+        
+        for i in range(1, len(hotspots)):
+            current = hotspots[i]
+            last = merged[-1]
+            
+            # İki hotspot arası mesafe ve süre
+            distance_between = current.distance_from_start_km - last.distance_from_start_km
+            driving_minutes = (distance_between / avg_speed_kmh) * 60
+            
+            # MIN_DRIVING_INTERVAL'dan kısa ise birleştir
+            if driving_minutes < MIN_DRIVING_INTERVAL_MINUTES:
+                logger.info(
+                    f"Merging hotspot: {current.distance_from_start_km:.0f}km "
+                    f"(only {driving_minutes:.0f}min after previous) - keeping earlier one"
+                )
+                # İlk hotspot'u koru, sonrakini atla
+                # Ama son hotspot'un remaining_distance bilgisini güncelle
+                continue
+            
+            merged.append(current)
+        
+        return merged
     
     def _calculate_smart_charge_targets(
         self,
@@ -557,6 +611,11 @@ class ChargePlanOptimizer:
             
             result = simulator.simulate(segments_with_consumption, total_distance_km)
             
+            # EARLY TERMINATION: Şarj gerekmiyorsa hemen dön
+            if len(result.hotspots) == 0:
+                logger.info(f"ChargePlanOptimizer: No charging needed! (early exit)")
+                return target_soc, result
+            
             # Plan skorunu hesapla
             score = self._calculate_plan_score(result, target_soc, avg_speed_kmh)
             
@@ -570,6 +629,13 @@ class ChargePlanOptimizer:
                 best_score = score
                 best_target_soc = target_soc
                 best_result = result
+                
+                # EARLY TERMINATION: 1 durak ve düşük skor ise yeterli
+                if len(result.hotspots) == 1 and score < 40:
+                    logger.info(
+                        f"ChargePlanOptimizer: Good enough plan found (1 stop, score={score:.1f}) - early exit"
+                    )
+                    return best_target_soc, best_result
         
         logger.info(
             f"ChargePlanOptimizer: Optimal plan found - "

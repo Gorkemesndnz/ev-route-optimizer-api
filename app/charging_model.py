@@ -26,6 +26,7 @@ Kullanım:
 
 from dataclasses import dataclass
 from typing import Optional
+from functools import lru_cache
 
 
 # =============================================================================
@@ -284,6 +285,36 @@ class ChargingCurve:
 # HELPER FUNCTIONS (Modüler, dışarıdan çağrılabilir)
 # =============================================================================
 
+@lru_cache(maxsize=256)
+def _calculate_charge_time_cached(
+    start_soc_int: int,
+    target_soc_int: int,
+    battery_capacity_kwh: float,
+    peak_power_kw: float,
+    temperature_c_int: Optional[int]
+) -> tuple:
+    """
+    Cached version - aynı parametreler için tekrar hesaplamaz.
+    LRU cache için float → int dönüşümü (hash için).
+    Returns tuple for caching (dataclass is not hashable).
+    """
+    curve = ChargingCurve(battery_capacity_kwh)
+    result = curve.calculate_charge_time(
+        float(start_soc_int), 
+        float(target_soc_int), 
+        peak_power_kw, 
+        float(temperature_c_int) if temperature_c_int is not None else None
+    )
+    return (
+        result.duration_minutes,
+        result.energy_added_kwh,
+        result.avg_power_kw,
+        result.weather_factor,
+        result.start_soc,
+        result.target_soc
+    )
+
+
 def calculate_charge_time(
     start_soc: float,
     target_soc: float,
@@ -292,9 +323,10 @@ def calculate_charge_time(
     temperature_c: Optional[float] = None
 ) -> ChargeResult:
     """
-    Şarj süresi hesapla (kısayol fonksiyon).
+    Şarj süresi hesapla (kısayol fonksiyon) - CACHED.
     
     ChargingCurve sınıfını kullanmadan doğrudan çağrılabilir.
+    Aynı parametreler için tekrar hesaplama yapmaz (LRU cache).
     
     Args:
         start_soc: Başlangıç SOC (%)
@@ -310,8 +342,25 @@ def calculate_charge_time(
         result = calculate_charge_time(20, 80, 51.0, 150.0, 20.0)
         print(f"{result.duration_minutes} dakika")
     """
-    curve = ChargingCurve(battery_capacity_kwh)
-    return curve.calculate_charge_time(start_soc, target_soc, peak_power_kw, temperature_c)
+    # Float → int dönüşümü (cache key için)
+    start_int = int(round(start_soc))
+    target_int = int(round(target_soc))
+    temp_int = int(round(temperature_c)) if temperature_c is not None else None
+    
+    # Cached hesaplama
+    cached = _calculate_charge_time_cached(
+        start_int, target_int, battery_capacity_kwh, peak_power_kw, temp_int
+    )
+    
+    # Tuple → ChargeResult dönüşümü
+    return ChargeResult(
+        duration_minutes=cached[0],
+        energy_added_kwh=cached[1],
+        avg_power_kw=cached[2],
+        weather_factor=cached[3],
+        start_soc=cached[4],
+        target_soc=cached[5]
+    )
 
 
 def convert_kwh_to_soc(kwh: float, battery_capacity_kwh: float) -> float:

@@ -425,30 +425,84 @@ class CorridorSearcher:
 
 async def find_stations_for_hotspots(
     hotspots: List[ChargeHotspot],
-    vehicle_model_id: str
+    vehicle_model_id: str,
+    min_distance_between_stations_km: float = 50.0
 ) -> List[CorridorSearchResult]:
     """
-    Birden fazla hotspot için paralel koridor araması yap.
+    Birden fazla hotspot için akıllı istasyon seçimi.
+    
+    Özellikler:
+    - Aynı istasyonu tekrar seçmez
+    - Birbirine çok yakın istasyonları önler
+    - Her hotspot için alternatif istasyon bulur
+    
+    Args:
+        hotspots: Şarj gerekli noktalar
+        vehicle_model_id: Araç modeli
+        min_distance_between_stations_km: İstasyonlar arası minimum mesafe
     """
     if not hotspots:
         return []
     
     searcher = CorridorSearcher(vehicle_model_id=vehicle_model_id)
     
+    # Paralel arama yap (tüm istasyonları bul)
     tasks = [searcher.search_for_hotspot(hotspot) for hotspot in hotspots]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
     
     valid_results = []
-    for i, result in enumerate(results):
+    used_station_ids = set()
+    last_station_location = None
+    
+    for i, result in enumerate(raw_results):
         if isinstance(result, Exception):
             logger.error(f"Hotspot {i} search failed", error=str(result))
-        else:
-            valid_results.append(result)
+            continue
+        
+        # Akıllı istasyon seçimi
+        if result.stations:
+            # Daha önce seçilen istasyonları filtrele
+            available_stations = [
+                s for s in result.stations 
+                if s.station_id not in used_station_ids
+            ]
+            
+            # Çok yakın istasyonları filtrele
+            if last_station_location and available_stations:
+                available_stations = [
+                    s for s in available_stations
+                    if haversine_km(
+                        last_station_location.lat, last_station_location.lon,
+                        s.location.lat, s.location.lon
+                    ) >= min_distance_between_stations_km
+                ]
+            
+            # Sırala ve en iyiyi seç
+            if available_stations:
+                available_stations.sort(key=lambda s: s.score, reverse=True)
+                result.best_station = available_stations[0]
+                used_station_ids.add(result.best_station.station_id)
+                last_station_location = result.best_station.location
+                
+                logger.info(
+                    f"Smart station selection: Hotspot {i+1} → {result.best_station.station_name} "
+                    f"(avoided {len(result.stations) - len(available_stations)} duplicates)"
+                )
+            else:
+                # Alternatif bulunamazsa, en iyiyi kullan (uyarı ile)
+                if result.stations:
+                    result.best_station = result.stations[0]
+                    logger.warning(
+                        f"Hotspot {i+1}: No alternative station, using {result.best_station.station_name} again"
+                    )
+        
+        valid_results.append(result)
     
     logger.info(
-        "Multi-hotspot search completed",
+        "Smart multi-hotspot search completed",
         total_hotspots=len(hotspots),
-        successful=len(valid_results)
+        successful=len(valid_results),
+        unique_stations=len(used_station_ids)
     )
     
     return valid_results
