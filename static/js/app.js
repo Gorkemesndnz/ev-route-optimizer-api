@@ -1,9 +1,56 @@
 /**
  * EV Route Optimizer - Main Application
- * Version: 1.5
+ * Version: 1.6
  * 
  * Form handler ve results renderer
+ * AI Planlama Modu: Akıllı varsayılan değerler
  */
+
+// ============================================
+// AI MODE TOGGLE
+// ============================================
+
+/**
+ * AI Planlama Modu toggle
+ * AI açıkken gelişmiş ayarlar gizlenir ve sistem otomatik hesaplar
+ */
+function toggleAiMode() {
+    const aiMode = document.getElementById('aiPlanningMode').checked;
+    const advancedSettings = document.getElementById('advancedSettings');
+
+    if (aiMode) {
+        advancedSettings.style.display = 'none';
+        // Input değerlerini temizle (null olarak gönderilecek)
+        clearAdvancedInputs();
+    } else {
+        advancedSettings.style.display = 'block';
+    }
+}
+
+/**
+ * Gelişmiş ayar inputlarını temizle
+ */
+function clearAdvancedInputs() {
+    document.getElementById('chargeMinSoc').value = '';
+    document.getElementById('chargeTargetSoc').value = '';
+    document.getElementById('targetArrivalSoc').value = '';
+    document.getElementById('passengerCount').value = '';
+    document.getElementById('childCount').value = '';
+    document.getElementById('extraLoad').value = '';
+}
+
+/**
+ * Input değerini al - boş ise null döndür
+ */
+function getOptionalValue(elementId, parser = parseInt) {
+    const element = document.getElementById(elementId);
+    const value = element ? element.value.trim() : '';
+    if (value === '' || value === null || value === undefined) {
+        return null;
+    }
+    const parsed = parser(value);
+    return isNaN(parsed) ? null : parsed;
+}
 
 // ============================================
 // FORM SUBMISSION
@@ -29,6 +76,7 @@ async function handleFormSubmit(e) {
 
     const startAddress = document.getElementById('startLocation').value;
     const endAddress = document.getElementById('endLocation').value;
+    const aiMode = document.getElementById('aiPlanningMode').checked;
 
     try {
         // Adresleri koordinata çevir
@@ -42,20 +90,34 @@ async function handleFormSubmit(e) {
             start_location: startLocation,
             end_location: endLocation,
             vehicle_model_id: document.getElementById('vehicleModel').value,
-            current_soc_percent: parseInt(document.getElementById('initialSoc').value),
-            target_arrival_soc_percent: parseInt(document.getElementById('targetArrivalSoc').value),
-            charge_min_soc_percent: parseInt(document.getElementById('chargeMinSoc').value),
-            charge_target_soc_percent: parseInt(document.getElementById('chargeTargetSoc').value),
-            extra_load_kg: parseInt(document.getElementById('extraLoad').value),
-            passenger_count: parseInt(document.getElementById('passengerCount').value),
-            child_count: parseInt(document.getElementById('childCount').value) || 0
+            current_soc_percent: parseInt(document.getElementById('initialSoc').value)
         };
 
+        // AI modu kapalıysa gelişmiş ayarları ekle
+        if (!aiMode) {
+            // Batarya/Şarj ayarları (boşsa null = otomatik)
+            const chargeMinSoc = getOptionalValue('chargeMinSoc');
+            const chargeTargetSoc = getOptionalValue('chargeTargetSoc');
+            const targetArrivalSoc = getOptionalValue('targetArrivalSoc');
+
+            if (chargeMinSoc !== null) formData.charge_min_soc_percent = chargeMinSoc;
+            if (chargeTargetSoc !== null) formData.charge_target_soc_percent = chargeTargetSoc;
+            if (targetArrivalSoc !== null) formData.target_arrival_soc_percent = targetArrivalSoc;
+
+            // Yolcu/Yük ayarları (boşsa null = varsayılan)
+            const passengerCount = getOptionalValue('passengerCount');
+            const childCount = getOptionalValue('childCount');
+            const extraLoad = getOptionalValue('extraLoad', parseFloat);
+
+            if (passengerCount !== null) formData.passenger_count = passengerCount;
+            if (childCount !== null) formData.child_count = childCount;
+            if (extraLoad !== null) formData.extra_load_kg = extraLoad;
+        }
+        // AI modu açıksa hiçbir optional değer gönderilmez - backend otomatik hesaplar
+
         // DEBUG: Form verilerini kontrol et
+        console.log('🤖 AI Modu:', aiMode ? 'AÇIK' : 'KAPALI');
         console.log('🔍 Form verileri:', formData);
-        console.log('👤 Yetişkin:', document.getElementById('passengerCount').value);
-        console.log('👶 Çocuk:', document.getElementById('childCount').value);
-        console.log('🎯 Varış %:', document.getElementById('targetArrivalSoc').value);
 
         // API isteği
         const response = await fetch('/optimize_route', {
