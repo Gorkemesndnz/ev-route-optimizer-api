@@ -213,51 +213,61 @@ class SOCSimulator:
             
             # SOC başlangıç değeri
             seg_with_cons.soc_at_start = current_soc
+            soc_before_segment = current_soc  # Segment öncesi SOC (hotspot için)
             
-            # SOC düşüşü hesapla
+            # 🔧 FIX: Segment işlenmeden ÖNCE hotspot kontrolü yap
+            # Bu sayede SOC %0'a düşmeden ÖNCE şarj durağı oluşturulur
+            
+            # Bu segment sonrası SOC ne olacak? (önceden hesapla)
             soc_drop = (consumption_kwh / self.battery_capacity_kwh) * 100
-            current_soc = max(0, current_soc - soc_drop)
-            total_consumption += consumption_kwh
+            projected_soc_after = current_soc - soc_drop
             
-            # SOC bitiş değeri
-            seg_with_cons.soc_at_end = current_soc
-            
-            # Kalan mesafe
+            # Kalan mesafe (segment sonunda)
             remaining_distance = total_distance_km - segment.cumulative_distance_km
             
-            # Minimum gerekli SOC hesapla (GERÇEK tüketim değeriyle)
+            # Minimum gerekli SOC hesapla
             min_required_soc = self._calculate_min_required_soc(remaining_distance, avg_consumption_per_km)
             
-            # Hotspot kontrolü
+            # 🔧 ERKEN HOTSPOT TESPİTİ: Segment SONRASI SOC çok düşecekse, ÖNCE şarj et
             should_create_hotspot = self._should_create_hotspot(
-                current_soc=current_soc,
+                current_soc=projected_soc_after,  # Segment SONRASI SOC ile kontrol
                 min_required_soc=min_required_soc,
                 cumulative_km=segment.cumulative_distance_km,
                 last_hotspot_km=last_hotspot_km
             )
             
             if should_create_hotspot:
+                # Hotspot'u segment ÖNCESİNDE oluştur (SOC henüz yüksek)
+                prev_cumulative_km = segment.cumulative_distance_km - segment.distance_km
                 hotspot = ChargeHotspot(
-                    segment_index=segment.index,
-                    location=segment.end_point,
-                    soc_at_point=round(current_soc, 1),
-                    distance_from_start_km=segment.cumulative_distance_km,
-                    remaining_distance_km=round(remaining_distance, 1),
+                    segment_index=max(0, segment.index - 1),  # Önceki segment
+                    location=segment.end_point,  # Yaklaşık konum
+                    soc_at_point=round(max(self.charge_min_soc, soc_before_segment), 1),  # Segment ÖNCESİ SOC
+                    distance_from_start_km=max(0, prev_cumulative_km),
+                    remaining_distance_km=round(remaining_distance + segment.distance_km, 1),
                     min_required_soc=round(min_required_soc, 1),
                     recommended_charge_to=self.charge_target_soc
                 )
                 hotspots.append(hotspot)
-                last_hotspot_km = segment.cumulative_distance_km
+                last_hotspot_km = prev_cumulative_km
                 
-                # Şarj sonrası SOC'u simüle et (bir sonraki segmente devam için)
+                # Şarj sonrası SOC'u simüle et
                 current_soc = self.charge_target_soc
                 
                 logger.info(
-                    f"Hotspot detected at segment {segment.index}",
-                    soc_before_charge=hotspot.soc_at_point,
+                    f"Hotspot detected BEFORE segment {segment.index}",
+                    soc_at_hotspot=hotspot.soc_at_point,
                     soc_after_charge=current_soc,
-                    distance_km=segment.cumulative_distance_km
+                    distance_km=hotspot.distance_from_start_km
                 )
+            
+            # Segment tüketimini uygula (hotspot varsa şarjlı SOC'tan başlar)
+            soc_drop = (consumption_kwh / self.battery_capacity_kwh) * 100
+            current_soc = max(0, current_soc - soc_drop)
+            total_consumption += consumption_kwh
+            
+            # SOC bitiş değeri
+            seg_with_cons.soc_at_end = current_soc
         
         # Çok yakın hotspotları birleştir (36 dk gibi kısa aralıkları önle)
         if len(hotspots) > 1:
