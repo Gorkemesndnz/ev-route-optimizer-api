@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from app.models import GeoPoint
 from app.route_segmenter import RouteSegment
 from app.utils.logger import get_logger
+from app.charging_model import calculate_charge_time, apply_high_soc_penalty
 
 logger = get_logger("soc_simulator")
 
@@ -615,16 +616,20 @@ class ChargePlanOptimizer:
         # Her ek durak = park et, bul, tak, bekle, çık → 15 dk kayıp
         stop_penalty = num_stops * STOP_PENALTY_MINUTES
         
-        # 2. TAHMİNİ ŞARJ SÜRESİ
-        # Gerçekçi model: DC şarj ~1 kW/dk (50kW şarjda ~1%/dk bir 50kWh batarya için)
+        # 2. TAHMİNİ ŞARJ SÜRESİ (gerçekçi eğri modeli)
+        # charging_model: 3 fazlı şarj eğrisi (CC-CV)
         total_charge_time = 0.0
+        avg_charger_power = 100.0  # Ortalama DC şarjcı varsayımı (optimizer için)
+        
         for hotspot in result.hotspots:
-            soc_to_add = target_soc - hotspot.soc_at_point
-            # kWh = (soc_to_add / 100) * battery_kwh
-            kwh_to_add = (soc_to_add / 100) * self.battery_capacity_kwh
-            # 50kW şarjcı varsayımı → dakika = kwh / 50 * 60
-            charge_time_minutes = (kwh_to_add / 50.0) * 60
-            total_charge_time += max(5, charge_time_minutes)  # Min 5 dk
+            charge_result = calculate_charge_time(
+                start_soc=hotspot.soc_at_point,
+                target_soc=target_soc,
+                battery_capacity_kwh=self.battery_capacity_kwh,
+                peak_power_kw=avg_charger_power,
+                temperature_c=None  # Optimizer'da bilinmiyor
+            )
+            total_charge_time += max(5, charge_result.duration_minutes)
         
         # 3. KISA ARALIK PENALTİSİ
         # 45 dk'dan kısa sürüş aralıkları kötü kullanıcı deneyimi
@@ -642,12 +647,9 @@ class ChargePlanOptimizer:
             
             prev_km = hotspot.distance_from_start_km
         
-        # 4. YÜKSEK SOC PENALTİSİ (küçük)
-        # 90%+ şarj etmek zaman alır (şarj eğrisi yavaşlar)
-        high_soc_penalty = 0.0
-        if target_soc > 90:
-            # %90 üzeri için ek süre (eğri yavaşlaması)
-            high_soc_penalty = (target_soc - 90) * 0.5 * num_stops
+        # 4. YÜKSEK SOC PENALTİSİ
+        # %80 üzeri şarj çok yavaş - charging_model'den penaltı al
+        high_soc_penalty = apply_high_soc_penalty(target_soc) * num_stops
         
         total_score = stop_penalty + total_charge_time + short_interval_penalty + high_soc_penalty
         

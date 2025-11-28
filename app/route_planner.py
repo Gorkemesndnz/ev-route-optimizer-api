@@ -36,6 +36,7 @@ from app.soc_simulator import (
     SegmentWithConsumption,
     ChargePlanOptimizer  # Yeni: Durak sayısını minimize eden optimizer
 )
+from app.charging_model import calculate_charge_time
 from app.consumption_engine.main_calculator import calculate_route_consumption
 from app.consumption_engine.vehicle_models import get_vehicle_model
 from app.route_selector import find_best_route
@@ -159,7 +160,9 @@ def _build_multi_legs(
     hotspots: List[ChargeHotspot],
     station_results: List,
     charge_target_soc: float,
-    polyline: str
+    polyline: str,
+    battery_capacity_kwh: float = 51.0,
+    temperature_c: Optional[float] = None
 ) -> List:
     """
     Multi-leg yapısı oluştur: DriveLeg + ChargeLeg + DriveLeg + ...
@@ -225,14 +228,21 @@ def _build_multi_legs(
             end_soc_percent=round(hotspot.soc_at_point, 1)
         ))
         
-        # 2. ChargeLeg: Şarj süresi hesapla
+        # 2. ChargeLeg: Şarj süresi hesapla (gerçekçi eğri modeli)
         # Her hotspot için BAĞIMSIZ şarj hedefi (recommended_charge_to)
         hotspot_target_soc = hotspot.recommended_charge_to
-        soc_to_add = hotspot_target_soc - hotspot.soc_at_point
         charge_power_kw = station.power_kw if station.power_kw > 0 else 50.0
-        # Basit hesap: kWh = SOC * batarya / 100
-        kwh_to_add = (soc_to_add / 100) * 51  # TODO: Gerçek batarya kapasitesi
-        charge_duration = (kwh_to_add / charge_power_kw) * 60  # dakika
+        
+        # Gerçekçi şarj süresi hesapla (3 fazlı CC-CV eğrisi + hava durumu)
+        charge_result = calculate_charge_time(
+            start_soc=hotspot.soc_at_point,
+            target_soc=hotspot_target_soc,
+            battery_capacity_kwh=battery_capacity_kwh,
+            peak_power_kw=charge_power_kw,
+            temperature_c=temperature_c
+        )
+        charge_duration = charge_result.duration_minutes
+        kwh_to_add = charge_result.energy_added_kwh
         
         # StationInfo oluştur (model uyumlu)
         station_info = StationInfo(
@@ -456,7 +466,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             f"{charge_stops} stations, final_soc={sim_result.final_soc}%"
         )
         
-        # STEP 11: Multi-Leg Builder
+        # STEP 11: Multi-Leg Builder (gerçekçi şarj süreleri için hava durumu dahil)
         legs = _build_multi_legs(
             start_point=GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"]),
             end_point=GeoPoint(lat=end_coords["lat"], lon=end_coords["lng"]),
@@ -468,7 +478,9 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             hotspots=hotspots,
             station_results=station_results,
             charge_target_soc=charge_target_soc,
-            polyline=polyline
+            polyline=polyline,
+            battery_capacity_kwh=battery_kwh,
+            temperature_c=avg_weather.temp_c if avg_weather else None
         )
         
         end_soc = sim_result.final_soc
