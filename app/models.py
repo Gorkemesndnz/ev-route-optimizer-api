@@ -178,6 +178,14 @@ class RouteRequest(BaseModel):
     end_location: GeoPoint
     vehicle_model_id: str = Field(..., description="vehicle_models.py içindeki ID")
     current_soc_percent: float = Field(..., ge=0, le=100)
+    target_arrival_soc_percent: float = Field(
+        20.0, ge=5, le=50,
+        description="Varışta hedef batarya yüzdesi (default %20)"
+    )
+    charge_target_soc_percent: float = Field(
+        80.0, ge=50, le=100,
+        description="Şarj istasyonunda hedef batarya yüzdesi (default %80)"
+    )
     passenger_count: int = Field(1, ge=1, description="Yolcu sayısı")
     extra_load_kg: float = Field(0.0, ge=0.0, description="Bagaj vb. ekstra yük")
     departure_time_iso: Optional[str] = Field(
@@ -298,7 +306,7 @@ class MultiStopRouteResponse(BaseModel):
     total_distance_km: float = Field(0.0, description="Toplam mesafe (km)")
     total_duration_minutes: float = Field(0.0, description="Toplam süre (dakika)")
     total_co2_savings_kg: float = Field(0.0, description="CO2 tasarrufu (kg)")
-    legs: List[DriveLeg] = Field(default_factory=list, description="Sürüş bacakları")
+    legs: List[Union[DriveLeg, ChargeLeg]] = Field(default_factory=list, description="Sürüş ve şarj bacakları")
     message: Optional[str] = Field(None, description="Ek bilgi veya hata mesajı")
     charge_stops: int = Field(0, description="Şarj durağı sayısı")
     debug_info: Optional[dict] = Field(

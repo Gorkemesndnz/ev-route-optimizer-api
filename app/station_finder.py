@@ -1,37 +1,45 @@
 """
-Station Finder v2.0
+Station Finder v1.5
 ====================
 
-V1.3 Enterprise "Station Funnel" algoritması ile en uygun şarj istasyonunu bulur.
+V1.5 Birleştirilmiş İstasyon Arama Modülü.
 
 Özellikler:
 - OCM API ile istasyon verisi çekme
 - Connector uyumluluğu kontrolü
 - DC/AC istasyon ayrımı
 - Haversine mesafe filtreleme
-- Google Distance Matrix ile gerçek sürüş süresi
-- Google Place Details ile rating bilgisi
+- V1.5 Koridor bazlı arama (Corridor Search)
+- Hotspot bazlı akıllı istasyon seçimi
+- Greedy station selection
 - Ağırlıklı skorlama sistemi
 
 Flow:
-1. OCM'den yakın istasyonları al
+1. OCM'den istasyonları al
 2. Operasyonel ve uyumlu olanları filtrele
 3. DC/AC ayrımı yap
-4. Haversine mesafe filtreleme (50km)
-5. Distance Matrix ile gerçek süre kontrolü (15 dakika)
-6. Place Details ile zenginleştir
-7. Ağırlıklı skorlama ile en iyiyi seç
+4. Haversine/Koridor mesafe filtreleme
+5. Ağırlıklı skorlama ile en iyiyi seç
+
+Kullanım:
+    from app.station_finder import (
+        find_best_station,              # Tek nokta bazlı
+        find_stations_for_hotspots,     # V1.5 çoklu hotspot
+        CorridorSearcher                # V1.5 arama sınıfı
+    )
 """
 
 import asyncio
 import math
 from typing import Tuple, Optional, Dict, Any, List
+from dataclasses import dataclass, field
 
 from app.models import GeoPoint
+from app.route_segmenter import ChargeHotspot
 from app.services.ocm_service import ocm_service
 from app.services.google_service import google_maps
 from app.services.weather_service import weather_service
-from app.consumption_engine.vehicle_models import get_vehicle_model
+from app.consumption_engine.vehicle_models import get_vehicle_model, VehicleModel
 from app.utils.config_manager import config
 from app.utils.logger import get_logger
 
@@ -49,10 +57,70 @@ DC_POWER_THRESHOLD_KW = 40.0
 MAX_DISTANCE_MATRIX_DESTINATIONS = 100
 TOP_STATIONS_FOR_DETAILS = 3
 
+# Koridor sabitleri (V1.5)
+CORRIDOR_LENGTH_KM = 50.0
+CORRIDOR_WIDTH_KM = 15.0
+MIN_DC_POWER_KW = 50.0
+MAX_STATIONS_PER_HOTSPOT = 5
+
 # Skorlama ağırlıkları
 WEIGHT_DEVIATION = 0.5
 WEIGHT_POWER = 0.3
 WEIGHT_RATING = 0.2
+
+# Greedy selection ağırlıkları (V1.5)
+GREEDY_WEIGHT_POWER = 0.45
+GREEDY_WEIGHT_DEVIATION = 0.35
+GREEDY_WEIGHT_RATING = 0.20
+
+
+# =============================================================================
+# DATA CLASSES (V1.5)
+# =============================================================================
+
+@dataclass
+class CorridorStation:
+    """
+    Koridor içinde bulunan istasyon.
+    """
+    station_info: Dict[str, Any]
+    distance_from_hotspot_km: float
+    deviation_km: float = 0.0
+    power_kw: float = 0.0
+    is_dc: bool = False
+    is_compatible: bool = True
+    rating: float = 4.0
+    score: float = 0.0
+    
+    @property
+    def station_id(self) -> str:
+        return str(self.station_info.get("ID", "unknown"))
+    
+    @property
+    def station_name(self) -> str:
+        address_info = self.station_info.get("AddressInfo", {})
+        return address_info.get("Title", "Unnamed Station")
+    
+    @property
+    def location(self) -> GeoPoint:
+        address_info = self.station_info.get("AddressInfo", {})
+        return GeoPoint(
+            lat=address_info.get("Latitude", 0.0),
+            lon=address_info.get("Longitude", 0.0)
+        )
+
+
+@dataclass
+class CorridorSearchResult:
+    """
+    Koridor arama sonucu.
+    """
+    hotspot: ChargeHotspot
+    stations: List[CorridorStation] = field(default_factory=list)
+    best_station: Optional[CorridorStation] = None
+    search_radius_km: float = CORRIDOR_LENGTH_KM
+    total_found: int = 0
+    dc_compatible: int = 0
 
 
 # =============================================================================
@@ -62,9 +130,8 @@ WEIGHT_RATING = 0.2
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
     İki koordinat arasındaki mesafeyi Haversine formülü ile km olarak hesaplar.
-    Earth radius: 6371 km
     """
-    R = 6371.0  # Dünya yarıçapı (km)
+    R = 6371.0
     
     lat1_rad = math.radians(lat1)
     lon1_rad = math.radians(lon1)
@@ -114,26 +181,291 @@ def _calculate_station_score(
 ) -> float:
     """
     İstasyon için ağırlıklı skor hesapla.
-    
-    - Deviation: Düşük daha iyi (0-15 dakika → 1.0-0.0)
-    - Power: Yüksek daha iyi (normalize edilmiş)
-    - Rating: Yüksek daha iyi (0-5 → 0.0-1.0)
     """
-    # Sapma skoru (düşük daha iyi)
     deviation_score = max(0, 1 - (deviation_minutes / MAX_DEVIATION_MINUTES))
-    
-    # Güç skoru (yüksek daha iyi)
     power_score = power_kw / max_power_kw if max_power_kw > 0 else 0
-    
-    # Rating skoru
     rating_score = rating / 5.0
     
-    # Ağırlıklı toplam
     return (WEIGHT_DEVIATION * deviation_score) + (WEIGHT_POWER * power_score) + (WEIGHT_RATING * rating_score)
 
 
 # =============================================================================
-# MAIN FUNCTION
+# V1.5 CORRIDOR SEARCHER CLASS
+# =============================================================================
+
+class CorridorSearcher:
+    """
+    V1.5 Koridor Bazlı İstasyon Arama Motoru.
+    
+    Kullanım:
+        searcher = CorridorSearcher(vehicle_model_id="mg4_51kwh")
+        result = await searcher.search_for_hotspot(hotspot)
+        best_station = result.best_station
+    """
+    
+    def __init__(
+        self,
+        vehicle_model_id: str,
+        corridor_length_km: float = CORRIDOR_LENGTH_KM,
+        corridor_width_km: float = CORRIDOR_WIDTH_KM,
+        min_dc_power_kw: float = MIN_DC_POWER_KW
+    ):
+        self.vehicle = get_vehicle_model(vehicle_model_id)
+        self.vehicle_model_id = vehicle_model_id
+        self.corridor_length_km = corridor_length_km
+        self.corridor_width_km = corridor_width_km
+        self.min_dc_power_kw = min_dc_power_kw
+        
+        logger.info(
+            "CorridorSearcher initialized",
+            vehicle=self.vehicle.model_name,
+            connector=self.vehicle.connector_type,
+            corridor_length=corridor_length_km
+        )
+    
+    async def search_for_hotspot(self, hotspot: ChargeHotspot) -> CorridorSearchResult:
+        """Bir hotspot için koridor araması yap."""
+        result = CorridorSearchResult(
+            hotspot=hotspot,
+            search_radius_km=self.corridor_length_km
+        )
+        
+        logger.info(
+            "Corridor search started",
+            hotspot_segment=hotspot.segment_index,
+            location=f"({hotspot.location.lat:.4f}, {hotspot.location.lon:.4f})",
+            soc=hotspot.soc_at_point
+        )
+        
+        try:
+            # OCM'den istasyonları çek
+            raw_stations = await self._fetch_stations_from_ocm(hotspot)
+            result.total_found = len(raw_stations)
+            
+            if not raw_stations:
+                logger.warning("No stations found in corridor")
+                return result
+            
+            # Filtrele ve skorla
+            corridor_stations = self._filter_and_score_stations(raw_stations, hotspot)
+            result.dc_compatible = len(corridor_stations)
+            
+            if not corridor_stations:
+                logger.warning("No compatible DC stations found")
+                return result
+            
+            # Sırala ve en iyi N'i al
+            corridor_stations.sort(key=lambda s: s.score, reverse=True)
+            result.stations = corridor_stations[:MAX_STATIONS_PER_HOTSPOT]
+            
+            # Greedy selection
+            result.best_station = self.greedy_select(result.stations, hotspot.soc_at_point)
+            
+            logger.info(
+                "Corridor search completed",
+                total_found=result.total_found,
+                dc_compatible=result.dc_compatible,
+                best_station=result.best_station.station_name if result.best_station else None
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.exception("Corridor search failed", error=str(e))
+            return result
+    
+    async def _fetch_stations_from_ocm(self, hotspot: ChargeHotspot) -> List[Dict[str, Any]]:
+        """OCM API'den istasyonları çek."""
+        try:
+            search_radius = max(self.corridor_length_km, self.corridor_width_km)
+            
+            stations = await ocm_service.get_nearby_stations_raw(
+                lat=hotspot.location.lat,
+                lon=hotspot.location.lon,
+                radius_km=search_radius
+            )
+            
+            return stations
+            
+        except Exception as e:
+            logger.error("OCM API call failed", error=str(e))
+            return []
+    
+    def _filter_and_score_stations(
+        self,
+        raw_stations: List[Dict[str, Any]],
+        hotspot: ChargeHotspot
+    ) -> List[CorridorStation]:
+        """İstasyonları filtrele ve skorla."""
+        filtered_stations = []
+        max_power_in_batch = 0.0
+        
+        for station in raw_stations:
+            # Operasyonel kontrolü
+            status_type = station.get("StatusType", {})
+            is_operational = status_type.get("IsOperational", True)
+            
+            if not is_operational:
+                continue
+            
+            # Bağlayıcı bilgileri
+            connections = station.get("Connections", [])
+            if not connections:
+                continue
+            
+            # Güç kontrolü
+            power_kw = _get_max_power_kw(connections)
+            if power_kw < self.min_dc_power_kw:
+                continue
+            
+            max_power_in_batch = max(max_power_in_batch, power_kw)
+            
+            # Connector uyumluluk kontrolü
+            is_compatible = _is_connector_compatible(connections, self.vehicle.connector_type)
+            if not is_compatible:
+                continue
+            
+            # Mesafe hesapla
+            address_info = station.get("AddressInfo", {})
+            station_lat = address_info.get("Latitude", 0)
+            station_lon = address_info.get("Longitude", 0)
+            
+            distance = haversine_km(
+                hotspot.location.lat, hotspot.location.lon,
+                station_lat, station_lon
+            )
+            
+            if distance > self.corridor_length_km:
+                continue
+            
+            # Rating
+            user_comments = station.get("UserComments", [])
+            rating = 4.0
+            if user_comments:
+                ratings = [c.get("Rating", 4) for c in user_comments if c.get("Rating")]
+                if ratings:
+                    rating = sum(ratings) / len(ratings)
+            
+            corridor_station = CorridorStation(
+                station_info=station,
+                distance_from_hotspot_km=round(distance, 2),
+                deviation_km=round(distance, 2),
+                power_kw=power_kw,
+                is_dc=power_kw >= DC_POWER_THRESHOLD_KW,
+                is_compatible=is_compatible,
+                rating=rating
+            )
+            
+            filtered_stations.append(corridor_station)
+        
+        # Skorlama
+        for station in filtered_stations:
+            deviation_minutes = (station.deviation_km / 50.0) * 60.0
+            station.score = _calculate_station_score(
+                deviation_minutes=deviation_minutes,
+                power_kw=station.power_kw,
+                max_power_kw=max_power_in_batch,
+                rating=station.rating
+            )
+        
+        return filtered_stations
+    
+    def greedy_select(
+        self,
+        stations: List[CorridorStation],
+        current_soc: float
+    ) -> Optional[CorridorStation]:
+        """Greedy algoritma ile en iyi istasyonu seç."""
+        if not stations:
+            return None
+        
+        # SOC düşükse güce daha fazla ağırlık
+        power_weight = GREEDY_WEIGHT_POWER
+        deviation_weight = GREEDY_WEIGHT_DEVIATION
+        
+        if current_soc < 20.0:
+            power_weight = 0.55
+            deviation_weight = 0.25
+        elif current_soc < 30.0:
+            power_weight = 0.50
+            deviation_weight = 0.30
+        
+        best_station = None
+        best_greedy_score = -1
+        
+        for station in stations:
+            power_score = station.power_kw / 350.0
+            deviation_score = max(0, 1.0 - (station.deviation_km / self.corridor_length_km))
+            rating_score = station.rating / 5.0
+            
+            greedy_score = (
+                power_weight * power_score +
+                deviation_weight * deviation_score +
+                GREEDY_WEIGHT_RATING * rating_score
+            )
+            
+            if greedy_score > best_greedy_score:
+                best_greedy_score = greedy_score
+                best_station = station
+        
+        if best_station:
+            logger.info(
+                "Greedy selection completed",
+                station=best_station.station_name,
+                power_kw=best_station.power_kw,
+                deviation_km=best_station.deviation_km
+            )
+        
+        return best_station
+
+
+# =============================================================================
+# V1.5 CONVENIENCE FUNCTIONS
+# =============================================================================
+
+async def find_stations_for_hotspots(
+    hotspots: List[ChargeHotspot],
+    vehicle_model_id: str
+) -> List[CorridorSearchResult]:
+    """
+    Birden fazla hotspot için paralel koridor araması yap.
+    """
+    if not hotspots:
+        return []
+    
+    searcher = CorridorSearcher(vehicle_model_id=vehicle_model_id)
+    
+    tasks = [searcher.search_for_hotspot(hotspot) for hotspot in hotspots]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    valid_results = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.error(f"Hotspot {i} search failed", error=str(result))
+        else:
+            valid_results.append(result)
+    
+    logger.info(
+        "Multi-hotspot search completed",
+        total_hotspots=len(hotspots),
+        successful=len(valid_results)
+    )
+    
+    return valid_results
+
+
+async def find_best_station_for_hotspot(
+    hotspot: ChargeHotspot,
+    vehicle_model_id: str
+) -> Tuple[Optional[CorridorStation], CorridorSearchResult]:
+    """Tek bir hotspot için en iyi istasyonu bul."""
+    searcher = CorridorSearcher(vehicle_model_id=vehicle_model_id)
+    result = await searcher.search_for_hotspot(hotspot)
+    return result.best_station, result
+
+
+# =============================================================================
+# LEGACY FUNCTION (V1.3 Uyumluluk)
 # =============================================================================
 
 async def find_best_station(
@@ -143,37 +475,22 @@ async def find_best_station(
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     V1.3 "Station Funnel" mantığı ile en uygun şarj istasyonunu bulur.
-    
-    Args:
-        latitude: Mevcut konum enlemi
-        longitude: Mevcut konum boylamı
-        vehicle_model_id: Araç modeli ID'si
-    
-    Returns:
-        Tuple[best_station_dict, weather_forecast_dict] veya (None, None)
+    Legacy API uyumluluğu için korunuyor.
     """
     try:
-        # Araç bilgilerini al
-        try:
-            vehicle = get_vehicle_model(vehicle_model_id)
-        except ValueError as e:
-            logger.error("Vehicle model not found", vehicle_id=vehicle_model_id, error=str(e))
-            return None, None
+        vehicle = get_vehicle_model(vehicle_model_id)
         
         logger.info(
-            "Station search started",
+            "Station search started (legacy)",
             lat=latitude,
             lon=longitude,
-            vehicle=vehicle.model_name,
-            connector=vehicle.connector_type
+            vehicle=vehicle.model_name
         )
         
-        # =====================================================================
-        # STEP 1: Paralel veri çekimi (OCM + Weather)
-        # =====================================================================
-        stations_task = ocm_service.get_stations_nearby(
-            latitude=latitude,
-            longitude=longitude,
+        # Paralel veri çekimi
+        stations_task = ocm_service.get_nearby_stations(
+            lat=latitude,
+            lon=longitude,
             radius_km=30
         )
         
@@ -188,258 +505,62 @@ async def find_best_station(
             return_exceptions=True
         )
         
-        # Hata kontrolü
         if isinstance(stations_data, Exception):
             logger.error("OCM station data fetch failed", error=str(stations_data))
             stations_data = []
         
         if isinstance(weather_forecast, Exception):
-            logger.warning("Weather forecast fetch failed", error=str(weather_forecast))
+            logger.warning("Weather forecast fetch failed")
             weather_forecast = None
-        
-        logger.info(f"OCM returned {len(stations_data)} stations")
         
         if not stations_data:
             return None, weather_forecast
         
-        # =====================================================================
-        # STEP 2: Operasyonel ve uyumlu istasyonları filtrele
-        # =====================================================================
+        # Filtrele
         filtered_stations = []
-        
         for station in stations_data:
             try:
-                # Operasyonel kontrolü
                 status_type = station.get("StatusType", {})
-                status_title = status_type.get("Title", "")
-                
-                if not status_title or "operational" not in status_title.lower():
+                if not status_type.get("IsOperational", True):
                     continue
                 
-                # Connector uyumluluğu
                 connections = station.get("Connections", [])
                 if not _is_connector_compatible(connections, vehicle.connector_type):
                     continue
                 
-                # Max güç hesapla
-                station["_max_power_kw"] = _get_max_power_kw(connections)
-                filtered_stations.append(station)
+                power_kw = _get_max_power_kw(connections)
+                if power_kw < DC_POWER_THRESHOLD_KW:
+                    continue
                 
+                station["_max_power_kw"] = power_kw
+                
+                address_info = station.get("AddressInfo", {})
+                station_lat = address_info.get("Latitude", 0)
+                station_lon = address_info.get("Longitude", 0)
+                
+                distance = haversine_km(latitude, longitude, station_lat, station_lon)
+                station["_haversine_distance_km"] = distance
+                
+                if distance <= MAX_HAVERSINE_DISTANCE_KM:
+                    filtered_stations.append(station)
+                    
             except Exception as e:
-                logger.warning("Station filtering error", station_id=station.get("ID"), error=str(e))
                 continue
-        
-        logger.info(
-            "Station filtering completed",
-            total_ocm=len(stations_data),
-            filtered=len(filtered_stations)
-        )
         
         if not filtered_stations:
             return None, weather_forecast
         
-        # =====================================================================
-        # STEP 3: DC ve AC istasyonlarını ayır
-        # =====================================================================
-        dc_stations = [s for s in filtered_stations if s.get("_max_power_kw", 0) > DC_POWER_THRESHOLD_KW]
-        ac_stations = [s for s in filtered_stations if s.get("_max_power_kw", 0) <= DC_POWER_THRESHOLD_KW]
-        
-        # DC tercih et, yoksa AC
-        candidate_stations = dc_stations if dc_stations else ac_stations
-        
-        logger.info(f"DC stations: {len(dc_stations)}, AC stations: {len(ac_stations)}, Candidates: {len(candidate_stations)}")
-        
-        if not candidate_stations:
-            return None, weather_forecast
-        
-        # =====================================================================
-        # STEP 4: Haversine mesafe filtreleme
-        # =====================================================================
-        nearby_stations = []
-        
-        for station in candidate_stations:
-            try:
-                address_info = station.get("AddressInfo", {})
-                station_lat = address_info.get("Latitude")
-                station_lon = address_info.get("Longitude")
-                
-                if not station_lat or not station_lon:
-                    continue
-                
-                distance_km = haversine_km(latitude, longitude, station_lat, station_lon)
-                
-                if distance_km <= MAX_HAVERSINE_DISTANCE_KM:
-                    station["_haversine_distance_km"] = distance_km
-                    nearby_stations.append(station)
-                    
-            except Exception as e:
-                logger.warning("Distance calculation error", station_id=station.get("ID"), error=str(e))
-                continue
-        
-        logger.info(
-            "Haversine filtering completed",
-            before=len(candidate_stations),
-            after=len(nearby_stations)
-        )
-        
-        if not nearby_stations:
-            return None, weather_forecast
-        
-        # Mesafeye göre sırala ve limitle
-        nearby_stations.sort(key=lambda x: x["_haversine_distance_km"])
-        top_nearby_stations = nearby_stations[:MAX_DISTANCE_MATRIX_DESTINATIONS]
-        
-        # =====================================================================
-        # STEP 5: Google Distance Matrix ile gerçek süre kontrolü
-        # =====================================================================
-        origin_point = GeoPoint(lat=latitude, lon=longitude)
-        destination_points = []
-        
-        for station in top_nearby_stations:
-            address_info = station.get("AddressInfo", {})
-            station_lat = address_info.get("Latitude")
-            station_lon = address_info.get("Longitude")
-            
-            if station_lat and station_lon:
-                destination_points.append(GeoPoint(lat=station_lat, lon=station_lon))
-        
-        final_stations = []
-        
-        try:
-            distance_matrix = await google_maps.get_distance_matrix(
-                origins=[origin_point],
-                destinations=destination_points
-            )
-            
-            for i, station in enumerate(top_nearby_stations):
-                try:
-                    if (distance_matrix.get("rows") and 
-                        distance_matrix["rows"][0].get("elements") and
-                        i < len(distance_matrix["rows"][0]["elements"])):
-                        
-                        element = distance_matrix["rows"][0]["elements"][i]
-                        if element.get("status") == "OK":
-                            duration_sec = element.get("duration", {}).get("value", 0)
-                            duration_min = duration_sec / 60
-                            
-                            if duration_min <= MAX_DEVIATION_MINUTES:
-                                station["_deviation_minutes"] = duration_min
-                                final_stations.append(station)
-                                
-                except Exception as e:
-                    logger.warning("Distance matrix element error", station_id=station.get("ID"), error=str(e))
-                    continue
-            
-            logger.info(
-                "Distance Matrix filtering completed",
-                before=len(top_nearby_stations),
-                after=len(final_stations),
-                threshold_min=MAX_DEVIATION_MINUTES
-            )
-            
-        except Exception as e:
-            logger.error("Distance Matrix API failed", error=str(e))
-            # Fallback: Haversine mesafesini kullan
-            for station in top_nearby_stations[:10]:
-                station["_deviation_minutes"] = station.get("_haversine_distance_km", 10) * 1.5  # Yaklaşık süre
-                final_stations.append(station)
-        
-        # DC başarısız olduysa AC'ye fallback
-        if not final_stations and dc_stations and ac_stations:
-            logger.info("DC stations filtered out, falling back to AC stations")
-            # AC için aynı işlemi tekrarla (basitleştirilmiş)
-            ac_nearby = [s for s in ac_stations if s.get("_haversine_distance_km", 100) <= MAX_HAVERSINE_DISTANCE_KM]
-            for station in ac_nearby[:5]:
-                station["_deviation_minutes"] = station.get("_haversine_distance_km", 10) * 1.5
-                final_stations.append(station)
-        
-        if not final_stations:
-            return None, weather_forecast
-        
-        # =====================================================================
-        # STEP 6: Place Details ile zenginleştir (Top 3)
-        # =====================================================================
-        final_stations.sort(key=lambda x: x.get("_deviation_minutes", 999))
-        top_stations = final_stations[:TOP_STATIONS_FOR_DETAILS]
-        
-        enriched_stations = []
-        
-        for i, station in enumerate(top_stations):
-            try:
-                if i > 0:
-                    await asyncio.sleep(0.3)  # Rate limiting
-                
-                address_info = station.get("AddressInfo", {})
-                place_id = address_info.get("PlaceID")
-                
-                if place_id:
-                    try:
-                        place_details = await google_maps.get_place_details(place_id)
-                        station["_place_details"] = place_details
-                    except Exception as e:
-                        logger.warning("Place Details failed", place_id=place_id, error=str(e))
-                
-                enriched_stations.append(station)
-                
-            except Exception as e:
-                logger.warning("Station enrichment error", station_id=station.get("ID"), error=str(e))
-                enriched_stations.append(station)
-        
-        # =====================================================================
-        # STEP 7: Skorlama ve en iyiyi seç
-        # =====================================================================
-        if not enriched_stations:
-            return None, weather_forecast
-        
-        # Max güç hesapla (normalizasyon için)
-        max_power_kw = max([s.get("_max_power_kw", 0) for s in enriched_stations] + [1])
-        
-        best_station = None
-        best_score = -1
-        
-        for station in enriched_stations:
-            try:
-                deviation_min = station.get("_deviation_minutes", MAX_DEVIATION_MINUTES)
-                power_kw = station.get("_max_power_kw", 0)
-                
-                # Rating'i place details'dan al
-                rating = 0
-                place_details = station.get("_place_details", {})
-                if place_details.get("result"):
-                    rating = place_details["result"].get("rating", 0)
-                
-                # Skor hesapla
-                score = _calculate_station_score(deviation_min, power_kw, max_power_kw, rating)
-                station["_final_score"] = score
-                
-                if score > best_score:
-                    best_score = score
-                    best_station = station
-                
-                logger.debug(
-                    "Station scored",
-                    station_id=station.get("ID"),
-                    deviation_min=round(deviation_min, 1),
-                    power_kw=power_kw,
-                    rating=rating,
-                    score=round(score, 3)
-                )
-                
-            except Exception as e:
-                logger.warning("Station scoring error", station_id=station.get("ID"), error=str(e))
-                continue
+        # En iyiyi seç
+        filtered_stations.sort(key=lambda x: x.get("_haversine_distance_km", 999))
+        best_station = filtered_stations[0] if filtered_stations else None
         
         if best_station:
             logger.info(
-                "Best station selected",
+                "Best station selected (legacy)",
                 station_id=best_station.get("ID"),
                 station_name=best_station.get("AddressInfo", {}).get("Title"),
-                score=round(best_station.get("_final_score", 0), 3),
-                deviation_min=best_station.get("_deviation_minutes"),
                 power_kw=best_station.get("_max_power_kw")
             )
-        else:
-            logger.warning("No station could be selected")
         
         return best_station, weather_forecast
         
@@ -448,14 +569,11 @@ async def find_best_station(
         return None, None
 
 
-# =============================================================================
-# BACKWARD COMPATIBILITY ALIAS
-# =============================================================================
-
+# Backward compatibility alias
 async def find_charging_station(
     lat: float,
     lon: float,
     vehicle_model_id: str
 ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    """Alias for find_best_station for backward compatibility."""
+    """Alias for backward compatibility."""
     return await find_best_station(lat, lon, vehicle_model_id)

@@ -240,8 +240,8 @@ async def optimize_route(request: RouteRequest) -> MultiStopRouteResponse:
             status=plan.status,
             total_distance_km=plan.total_distance_km,
             total_duration_min=plan.total_duration_minutes,
-            consumption_kwh=sum(leg.consumption_kwh for leg in plan.legs),
-            charge_stops=len([leg for leg in plan.legs if leg.type == "charge"]),
+            consumption_kwh=sum(leg.consumption_kwh for leg in plan.legs if hasattr(leg, 'consumption_kwh')),
+            charge_stops=len([leg for leg in plan.legs if getattr(leg, 'type', '') == "charge"]),
             processing_time_ms=round(planning_duration * 1000, 1)
         )
         

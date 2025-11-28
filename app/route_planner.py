@@ -18,13 +18,22 @@ Kullanım:
 """
 
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union
 from app.models import (
     RouteRequest, 
     MultiStopRouteResponse, 
-    DriveLeg, 
-    GeoPoint
+    DriveLeg,
+    ChargeLeg,
+    GeoPoint,
+    StationInfo,
+    ConnectorInfo,
+    StationAmenity,
+    PlugType,
+    ChargerType
 )
+# V1.5 Modülleri
+from app.route_segmenter import RouteSegmenter, ChargeHotspot, create_route_segments
+from app.station_finder import CorridorSearcher, CorridorStation, find_stations_for_hotspots
 from app.services.ocm_service import ocm_service
 from app.services.weather_service import WeatherService
 from app.route_selector import find_best_route
@@ -70,6 +79,165 @@ def _safe_soc_percent(soc_kwh: float, battery_kwh: float) -> float:
         return 0.0
     percent = (soc_kwh / battery_kwh) * 100
     return max(0.0, min(100.0, percent))
+
+
+def _corridor_station_to_station_info(corridor_station: CorridorStation) -> StationInfo:
+    """
+    V1.5: CorridorStation'ı StationInfo modeline dönüştür.
+    
+    Args:
+        corridor_station: Koridor aramasından gelen istasyon
+        
+    Returns:
+        StationInfo modeli
+    """
+    station_data = corridor_station.station_info
+    address_info = station_data.get("AddressInfo", {})
+    connections = station_data.get("Connections", [])
+    
+    # Connector bilgilerini dönüştür
+    connectors = []
+    for conn in connections:
+        power_kw = conn.get("PowerKW") or 0
+        if power_kw <= 0:
+            continue
+            
+        # Charger type belirle
+        if power_kw >= 150:
+            charger_type = ChargerType.HPC
+        elif power_kw >= 40:
+            charger_type = ChargerType.DC
+        else:
+            charger_type = ChargerType.AC
+        
+        # Plug type belirle
+        connection_type = conn.get("ConnectionType", {})
+        type_id = connection_type.get("ID", 0)
+        plug_type = PlugType.CCS2  # Default
+        if type_id == 2:
+            plug_type = PlugType.CHADEMO
+        elif type_id in (25, 1036):
+            plug_type = PlugType.TYPE2
+        elif type_id == 33:
+            plug_type = PlugType.CCS2
+        
+        connectors.append(ConnectorInfo(
+            plug_type=plug_type,
+            charger_type=charger_type,
+            power_kw=float(power_kw),
+            status="Available"
+        ))
+    
+    # En az bir connector olmalı
+    if not connectors:
+        connectors.append(ConnectorInfo(
+            plug_type=PlugType.CCS2,
+            charger_type=ChargerType.DC,
+            power_kw=corridor_station.power_kw,
+            status="Available"
+        ))
+    
+    return StationInfo(
+        id=corridor_station.station_id,
+        name=corridor_station.station_name,
+        operator=station_data.get("OperatorInfo", {}).get("Title"),
+        location=corridor_station.location,
+        rating=corridor_station.rating,
+        connectors=connectors,
+        amenities=StationAmenity(),
+        distance_from_route_km=corridor_station.deviation_km
+    )
+
+
+def _calculate_charge_duration_minutes(
+    current_soc: float,
+    target_soc: float,
+    battery_kwh: float,
+    power_kw: float
+) -> float:
+    """
+    Şarj süresini hesapla.
+    
+    Basit linear model (V2'de charging curve eklenecek)
+    
+    Args:
+        current_soc: Mevcut SOC (%)
+        target_soc: Hedef SOC (%)
+        battery_kwh: Batarya kapasitesi
+        power_kw: Şarj gücü
+        
+    Returns:
+        Şarj süresi (dakika)
+    """
+    if power_kw <= 0:
+        return 0.0
+    
+    soc_delta = target_soc - current_soc
+    if soc_delta <= 0:
+        return 0.0
+    
+    energy_needed_kwh = (soc_delta / 100.0) * battery_kwh
+    
+    # Şarj verimliliği %90
+    efficiency = 0.90
+    actual_power = power_kw * efficiency
+    
+    # %80 üstünde şarj yavaşlar (basit model)
+    if target_soc > 80:
+        # Ortalama güç düşüşü
+        actual_power *= 0.7
+    
+    hours = energy_needed_kwh / actual_power
+    return hours * 60  # dakikaya çevir
+
+
+def _create_charge_leg(
+    station: StationInfo,
+    arrival_soc: float,
+    target_soc: float,
+    battery_kwh: float
+) -> ChargeLeg:
+    """
+    V1.5: ChargeLeg oluştur.
+    
+    Args:
+        station: İstasyon bilgisi
+        arrival_soc: Varış SOC (%)
+        target_soc: Hedef SOC (%)
+        battery_kwh: Batarya kapasitesi
+        
+    Returns:
+        ChargeLeg modeli
+    """
+    # En yüksek güçlü connector'ı bul
+    max_power = max((c.power_kw for c in station.connectors), default=50.0)
+    
+    # Şarj süresi hesapla
+    duration = _calculate_charge_duration_minutes(
+        current_soc=arrival_soc,
+        target_soc=target_soc,
+        battery_kwh=battery_kwh,
+        power_kw=max_power
+    )
+    
+    # Enerji miktarı
+    energy_added = ((target_soc - arrival_soc) / 100.0) * battery_kwh
+    
+    # Fiyat tahmini (ortalama 8 TL/kWh)
+    price_per_kwh = 8.0
+    estimated_cost = energy_added * price_per_kwh
+    
+    return ChargeLeg(
+        type="charge",
+        station=station,
+        arrival_soc_percent=round(arrival_soc, 1),
+        target_soc_percent=round(target_soc, 1),
+        energy_added_kwh=round(energy_added, 2),
+        duration_minutes=round(duration, 1),
+        price_per_kwh=price_per_kwh,
+        estimated_cost=round(estimated_cost, 2),
+        currency="TRY"
+    )
 
 
 # =============================================================================
@@ -374,58 +542,193 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
         # Şarj gerekli mi kontrol et
         charging_needed = max_range_km < route_distance_km
         route_message = None
+        charge_stops = 0
         
+        # =================================================================
+        # V1.5: Dinamik Şarj Planlama Algoritması
+        # =================================================================
         if charging_needed:
-            deficit_km = route_distance_km - max_range_km
-            required_stops = int(deficit_km / max_range_km) + 1
-            
             logger.info(
-                "Charging needed",
+                "V1.5 charging algorithm started",
                 max_range_km=round(max_range_km, 1),
-                route_distance_km=round(route_distance_km, 1),
-                deficit_km=round(deficit_km, 1),
-                estimated_stops=required_stops
+                route_distance_km=round(route_distance_km, 1)
             )
             
-            route_message = f"⚠️ Şarj gerekli! Menzil: {round(max_range_km)}km, Rota: {round(route_distance_km)}km. Tahmini {required_stops} şarj durağı gerekiyor."
-            
-            # TODO: OCM ile istasyon ara ve multi-leg route oluştur
-            logger.warning("Charging stations search not fully implemented yet")
+            try:
+                # 1️⃣ Route Segmentation - Polyline'ı parçalara ayır
+                # V1.5: Kullanıcıdan gelen hedef SOC değerlerini kullan
+                target_arrival_soc = getattr(request, 'target_arrival_soc_percent', 20.0)
+                charge_target_soc = getattr(request, 'charge_target_soc_percent', 80.0)
+                
+                segmenter = RouteSegmenter(
+                    vehicle=vehicle,
+                    start_soc=request.current_soc_percent,
+                    target_arrival_soc=target_arrival_soc
+                )
+                
+                segments = segmenter.create_segments_from_polyline(
+                    polyline=polyline,
+                    total_elevation_gain_m=elevation_gain_m,
+                    total_elevation_loss_m=elevation_loss_m
+                )
+                
+                # 2️⃣ Hotspot Detection - Şarj gerekli noktaları bul
+                hotspots = segmenter.find_charge_hotspots()
+                
+                logger.info(
+                    "Route segmentation completed",
+                    segment_count=len(segments),
+                    hotspot_count=len(hotspots)
+                )
+                
+                if hotspots:
+                    # 3️⃣ Corridor Search - Her hotspot için istasyon ara
+                    search_results = await find_stations_for_hotspots(
+                        hotspots=hotspots,
+                        vehicle_model_id=request.vehicle_model_id
+                    )
+                    
+                    # 4️⃣ Multi-Leg Route Oluştur
+                    current_soc = request.current_soc_percent
+                    current_point = GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"])
+                    leg_start_km = 0.0
+                    
+                    for i, result in enumerate(search_results):
+                        if result.best_station:
+                            station_info = _corridor_station_to_station_info(result.best_station)
+                            hotspot = result.hotspot
+                            
+                            # DriveLeg - Mevcut noktadan istasyona
+                            drive_distance = hotspot.segment_index * 10.0  # Segment * 10km
+                            drive_duration = (drive_distance / route_distance_km) * route_duration_min
+                            
+                            drive_leg = DriveLeg(
+                                type="drive",
+                                start_point=current_point,
+                                end_point=station_info.location,
+                                distance_km=round(drive_distance - leg_start_km, 1),
+                                duration_minutes=round(drive_duration, 1),
+                                avg_speed_kmh=round((drive_distance / drive_duration) * 60 if drive_duration > 0 else 60, 1),
+                                consumption_kwh=round((drive_distance - leg_start_km) * consumption_per_km, 2),
+                                start_soc_percent=round(current_soc, 1),
+                                end_soc_percent=round(hotspot.soc_at_point, 1),
+                                elevation_gain_m=round(elevation_gain_m * (drive_distance / route_distance_km), 1),
+                                elevation_loss_m=round(elevation_loss_m * (drive_distance / route_distance_km), 1),
+                                polyline=""
+                            )
+                            legs.append(drive_leg)
+                            
+                            # ChargeLeg - İstasyonda şarj
+                            # V1.5: Kullanıcının belirlediği şarj hedefi veya minimum gerekli
+                            actual_charge_target = max(charge_target_soc, hotspot.min_required_soc + 10)
+                            
+                            charge_leg = _create_charge_leg(
+                                station=station_info,
+                                arrival_soc=hotspot.soc_at_point,
+                                target_soc=actual_charge_target,
+                                battery_kwh=battery_kwh
+                            )
+                            legs.append(charge_leg)
+                            charge_stops += 1
+                            
+                            # Durumu güncelle
+                            current_soc = actual_charge_target
+                            current_point = station_info.location
+                            leg_start_km = drive_distance
+                            total_duration += charge_leg.duration_minutes
+                            
+                            logger.info(
+                                f"Charge stop {charge_stops} planned",
+                                station=station_info.name,
+                                soc_before=round(hotspot.soc_at_point, 1),
+                                soc_after=round(current_soc, 1),
+                                charge_time=round(charge_leg.duration_minutes, 1)
+                            )
+                    
+                    # Son DriveLeg - Son istasyondan hedefe
+                    remaining_distance = route_distance_km - leg_start_km
+                    remaining_duration = (remaining_distance / route_distance_km) * route_duration_min
+                    final_consumption = remaining_distance * consumption_per_km
+                    final_soc = current_soc - (final_consumption / battery_kwh) * 100
+                    
+                    final_drive_leg = DriveLeg(
+                        type="drive",
+                        start_point=current_point,
+                        end_point=GeoPoint(lat=end_coords["lat"], lon=end_coords["lng"]),
+                        distance_km=round(remaining_distance, 1),
+                        duration_minutes=round(remaining_duration, 1),
+                        avg_speed_kmh=round((remaining_distance / remaining_duration) * 60 if remaining_duration > 0 else 60, 1),
+                        consumption_kwh=round(final_consumption, 2),
+                        start_soc_percent=round(current_soc, 1),
+                        end_soc_percent=round(max(0, final_soc), 1),
+                        elevation_gain_m=round(elevation_gain_m * (remaining_distance / route_distance_km), 1),
+                        elevation_loss_m=round(elevation_loss_m * (remaining_distance / route_distance_km), 1),
+                        polyline=polyline,
+                        weather_context={
+                            "start_weather": {
+                                "temp_c": start_weather.temp_c if start_weather else None,
+                                "condition": start_weather.condition.value if start_weather else None,
+                                "wind_speed_mps": start_weather.wind_speed_mps if start_weather else None,
+                                "precipitation_prob": start_weather.precipitation_prob if start_weather else None
+                            },
+                            "end_weather": {
+                                "temp_c": end_weather.temp_c if end_weather else None,
+                                "condition": end_weather.condition.value if end_weather else None,
+                                "wind_speed_mps": end_weather.wind_speed_mps if end_weather else None,
+                                "precipitation_prob": end_weather.precipitation_prob if end_weather else None
+                            }
+                        }
+                    )
+                    legs.append(final_drive_leg)
+                    
+                    # Route message güncelle
+                    total_charge_time = sum(leg.duration_minutes for leg in legs if isinstance(leg, ChargeLeg))
+                    route_message = f"🔋 {charge_stops} şarj durağı planlandı. Toplam şarj süresi: {round(total_charge_time)}dk"
+                    
+                else:
+                    # Hotspot bulunamadı - tek leg olarak devam
+                    route_message = f"⚠️ Şarj gerekli ancak istasyon bulunamadı. Menzil: {round(max_range_km)}km"
+                    
+            except Exception as e:
+                logger.exception("V1.5 charging algorithm failed", error=str(e))
+                route_message = f"⚠️ Şarj planlaması başarısız: {str(e)}"
+        
         else:
             route_message = f"✅ Şarj gerekmez. Menzil: {round(max_range_km)}km, Rota: {round(route_distance_km)}km"
         
-        # DriveLeg oluştur
-        avg_speed_kmh = (route_distance_km / route_duration_min) * 60 if route_duration_min > 0 else 0
-        
-        drive_leg = DriveLeg(
-            type="drive",
-            start_point=GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"]),
-            end_point=GeoPoint(lat=end_coords["lat"], lon=end_coords["lng"]),
-            distance_km=round(route_distance_km, 1),
-            duration_minutes=round(route_duration_min, 1),
-            avg_speed_kmh=round(avg_speed_kmh, 1),
-            consumption_kwh=round(segment_consumption_kwh, 2),
-            start_soc_percent=round(start_soc_percent, 1),
-            end_soc_percent=round(arrival_soc_percent, 1),
-            elevation_gain_m=round(elevation_gain_m, 1),
-            elevation_loss_m=round(elevation_loss_m, 1),
-            polyline=polyline,
-            weather_context={
-                "start_weather": {
-                    "temp_c": start_weather.temp_c if start_weather else None,
-                    "condition": start_weather.condition.value if start_weather else None,
-                    "wind_speed_mps": start_weather.wind_speed_mps if start_weather else None,
-                    "precipitation_prob": start_weather.precipitation_prob if start_weather else None
-                },
-                "end_weather": {
-                    "temp_c": end_weather.temp_c if end_weather else None,
-                    "condition": end_weather.condition.value if end_weather else None,
-                    "wind_speed_mps": end_weather.wind_speed_mps if end_weather else None,
-                    "precipitation_prob": end_weather.precipitation_prob if end_weather else None
+        # Eğer legs boşsa (şarj gerekmiyorsa veya hata olduysa) tek DriveLeg ekle
+        if not legs:
+            avg_speed_kmh = (route_distance_km / route_duration_min) * 60 if route_duration_min > 0 else 0
+            
+            drive_leg = DriveLeg(
+                type="drive",
+                start_point=GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"]),
+                end_point=GeoPoint(lat=end_coords["lat"], lon=end_coords["lng"]),
+                distance_km=round(route_distance_km, 1),
+                duration_minutes=round(route_duration_min, 1),
+                avg_speed_kmh=round(avg_speed_kmh, 1),
+                consumption_kwh=round(segment_consumption_kwh, 2),
+                start_soc_percent=round(start_soc_percent, 1),
+                end_soc_percent=round(arrival_soc_percent, 1),
+                elevation_gain_m=round(elevation_gain_m, 1),
+                elevation_loss_m=round(elevation_loss_m, 1),
+                polyline=polyline,
+                weather_context={
+                    "start_weather": {
+                        "temp_c": start_weather.temp_c if start_weather else None,
+                        "condition": start_weather.condition.value if start_weather else None,
+                        "wind_speed_mps": start_weather.wind_speed_mps if start_weather else None,
+                        "precipitation_prob": start_weather.precipitation_prob if start_weather else None
+                    },
+                    "end_weather": {
+                        "temp_c": end_weather.temp_c if end_weather else None,
+                        "condition": end_weather.condition.value if end_weather else None,
+                        "wind_speed_mps": end_weather.wind_speed_mps if end_weather else None,
+                        "precipitation_prob": end_weather.precipitation_prob if end_weather else None
+                    }
                 }
-            }
-        )
-        legs.append(drive_leg)
+            )
+            legs.append(drive_leg)
         
         # =====================================================================
         # STEP H: CO2 tasarrufu hesapla

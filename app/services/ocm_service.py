@@ -101,6 +101,43 @@ class OCMService(BaseService):
         return stations
 
     # ============================================================
+    # 1b) Raw API – Station Finder V1.5 için
+    # ============================================================
+    @cacheable(prefix="ocm_raw", ttl_seconds=3600)
+    async def get_nearby_stations_raw(
+        self,
+        lat: float,
+        lon: float,
+        radius_km: float = 50.0,
+        max_results: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Ham OCM verisi döndürür (Dict formatında).
+        Station Finder V1.5 için.
+        """
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "distance": radius_km,
+            "distanceunit": "KM",
+            "maxresults": max_results,
+            "compact": False,
+            "verbose": False,
+            "key": self.api_key,
+        }
+
+        try:
+            raw_list = await self.request(
+                method="GET",
+                endpoint="/poi",
+                params=params,
+            )
+            return raw_list if raw_list else []
+        except ExternalAPIError as e:
+            logger.error("OCM raw request failed", error=e.detail)
+            return []
+
+    # ============================================================
     # 2) Mapping Helpers – JSON → Domain Model
     # ============================================================
 
