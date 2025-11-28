@@ -47,10 +47,10 @@ MIN_CHARGE_THRESHOLD_PERCENT = 15.0  # Minimum şarj seviyesi
 MIN_DISTANCE_BETWEEN_STOPS_KM = 50.0  # Şarj durakları arası minimum mesafe
 
 # Optimizer sabitleri
-STOP_PENALTY_MINUTES = 25.0  # Her ek durak için zaman penaltisi (dk) - AĞIR
-SHORT_INTERVAL_PENALTY_MINUTES = 15.0  # Kısa aralıklı durak penaltisi (dk)
-MIN_DRIVING_INTERVAL_MINUTES = 60.0  # 1 saatten kısa sürüş aralıkları penalize edilir
-TARGET_SOC_CANDIDATES = [80.0, 85.0, 90.0, 95.0]  # Yüksek hedefler - az durak için
+STOP_PENALTY_MINUTES = 40.0  # Her ek durak için zaman penaltisi (dk) - ÇOK AĞIR
+SHORT_INTERVAL_PENALTY_MINUTES = 20.0  # Kısa aralıklı durak penaltisi (dk)
+MIN_DRIVING_INTERVAL_MINUTES = 90.0  # 1.5 saatten kısa sürüş aralıkları penalize edilir
+TARGET_SOC_CANDIDATES = [90.0, 95.0]  # Sadece yüksek hedefler - minimum durak için
 
 
 # =============================================================================
@@ -385,12 +385,12 @@ class SOCSimulator:
                 required_kwh = distance_to_next * avg_consumption_per_km
                 required_soc = (required_kwh / self.battery_capacity_kwh) * 100
                 
-                # Hedef = sonraki durağa varış için gereken + güvenlik payı (%20)
+                # Hedef = sonraki durağa varış için gereken + güvenlik payı (%25)
                 # Sonraki durağa %25-30 civarı SOC ile varmayı hedefle
                 target = 30.0 + required_soc + SAFETY_BUFFER_PERCENT
                 
-                # Sınırla: min %70 (çok düşük olmasın), max %90
-                target = max(70.0, min(90.0, target))
+                # Sınırla: min %80 (yüksek tut - az durak için), max %95
+                target = max(80.0, min(95.0, target))
             
             # Mevcut SOC'dan düşük olamaz (en az %20 şarj et)
             target = max(target, hotspot.soc_at_point + 20)
@@ -640,13 +640,6 @@ class ChargePlanOptimizer:
                 best_score = score
                 best_target_soc = target_soc
                 best_result = result
-                
-                # EARLY TERMINATION: 1 durak ve düşük skor ise yeterli
-                if len(result.hotspots) == 1 and score < 40:
-                    logger.info(
-                        f"ChargePlanOptimizer: Good enough plan found (1 stop, score={score:.1f}) - early exit"
-                    )
-                    return best_target_soc, best_result
         
         logger.info(
             f"ChargePlanOptimizer: Optimal plan found - "
