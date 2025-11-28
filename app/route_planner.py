@@ -226,7 +226,9 @@ def _build_multi_legs(
         ))
         
         # 2. ChargeLeg: Şarj süresi hesapla
-        soc_to_add = charge_target_soc - hotspot.soc_at_point
+        # Her hotspot için BAĞIMSIZ şarj hedefi (recommended_charge_to)
+        hotspot_target_soc = hotspot.recommended_charge_to
+        soc_to_add = hotspot_target_soc - hotspot.soc_at_point
         charge_power_kw = station.power_kw if station.power_kw > 0 else 50.0
         # Basit hesap: kWh = SOC * batarya / 100
         kwh_to_add = (soc_to_add / 100) * 51  # TODO: Gerçek batarya kapasitesi
@@ -250,14 +252,14 @@ def _build_multi_legs(
             type="charge",
             station=station_info,
             arrival_soc_percent=round(hotspot.soc_at_point, 1),
-            target_soc_percent=round(charge_target_soc, 1),
+            target_soc_percent=round(hotspot_target_soc, 1),
             energy_added_kwh=round(kwh_to_add, 2),
             duration_minutes=round(max(10, charge_duration), 1)
         ))
         
         # Güncellemeler
         current_point = station_location
-        current_soc = charge_target_soc
+        current_soc = hotspot_target_soc
         remaining_distance -= leg_distance
         remaining_duration -= leg_duration
         remaining_consumption -= leg_consumption
