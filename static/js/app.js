@@ -112,8 +112,8 @@ function showResults(data) {
         <!-- Weather Information -->
         ${leg.weather_context ? renderWeatherInfo(leg.weather_context) : ''}
         
-        <!-- Charge Stops -->
-        ${data.charge_stops > 0 ? renderChargeStops(data.legs) : ''}
+        <!-- Multi-Leg Timeline (Rota Planı) -->
+        ${data.legs && data.legs.length > 0 ? renderMultiLegs(data.legs) : ''}
         
         <!-- Route Details -->
         ${renderRouteDetails()}
@@ -274,60 +274,141 @@ function renderWeatherCard(title, location, weather, color) {
 }
 
 /**
- * Charge stops render
+ * Multi-Leg Timeline Render - Tüm sürüş ve şarj adımlarını göster
  */
-function renderChargeStops(legs) {
-    const chargeLegs = legs.filter(l => l.type === 'charge');
+function renderMultiLegs(legs) {
+    if (!legs || legs.length === 0) return '';
 
-    const stopsHtml = chargeLegs.map((charge, i) => `
-        <div class="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 rounded-lg p-4 border border-yellow-500/20">
-            <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 bg-yellow-500/20 rounded-full flex items-center justify-center text-yellow-400 font-bold text-sm">${i + 1}</div>
-                    <div>
-                        <p class="text-white font-medium text-sm">${charge.station?.name || 'Şarj İstasyonu'}</p>
-                        <p class="text-gray-500 text-xs">${charge.station?.operator || ''}</p>
-                    </div>
-                </div>
-                <div class="text-right">
-                    <p class="text-white font-medium">${charge.station?.connectors?.[0]?.power_kw || 0} kW</p>
-                    <p class="text-gray-500 text-xs">${charge.station?.connectors?.[0]?.plug_type || 'CCS2'}</p>
-                </div>
-            </div>
-            <div class="grid grid-cols-3 gap-2 text-center">
-                <div class="bg-white/5 rounded-lg p-2">
-                    <p class="text-xs text-gray-500">Varış</p>
-                    <p class="text-white font-medium">${charge.arrival_soc_percent?.toFixed(0)}%</p>
-                </div>
-                <div class="bg-white/5 rounded-lg p-2">
-                    <p class="text-xs text-gray-500">Hedef</p>
-                    <p class="text-green-400 font-medium">${charge.target_soc_percent?.toFixed(0)}%</p>
-                </div>
-                <div class="bg-white/5 rounded-lg p-2">
-                    <p class="text-xs text-gray-500">Süre</p>
-                    <p class="text-blue-400 font-medium">${charge.duration_minutes?.toFixed(0)} dk</p>
-                </div>
-            </div>
-            <div class="flex justify-between mt-3 text-xs">
-                <span class="text-gray-500">+${charge.energy_added_kwh?.toFixed(1)} kWh</span>
-                <span class="text-yellow-400">~₺${charge.estimated_cost?.toFixed(0) || 0}</span>
-            </div>
-        </div>
-    `).join('');
+    const legsHtml = legs.map((leg, i) => {
+        if (leg.type === 'drive') {
+            return renderDriveLeg(leg, i);
+        } else if (leg.type === 'charge') {
+            return renderChargeLeg(leg, i);
+        }
+        return '';
+    }).join('');
+
+    const driveCount = legs.filter(l => l.type === 'drive').length;
+    const chargeCount = legs.filter(l => l.type === 'charge').length;
 
     return `
         <div class="bg-white/5 rounded-xl p-5 mb-6">
             <h4 class="text-white font-medium mb-4 flex items-center gap-2">
-                <svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
                 </svg>
-                Şarj Durakları (${chargeLegs.length})
+                Rota Planı
+                <span class="text-xs text-gray-500 ml-2">(${driveCount} sürüş + ${chargeCount} şarj)</span>
             </h4>
-            <div class="space-y-3">
-                ${stopsHtml}
+            <div class="relative">
+                <!-- Timeline Line -->
+                <div class="absolute left-4 top-0 bottom-0 w-0.5 bg-gradient-to-b from-green-500 via-yellow-500 to-red-500"></div>
+                
+                <!-- Legs -->
+                <div class="space-y-4">
+                    ${legsHtml}
+                </div>
             </div>
         </div>
     `;
+}
+
+/**
+ * Drive Leg Render
+ */
+function renderDriveLeg(leg, index) {
+    const durationHours = Math.floor(leg.duration_minutes / 60);
+    const durationMins = Math.round(leg.duration_minutes % 60);
+    const durationStr = durationHours > 0 ? `${durationHours}s ${durationMins}dk` : `${durationMins}dk`;
+
+    return `
+        <div class="relative pl-10">
+            <!-- Icon -->
+            <div class="absolute left-0 w-8 h-8 bg-blue-500/20 rounded-full flex items-center justify-center border-2 border-blue-500">
+                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0"/>
+                </svg>
+            </div>
+            
+            <!-- Content -->
+            <div class="bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-lg p-4 border border-blue-500/20">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-blue-400 font-medium text-sm">🚗 Sürüş ${Math.ceil((index + 1) / 2)}</span>
+                    <span class="text-white font-bold">${leg.distance_km?.toFixed(1)} km</span>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div class="bg-white/5 rounded p-2">
+                        <p class="text-gray-500">Süre</p>
+                        <p class="text-white font-medium">${durationStr}</p>
+                    </div>
+                    <div class="bg-white/5 rounded p-2">
+                        <p class="text-gray-500">Tüketim</p>
+                        <p class="text-yellow-400 font-medium">${leg.consumption_kwh?.toFixed(1)} kWh</p>
+                    </div>
+                    <div class="bg-white/5 rounded p-2">
+                        <p class="text-gray-500">Batarya</p>
+                        <p class="text-white font-medium">${leg.start_soc_percent?.toFixed(0)}% → ${leg.end_soc_percent?.toFixed(0)}%</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Charge Leg Render
+ */
+function renderChargeLeg(leg, index) {
+    return `
+        <div class="relative pl-10">
+            <!-- Icon -->
+            <div class="absolute left-0 w-8 h-8 bg-yellow-500/20 rounded-full flex items-center justify-center border-2 border-yellow-500">
+                <svg class="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+            </div>
+            
+            <!-- Content -->
+            <div class="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 rounded-lg p-4 border border-yellow-500/20">
+                <div class="flex items-center justify-between mb-2">
+                    <div>
+                        <span class="text-yellow-400 font-medium text-sm">⚡ Şarj Durağı</span>
+                        <p class="text-white font-medium text-sm mt-1">${leg.station?.name || 'Şarj İstasyonu'}</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-white font-bold">${leg.station?.connectors?.[0]?.power_kw || 50} kW</p>
+                        <p class="text-gray-500 text-xs">${leg.station?.connectors?.[0]?.plug_type || 'CCS2'}</p>
+                    </div>
+                </div>
+                <div class="grid grid-cols-4 gap-2 text-center text-xs">
+                    <div class="bg-white/5 rounded p-2">
+                        <p class="text-gray-500">Varış</p>
+                        <p class="text-red-400 font-medium">${leg.arrival_soc_percent?.toFixed(0)}%</p>
+                    </div>
+                    <div class="bg-white/5 rounded p-2">
+                        <p class="text-gray-500">Hedef</p>
+                        <p class="text-green-400 font-medium">${leg.target_soc_percent?.toFixed(0)}%</p>
+                    </div>
+                    <div class="bg-white/5 rounded p-2">
+                        <p class="text-gray-500">Süre</p>
+                        <p class="text-blue-400 font-medium">${leg.duration_minutes?.toFixed(0)} dk</p>
+                    </div>
+                    <div class="bg-white/5 rounded p-2">
+                        <p class="text-gray-500">Enerji</p>
+                        <p class="text-yellow-400 font-medium">+${leg.energy_added_kwh?.toFixed(1)} kWh</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Charge stops render (Legacy - backward compatibility)
+ */
+function renderChargeStops(legs) {
+    return renderMultiLegs(legs);
 }
 
 /**
