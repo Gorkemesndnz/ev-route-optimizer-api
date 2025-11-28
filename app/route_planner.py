@@ -212,7 +212,12 @@ def _build_multi_legs(
         segment_ratio = hotspot.distance_from_start_km / total_distance_km if total_distance_km > 0 else 0
         leg_distance = hotspot.distance_from_start_km - (total_distance_km - remaining_distance)
         leg_duration = remaining_duration * (leg_distance / remaining_distance) if remaining_distance > 0 else 0
-        leg_consumption = remaining_consumption * (leg_distance / remaining_distance) if remaining_distance > 0 else 0
+        
+        # 🔧 FIX: consumption_kwh SOC farkından hesaplanmalı (batarya kapasitesi sınırı!)
+        # ESKİ HATALI: leg_consumption = remaining_consumption * (leg_distance / remaining_distance)
+        # Bu formül toplam rota tüketimini dağıtıyordu → 51 kWh bataryada 54 kWh gösteriyordu
+        soc_drop = current_soc - hotspot.soc_at_point
+        leg_consumption = (soc_drop / 100) * battery_capacity_kwh
         
         # 1. DriveLeg: Mevcut nokta → Şarj istasyonu
         avg_speed = (leg_distance / leg_duration) * 60 if leg_duration > 0 else 60
@@ -277,6 +282,11 @@ def _build_multi_legs(
     # Son DriveLeg: Son şarj istasyonu → Varış
     if remaining_distance > 0:
         avg_speed = (remaining_distance / remaining_duration) * 60 if remaining_duration > 0 else 60
+        
+        # 🔧 FIX: Son leg için de SOC farkından hesapla
+        final_soc_drop = current_soc - final_soc
+        final_leg_consumption = (final_soc_drop / 100) * battery_capacity_kwh
+        
         legs.append(DriveLeg(
             type="drive",
             start_point=current_point,
@@ -284,7 +294,7 @@ def _build_multi_legs(
             distance_km=round(remaining_distance, 1),
             duration_minutes=round(max(0, remaining_duration), 1),
             avg_speed_kmh=round(avg_speed, 1),
-            consumption_kwh=round(max(0, remaining_consumption), 2),
+            consumption_kwh=round(max(0, final_leg_consumption), 2),
             start_soc_percent=round(current_soc, 1),
             end_soc_percent=round(final_soc, 1)
         ))
