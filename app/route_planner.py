@@ -32,7 +32,7 @@ from app.soc_simulator import SOCSimulator, ChargeHotspot, SegmentWithConsumptio
 from app.consumption_engine.main_calculator import calculate_route_consumption
 from app.consumption_engine.vehicle_models import get_vehicle_model
 from app.route_selector import find_best_route
-from app.station_finder import find_stations_for_hotspots
+# Station finder artık SOCSimulator içinden çağrılıyor
 from app.services.weather_service import WeatherService
 from app.services.google_service import google_maps
 from app.sustainability_calculator import calculate_co2_savings
@@ -165,28 +165,26 @@ async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
             charge_target_soc=request.charge_target_soc_percent
         )
         
-        sim_result = simulator.simulate(segments_with_consumption, route_distance_km)
-        hotspots = sim_result.hotspots
+        # STEP 7+8: SOC Simülasyonu + İstasyon Bulma (TEK ADIMDA)
+        sim_with_stations = await simulator.simulate_with_stations(
+            segments_with_consumption, 
+            route_distance_km,
+            request.vehicle_model_id
+        )
         
-        logger.info(f"SOC simulation: {len(hotspots)} hotspots, final_soc={sim_result.final_soc}%")
+        hotspots = sim_with_stations.hotspots
+        charge_stops = sim_with_stations.charge_stops_count
         
-        # STEP 8: Station Finder (eger hotspot varsa)
-        charge_stops = 0
+        logger.info(
+            f"SOC simulation + stations: {len(hotspots)} hotspots, "
+            f"{charge_stops} stations, final_soc={sim_with_stations.final_soc}%"
+        )
+        
         legs = []
-        
-        if hotspots:
-            # Istasyon ara (artik dogrudan soc_simulator ChargeHotspot kullaniliyor)
-            search_results = await find_stations_for_hotspots(
-                hotspots=hotspots,
-                vehicle_model_id=request.vehicle_model_id
-            )
-            
-            charge_stops = sum(1 for r in search_results if r.best_station)
-            logger.info(f"Stations found: {charge_stops}")
         
         # STEP 9: DriveLeg olustur (basit - tek leg)
         start_soc = request.current_soc_percent
-        end_soc = sim_result.final_soc
+        end_soc = sim_with_stations.final_soc
         
         drive_leg = DriveLeg(
             type="drive",

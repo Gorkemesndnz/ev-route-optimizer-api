@@ -97,6 +97,31 @@ class SimulationResult:
     can_complete_without_charging: bool
 
 
+@dataclass
+class SimulationResultWithStations:
+    """
+    SOC simülasyonu + İstasyon arama sonucu (birleşik).
+    """
+    simulation: SimulationResult
+    station_results: List  # List[CorridorSearchResult]
+    
+    @property
+    def hotspots(self) -> List[ChargeHotspot]:
+        return self.simulation.hotspots
+    
+    @property
+    def final_soc(self) -> float:
+        return self.simulation.final_soc
+    
+    @property
+    def total_consumption_kwh(self) -> float:
+        return self.simulation.total_consumption_kwh
+    
+    @property
+    def charge_stops_count(self) -> int:
+        return sum(1 for r in self.station_results if r.best_station)
+
+
 # =============================================================================
 # SOC SIMULATOR CLASS
 # =============================================================================
@@ -307,6 +332,45 @@ class SOCSimulator:
             return True
         
         return False
+    
+    async def simulate_with_stations(
+        self,
+        segments_with_consumption: List[SegmentWithConsumption],
+        total_distance_km: float,
+        vehicle_model_id: str
+    ) -> SimulationResultWithStations:
+        """
+        SOC simülasyonu + Hotspot tespiti + İstasyon bulma (TEK ADIMDA).
+        
+        Args:
+            segments_with_consumption: MainCalculator'dan gelen tüketimli segmentler
+            total_distance_km: Toplam rota mesafesi
+            vehicle_model_id: Araç modeli ID (istasyon uyumluluğu için)
+            
+        Returns:
+            SimulationResultWithStations: Simülasyon + İstasyon sonuçları
+        """
+        # 1. SOC simülasyonu ve hotspot tespiti
+        sim_result = self.simulate(segments_with_consumption, total_distance_km)
+        
+        # 2. Hotspot varsa istasyon ara
+        station_results = []
+        if sim_result.hotspots:
+            from app.station_finder import find_stations_for_hotspots
+            station_results = await find_stations_for_hotspots(
+                sim_result.hotspots,
+                vehicle_model_id
+            )
+            
+            logger.info(
+                f"Stations found for {len(sim_result.hotspots)} hotspots: "
+                f"{sum(1 for r in station_results if r.best_station)} successful"
+            )
+        
+        return SimulationResultWithStations(
+            simulation=sim_result,
+            station_results=station_results
+        )
 
 
 # =============================================================================
