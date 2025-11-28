@@ -205,7 +205,15 @@ class RouteSegmenter:
         target_arrival_soc: float = 20.0,
         charge_min_soc: float = 20.0,
         charge_target_soc: float = 80.0,
-        segment_length_km: float = DEFAULT_SEGMENT_KM
+        segment_length_km: float = DEFAULT_SEGMENT_KM,
+        # V1.6: Yük parametreleri
+        passenger_count: int = 1,
+        child_count: int = 0,
+        extra_load_kg: float = 0.0,
+        # V1.6: Hava durumu parametreleri
+        temperature_c: float = 20.0,
+        wind_speed_mps: float = 0.0,
+        weather_condition: str = "clear"
     ):
         """
         Args:
@@ -215,6 +223,12 @@ class RouteSegmenter:
             charge_min_soc: Şarj istasyonuna varış eşiği (bu %'e düşünce şarj et)
             charge_target_soc: Şarj istasyonunda hedef % (max 100)
             segment_length_km: Her segment uzunluğu
+            passenger_count: Yetişkin yolcu sayısı
+            child_count: Çocuk yolcu sayısı
+            extra_load_kg: Ekstra yük (kg)
+            temperature_c: Ortalama sıcaklık (°C)
+            wind_speed_mps: Ortalama rüzgar hızı (m/s)
+            weather_condition: Hava durumu (clear, rain, snow, fog)
         """
         self.vehicle = vehicle
         self.start_soc = start_soc
@@ -222,6 +236,16 @@ class RouteSegmenter:
         self.charge_min_soc = charge_min_soc
         self.charge_target_soc = min(100.0, charge_target_soc)  # Max %100
         self.segment_length_km = segment_length_km
+        
+        # V1.6: Yük parametreleri
+        self.passenger_count = passenger_count
+        self.child_count = child_count
+        self.extra_load_kg = extra_load_kg
+        
+        # V1.6: Hava durumu parametreleri
+        self.temperature_c = temperature_c
+        self.wind_speed_mps = wind_speed_mps
+        self.weather_condition = weather_condition
         
         self.segments: List[RouteSegment] = []
         self.total_distance_km: float = 0.0
@@ -231,12 +255,31 @@ class RouteSegmenter:
         self.battery_capacity_kwh = vehicle.battery_capacity_kwh
         self.base_consumption_wh_km = getattr(vehicle, 'base_consumption_wh_km', 180.0)
         
+        # V1.6: Yük faktörünü hesapla
+        from app.consumption_engine.v1_rule_based.load_layer import LoadEffectCalculator
+        self.load_factor = LoadEffectCalculator.calculate_mass_factor(
+            base_vehicle_weight_kg=getattr(vehicle, 'curb_weight_kg', 1700),
+            passenger_count=passenger_count,
+            extra_load_kg=extra_load_kg,
+            child_count=child_count
+        )
+        
+        # V1.6: Hava durumu faktörünü hesapla
+        self.weather_factor = self._calculate_weather_factor()
+        
         logger.info(
             "RouteSegmenter initialized",
             vehicle=vehicle.model_name,
             battery_kwh=self.battery_capacity_kwh,
             start_soc=start_soc,
-            target_arrival_soc=target_arrival_soc
+            target_arrival_soc=target_arrival_soc,
+            passengers=passenger_count,
+            children=child_count,
+            extra_load_kg=extra_load_kg,
+            load_factor=round(self.load_factor, 3),
+            temperature_c=temperature_c,
+            weather_condition=weather_condition,
+            weather_factor=round(self.weather_factor, 3)
         )
     
     def create_segments_from_polyline(
@@ -353,30 +396,76 @@ class RouteSegmenter:
         
         self.total_consumption_kwh = total_consumption
     
+    def _calculate_weather_factor(self) -> float:
+        """
+        V1.6: Hava durumu faktörünü hesapla.
+        
+        Faktörler:
+        - Sıcaklık: Soğuk/sıcak havada HVAC tüketimi artar
+        - Rüzgar: Aerodinamik direnç
+        - Yağış: Lastik direnci ve görüş için ekstra tüketim
+        """
+        from app.consumption_engine.v1_rule_based.weather_layer import WeatherEffectCalculator
+        
+        # Sıcaklık faktörü
+        temp_factor = WeatherEffectCalculator.temperature_factor(self.temperature_c)
+        
+        # Rüzgar faktörü (basit - heading olmadan ortalama)
+        wind_factor = 1.0
+        if self.wind_speed_mps > 3:
+            wind_factor = 1.0 + (self.wind_speed_mps - 3) * 0.01  # Her m/s için %1 artış
+            wind_factor = min(1.15, wind_factor)
+        
+        # Yağış faktörü
+        precip_factor = 1.0
+        condition = self.weather_condition.lower()
+        if condition == "rain":
+            precip_factor = 1.10
+        elif condition == "snow":
+            precip_factor = 1.25
+        elif condition == "fog":
+            precip_factor = 1.05
+        
+        final_factor = temp_factor * wind_factor * precip_factor
+        return max(0.9, min(2.0, final_factor))
+    
     def _estimate_segment_consumption(self, segment: RouteSegment) -> float:
         """
         Segment için tüketim tahmini (kWh).
         
-        Basitleştirilmiş hesaplama:
+        V1.6 Fiziksel hesaplama:
         - Baz tüketim (Wh/km → kWh)
-        - Elevation faktörü
+        - Yük faktörü (yetişkin 75kg, çocuk 30kg, bagaj)
+        - Hava durumu faktörü (sıcaklık, rüzgar, yağış)
+        - Elevation faktörü (tırmanış/iniş)
         """
-        # Baz tüketim
+        # Baz tüketim + Yük faktörü + Hava durumu faktörü
         base_kwh = (self.base_consumption_wh_km / 1000.0) * segment.distance_km
+        adjusted_kwh = base_kwh * self.load_factor * self.weather_factor
         
         # Elevation etkisi (basit fizik)
         # Tırmanış: +enerji, iniş: -enerji (regen)
         gravity = 9.81
         vehicle_mass = getattr(self.vehicle, 'curb_weight_kg', 1700)
+        # V1.6: Yolcu ve yük ağırlığını da ekle
+        passenger_mass = (self.passenger_count * 75) + (self.child_count * 30) + self.extra_load_kg
+        total_mass = vehicle_mass + passenger_mass
+        
         regen_efficiency = 0.6
+        # V1.6: Soğuk havada regen verimliliği düşer
+        if self.temperature_c < 5:
+            regen_efficiency = 0.4
+        elif self.temperature_c < 15:
+            regen_efficiency = 0.5
+        
         joule_to_kwh = 3_600_000
         
-        uphill_kwh = (vehicle_mass * gravity * segment.elevation_gain_m) / joule_to_kwh
-        downhill_kwh = (vehicle_mass * gravity * segment.elevation_loss_m * regen_efficiency) / joule_to_kwh
+        uphill_kwh = (total_mass * gravity * segment.elevation_gain_m) / joule_to_kwh
+        downhill_kwh = (total_mass * gravity * segment.elevation_loss_m * regen_efficiency) / joule_to_kwh
         
         elevation_kwh = uphill_kwh - downhill_kwh
         
-        total_kwh = base_kwh + elevation_kwh
+        total_kwh = adjusted_kwh + elevation_kwh
         
         return max(0.0, total_kwh)
     
@@ -384,11 +473,14 @@ class RouteSegmenter:
         """
         Kalan mesafe için gereken minimum SOC hesapla.
         
+        V1.6: Yük ve hava durumu faktörlerini de dahil et.
+        
         Formül:
         min_required = target_arrival_soc + safety_buffer + remaining_consumption_percent
         """
-        # Kalan mesafe için tahmini tüketim
-        remaining_consumption_kwh = (self.base_consumption_wh_km / 1000.0) * remaining_distance_km
+        # Kalan mesafe için tahmini tüketim (yük + hava durumu faktörü dahil)
+        base_consumption_kwh = (self.base_consumption_wh_km / 1000.0) * remaining_distance_km
+        remaining_consumption_kwh = base_consumption_kwh * self.load_factor * self.weather_factor
         remaining_consumption_percent = (remaining_consumption_kwh / self.battery_capacity_kwh) * 100
         
         min_required = (

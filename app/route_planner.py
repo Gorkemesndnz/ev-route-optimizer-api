@@ -553,6 +553,8 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
         
         # V1.6: Yük faktörünü hesapla (yetişkin 75kg, çocuk 30kg)
         from app.consumption_engine.v1_rule_based.load_layer import LoadEffectCalculator
+        from app.consumption_engine.v1_rule_based.weather_layer import WeatherEffectCalculator
+        
         load_factor = LoadEffectCalculator.calculate_mass_factor(
             base_vehicle_weight_kg=vehicle.curb_weight_kg,
             passenger_count=request.passenger_count,
@@ -560,16 +562,25 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
             child_count=request.child_count
         )
         
-        # Base tüketim + yük faktörü
+        # V1.6: Hava durumu faktörünü hesapla
+        weather_factor = 1.0
+        if avg_weather:
+            temp_factor = WeatherEffectCalculator.temperature_factor(avg_weather.temp_c)
+            precip_factor = WeatherEffectCalculator.precipitation_factor(avg_weather.condition)
+            weather_factor = temp_factor * precip_factor
+            weather_factor = max(0.9, min(2.0, weather_factor))
+        
+        # Base tüketim + yük faktörü + hava durumu faktörü
         base_consumption_per_km = vehicle.base_consumption_wh_km / 1000.0  # Wh/km -> kWh/km
-        consumption_per_km = base_consumption_per_km * load_factor
+        consumption_per_km = base_consumption_per_km * load_factor * weather_factor
         
         logger.info(
-            "Load factor calculated",
+            "Consumption factors calculated",
             passengers=request.passenger_count,
             children=request.child_count,
             extra_load_kg=request.extra_load_kg,
             load_factor=round(load_factor, 3),
+            weather_factor=round(weather_factor, 3),
             base_consumption=round(base_consumption_per_km, 4),
             adjusted_consumption=round(consumption_per_km, 4)
         )
@@ -619,7 +630,15 @@ async def plan_multi_stop_route(request: RouteRequest) -> MultiStopRouteResponse
                     start_soc=request.current_soc_percent,
                     target_arrival_soc=target_arrival_soc,
                     charge_min_soc=charge_min_soc,
-                    charge_target_soc=charge_target_soc
+                    charge_target_soc=charge_target_soc,
+                    # V1.6: Yük parametreleri
+                    passenger_count=request.passenger_count,
+                    child_count=request.child_count,
+                    extra_load_kg=request.extra_load_kg,
+                    # V1.6: Hava durumu parametreleri
+                    temperature_c=avg_weather.temp_c if avg_weather else DEFAULT_TEMPERATURE_C,
+                    wind_speed_mps=avg_weather.wind_speed_mps if avg_weather else 0.0,
+                    weather_condition=avg_weather.condition.value if avg_weather else "clear"
                 )
                 
                 segments = segmenter.create_segments_from_polyline(
