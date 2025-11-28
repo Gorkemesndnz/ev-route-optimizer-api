@@ -12,31 +12,30 @@
 
 /**
  * AI Planlama Modu toggle
- * AI açıkken gelişmiş ayarlar gizlenir ve sistem otomatik hesaplar
+ * AI açıkken: Batarya/Şarj ayarları gizli (otomatik), Yolcu/Yük her zaman görünür
+ * AI kapalıyken: Batarya/Şarj ayarları görünür (manuel)
  */
 function toggleAiMode() {
     const aiMode = document.getElementById('aiPlanningMode').checked;
-    const advancedSettings = document.getElementById('advancedSettings');
+    const batterySettings = document.getElementById('batterySettings');
 
     if (aiMode) {
-        advancedSettings.style.display = 'none';
-        // Input değerlerini temizle (null olarak gönderilecek)
-        clearAdvancedInputs();
+        // AI açık: Batarya/Şarj gizle, değerlerini temizle
+        batterySettings.style.display = 'none';
+        clearBatteryInputs();
     } else {
-        advancedSettings.style.display = 'block';
+        // AI kapalı: Batarya/Şarj göster (manuel mod)
+        batterySettings.style.display = 'block';
     }
 }
 
 /**
- * Gelişmiş ayar inputlarını temizle
+ * Batarya/Şarj inputlarını temizle (AI modu için)
  */
-function clearAdvancedInputs() {
+function clearBatteryInputs() {
     document.getElementById('chargeMinSoc').value = '';
     document.getElementById('chargeTargetSoc').value = '';
     document.getElementById('targetArrivalSoc').value = '';
-    document.getElementById('passengerCount').value = '';
-    document.getElementById('childCount').value = '';
-    document.getElementById('extraLoad').value = '';
 }
 
 /**
@@ -93,9 +92,17 @@ async function handleFormSubmit(e) {
             current_soc_percent: parseInt(document.getElementById('initialSoc').value)
         };
 
-        // AI modu kapalıysa gelişmiş ayarları ekle
+        // Yolcu/Yük ayarları her zaman gönderilir (AI modu fark etmez)
+        const passengerCount = getOptionalValue('passengerCount');
+        const childCount = getOptionalValue('childCount');
+        const extraLoad = getOptionalValue('extraLoad', parseFloat);
+
+        if (passengerCount !== null) formData.passenger_count = passengerCount;
+        if (childCount !== null) formData.child_count = childCount;
+        if (extraLoad !== null) formData.extra_load_kg = extraLoad;
+
+        // AI modu kapalıysa Batarya/Şarj ayarlarını da ekle
         if (!aiMode) {
-            // Batarya/Şarj ayarları (boşsa null = otomatik)
             const chargeMinSoc = getOptionalValue('chargeMinSoc');
             const chargeTargetSoc = getOptionalValue('chargeTargetSoc');
             const targetArrivalSoc = getOptionalValue('targetArrivalSoc');
@@ -103,17 +110,8 @@ async function handleFormSubmit(e) {
             if (chargeMinSoc !== null) formData.charge_min_soc_percent = chargeMinSoc;
             if (chargeTargetSoc !== null) formData.charge_target_soc_percent = chargeTargetSoc;
             if (targetArrivalSoc !== null) formData.target_arrival_soc_percent = targetArrivalSoc;
-
-            // Yolcu/Yük ayarları (boşsa null = varsayılan)
-            const passengerCount = getOptionalValue('passengerCount');
-            const childCount = getOptionalValue('childCount');
-            const extraLoad = getOptionalValue('extraLoad', parseFloat);
-
-            if (passengerCount !== null) formData.passenger_count = passengerCount;
-            if (childCount !== null) formData.child_count = childCount;
-            if (extraLoad !== null) formData.extra_load_kg = extraLoad;
         }
-        // AI modu açıksa hiçbir optional değer gönderilmez - backend otomatik hesaplar
+        // AI modu açıksa Batarya/Şarj otomatik - backend hesaplar
 
         // DEBUG: Form verilerini kontrol et
         console.log('🤖 AI Modu:', aiMode ? 'AÇIK' : 'KAPALI');

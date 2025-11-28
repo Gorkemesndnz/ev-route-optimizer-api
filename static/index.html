@@ -213,89 +213,77 @@
                                 </div>
                             </div>
 
-                            <!-- Gelişmiş Ayarlar (AI kapalıyken görünür) -->
-                            <div id="advancedSettings" class="space-y-4" style="display: none;">
-
-                                <!-- Batarya/Şarj Ayarları -->
-                                <div class="bg-white/5 rounded-xl p-4 border border-white/10">
-                                    <div class="flex items-center gap-2 mb-3">
-                                        <span class="text-yellow-400">🔋</span>
-                                        <span class="text-gray-300 text-sm font-medium">Batarya / Şarj Ayarları</span>
-                                    </div>
-                                    <div class="grid grid-cols-3 gap-3">
-                                        <div>
-                                            <label class="block text-gray-500 text-xs mb-1"
-                                                title="Şarj istasyonuna bu % ile varılacak">
-                                                📍 Şarj Eşiği %
-                                            </label>
-                                            <input type="number" id="chargeMinSoc"
-                                                class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
-                                                placeholder="Oto" min="10" max="40">
-                                        </div>
-                                        <div>
-                                            <label class="block text-gray-500 text-xs mb-1"
-                                                title="Şarj istasyonundan bu % ile ayrılacak">
-                                                ⚡ Şarj Hedefi %
-                                            </label>
-                                            <input type="number" id="chargeTargetSoc"
-                                                class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
-                                                placeholder="Oto" min="50" max="100">
-                                        </div>
-                                        <div>
-                                            <label class="block text-gray-500 text-xs mb-1"
-                                                title="Hedefe bu % ile varılacak">
-                                                🎯 Varış Hedefi %
-                                            </label>
-                                            <input type="number" id="targetArrivalSoc"
-                                                class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
-                                                placeholder="Oto" min="5" max="50">
-                                        </div>
-                                    </div>
-                                    <p class="text-gray-600 text-xs mt-2">💡 Boş bırakırsanız sistem otomatik hesaplar
-                                    </p>
+                            <!-- Yolcu ve Yük Ayarları -->
+                            <div class="bg-white/5 rounded-xl p-4 border border-white/10">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <span class="text-blue-400">👥</span>
+                                    <span class="text-gray-300 text-sm font-medium">Yolcu ve Yük</span>
                                 </div>
-
-                                <!-- Yolcu ve Yük Ayarları -->
-                                <div class="bg-white/5 rounded-xl p-4 border border-white/10">
-                                    <div class="flex items-center gap-2 mb-3">
-                                        <span class="text-blue-400">👥</span>
-                                        <span class="text-gray-300 text-sm font-medium">Yolcu ve Yük</span>
-                                    </div>
-                                    <div class="grid grid-cols-3 gap-3">
-                                        <div>
-                                            <label class="block text-gray-500 text-xs mb-1">🧑 Yetişkin</label>
-                                            <div class="flex items-center gap-1">
-                                                <button type="button" onclick="adjustPassengers(-1)"
-                                                    class="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors">-</button>
-                                                <input type="number" id="passengerCount"
-                                                    class="w-12 bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-white text-sm text-center"
-                                                    placeholder="1" min="1" max="5">
-                                                <button type="button" onclick="adjustPassengers(1)"
-                                                    class="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors">+</button>
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label class="block text-gray-500 text-xs mb-1">👶 Çocuk</label>
-                                            <div class="flex items-center gap-1">
-                                                <button type="button" onclick="adjustChildren(-1)"
-                                                    class="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors">-</button>
-                                                <input type="number" id="childCount"
-                                                    class="w-12 bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-white text-sm text-center"
-                                                    placeholder="0" min="0" max="4">
-                                                <button type="button" onclick="adjustChildren(1)"
-                                                    class="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors">+</button>
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label class="block text-gray-500 text-xs mb-1">📦 Yük (kg)</label>
-                                            <input type="number" id="extraLoad"
-                                                class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
-                                                placeholder="0" min="0" max="500">
+                                <div class="grid grid-cols-3 gap-3">
+                                    <div>
+                                        <label class="block text-gray-500 text-xs mb-1">🧑 Yetişkin</label>
+                                        <div class="flex items-center gap-1">
+                                            <button type="button" onclick="adjustPassengers(-1)"
+                                                class="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors">-</button>
+                                            <input type="number" id="passengerCount"
+                                                class="w-12 bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-white text-sm text-center"
+                                                placeholder="1" min="1" max="5">
+                                            <button type="button" onclick="adjustPassengers(1)"
+                                                class="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors">+</button>
                                         </div>
                                     </div>
-                                    <p class="text-gray-600 text-xs mt-2">💡 Boş bırakırsanız: 1 yetişkin, 0 çocuk, 0 kg
-                                        yük</p>
+                                    <div>
+                                        <label class="block text-gray-500 text-xs mb-1">👶 Çocuk</label>
+                                        <div class="flex items-center gap-1">
+                                            <button type="button" onclick="adjustChildren(-1)"
+                                                class="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors">-</button>
+                                            <input type="number" id="childCount"
+                                                class="w-12 bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-white text-sm text-center"
+                                                placeholder="0" min="0" max="4">
+                                            <button type="button" onclick="adjustChildren(1)"
+                                                class="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-lg text-white text-sm transition-colors">+</button>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-500 text-xs mb-1">📦 Yük (kg)</label>
+                                        <input type="number" id="extraLoad"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                                            placeholder="0" min="0" max="500">
+                                    </div>
                                 </div>
+                                <p class="text-gray-600 text-xs mt-2">💡 Boş bırakırsanız: 1 yetişkin, 0 çocuk, 0 kg
+                                    yük</p>
+                            </div>
+
+                            <!-- Batarya/Şarj Ayarları (AI kapalıyken görünür) -->
+                            <div id="batterySettings" class="bg-white/5 rounded-xl p-4 border border-yellow-500/20"
+                                style="display: none;">
+                                <div class="flex items-center gap-2 mb-3">
+                                    <span class="text-yellow-400">🔋</span>
+                                    <span class="text-gray-300 text-sm font-medium">Batarya / Şarj Ayarları</span>
+                                    <span class="text-xs text-yellow-400 ml-auto">Manuel Mod</span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-3">
+                                    <div>
+                                        <label class="block text-gray-500 text-xs mb-1">📍 Şarj Eşiği %</label>
+                                        <input type="number" id="chargeMinSoc"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                                            placeholder="15-25" min="10" max="40">
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-500 text-xs mb-1">⚡ Şarj Hedefi %</label>
+                                        <input type="number" id="chargeTargetSoc"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                                            placeholder="80-95" min="50" max="100">
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-500 text-xs mb-1">🎯 Varış Hedefi %</label>
+                                        <input type="number" id="targetArrivalSoc"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                                            placeholder="10-25" min="5" max="50">
+                                    </div>
+                                </div>
+                                <p class="text-gray-600 text-xs mt-2">💡 Boş bırakırsanız sistem otomatik hesaplar</p>
                             </div>
 
                             <!-- Submit Button -->
