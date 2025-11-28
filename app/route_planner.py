@@ -154,12 +154,11 @@ def _build_multi_legs(
     end_point: GeoPoint,
     total_distance_km: float,
     total_duration_min: float,
-    total_consumption_kwh: float,
+    segments_with_consumption: List,  # SegmentWithConsumption listesi
     start_soc: float,
     final_soc: float,
     hotspots: List[ChargeHotspot],
     station_results: List,
-    charge_target_soc: float,
     polyline: str,
     battery_capacity_kwh: float = 51.0,
     temperature_c: Optional[float] = None
@@ -167,14 +166,15 @@ def _build_multi_legs(
     """
     Multi-leg yapısı oluştur: DriveLeg + ChargeLeg + DriveLeg + ...
     
-    Her şarj durağı için:
-    1. DriveLeg (önceki nokta → şarj istasyonu)
-    2. ChargeLeg (şarj süresi)
+    🔧 V2.0: SEGMENT BAZLI TÜKETİM
+    Her leg için gerçek segment tüketimlerini toplar.
+    Artık SOC farkı veya orantılı dağıtım YOK.
     
-    Son olarak:
-    3. DriveLeg (son şarj istasyonu → varış)
+    Args:
+        segments_with_consumption: MainCalculator'dan gelen tüketimli segmentler
     """
     legs = []
+    total_consumption_kwh = sum(s.consumption_kwh for s in segments_with_consumption)
     
     # Şarj durağı yoksa tek DriveLeg
     if not hotspots or not station_results:
@@ -193,12 +193,14 @@ def _build_multi_legs(
         ))
         return legs
     
+    # Hotspot'ları segment index'lerine göre grupla
+    # Her hotspot hangi segment'e kadar olan tüketimi içerir
+    hotspot_segment_indices = [h.segment_index for h in hotspots]
+    
     # Multi-leg: Şarj durakları var
     current_point = start_point
     current_soc = start_soc
-    remaining_distance = total_distance_km
-    remaining_duration = total_duration_min
-    remaining_consumption = total_consumption_kwh
+    last_segment_index = -1  # Son işlenen segment
     
     # Her hotspot + istasyon için leg oluştur
     for i, (hotspot, station_result) in enumerate(zip(hotspots, station_results)):
@@ -208,16 +210,21 @@ def _build_multi_legs(
         station = station_result.best_station
         station_location = station.location
         
-        # Bu segmentin mesafesi (orantılı hesapla)
-        segment_ratio = hotspot.distance_from_start_km / total_distance_km if total_distance_km > 0 else 0
-        leg_distance = hotspot.distance_from_start_km - (total_distance_km - remaining_distance)
-        leg_duration = remaining_duration * (leg_distance / remaining_distance) if remaining_distance > 0 else 0
+        # 🔧 SEGMENT BAZLI TÜKETİM: Bu leg'in segmentlerini topla
+        leg_segments = [
+            s for s in segments_with_consumption 
+            if last_segment_index < s.segment.index <= hotspot.segment_index
+        ]
         
-        # 🔧 FIX: consumption_kwh SOC farkından hesaplanmalı (batarya kapasitesi sınırı!)
-        # ESKİ HATALI: leg_consumption = remaining_consumption * (leg_distance / remaining_distance)
-        # Bu formül toplam rota tüketimini dağıtıyordu → 51 kWh bataryada 54 kWh gösteriyordu
-        soc_drop = current_soc - hotspot.soc_at_point
-        leg_consumption = (soc_drop / 100) * battery_capacity_kwh
+        leg_consumption = sum(s.consumption_kwh for s in leg_segments)
+        leg_distance = sum(s.segment.distance_km for s in leg_segments)
+        
+        # Süre hesabı (mesafe oranına göre)
+        leg_duration = (leg_distance / total_distance_km) * total_duration_min if total_distance_km > 0 else 0
+        
+        # SOC hesabı (segment bazlı tüketimden)
+        soc_drop = (leg_consumption / battery_capacity_kwh) * 100
+        end_soc = current_soc - soc_drop
         
         # 1. DriveLeg: Mevcut nokta → Şarj istasyonu
         avg_speed = (leg_distance / leg_duration) * 60 if leg_duration > 0 else 60
@@ -230,17 +237,15 @@ def _build_multi_legs(
             avg_speed_kmh=round(avg_speed, 1),
             consumption_kwh=round(max(0, leg_consumption), 2),
             start_soc_percent=round(current_soc, 1),
-            end_soc_percent=round(hotspot.soc_at_point, 1)
+            end_soc_percent=round(max(0, end_soc), 1)
         ))
         
-        # 2. ChargeLeg: Şarj süresi hesapla (gerçekçi eğri modeli)
-        # Her hotspot için BAĞIMSIZ şarj hedefi (recommended_charge_to)
+        # 2. ChargeLeg: Şarj süresi hesapla
         hotspot_target_soc = hotspot.recommended_charge_to
         charge_power_kw = station.power_kw if station.power_kw > 0 else 50.0
         
-        # Gerçekçi şarj süresi hesapla (3 fazlı CC-CV eğrisi + hava durumu)
         charge_result = calculate_charge_time(
-            start_soc=hotspot.soc_at_point,
+            start_soc=max(0, end_soc),
             target_soc=hotspot_target_soc,
             battery_capacity_kwh=battery_capacity_kwh,
             peak_power_kw=charge_power_kw,
@@ -249,7 +254,6 @@ def _build_multi_legs(
         charge_duration = charge_result.duration_minutes
         kwh_to_add = charge_result.energy_added_kwh
         
-        # StationInfo oluştur (model uyumlu)
         station_info = StationInfo(
             id=station.station_id,
             name=station.station_name,
@@ -266,7 +270,7 @@ def _build_multi_legs(
         legs.append(ChargeLeg(
             type="charge",
             station=station_info,
-            arrival_soc_percent=round(hotspot.soc_at_point, 1),
+            arrival_soc_percent=round(max(0, end_soc), 1),
             target_soc_percent=round(hotspot_target_soc, 1),
             energy_added_kwh=round(kwh_to_add, 2),
             duration_minutes=round(max(10, charge_duration), 1)
@@ -275,28 +279,35 @@ def _build_multi_legs(
         # Güncellemeler
         current_point = station_location
         current_soc = hotspot_target_soc
-        remaining_distance -= leg_distance
-        remaining_duration -= leg_duration
-        remaining_consumption -= leg_consumption
+        last_segment_index = hotspot.segment_index
     
     # Son DriveLeg: Son şarj istasyonu → Varış
-    if remaining_distance > 0:
-        avg_speed = (remaining_distance / remaining_duration) * 60 if remaining_duration > 0 else 60
+    # Kalan segmentlerin tüketimini topla
+    remaining_segments = [
+        s for s in segments_with_consumption 
+        if s.segment.index > last_segment_index
+    ]
+    
+    if remaining_segments:
+        final_leg_consumption = sum(s.consumption_kwh for s in remaining_segments)
+        final_leg_distance = sum(s.segment.distance_km for s in remaining_segments)
+        final_leg_duration = (final_leg_distance / total_distance_km) * total_duration_min if total_distance_km > 0 else 0
         
-        # 🔧 FIX: Son leg için de SOC farkından hesapla
-        final_soc_drop = current_soc - final_soc
-        final_leg_consumption = (final_soc_drop / 100) * battery_capacity_kwh
+        final_soc_drop = (final_leg_consumption / battery_capacity_kwh) * 100
+        calculated_final_soc = current_soc - final_soc_drop
+        
+        avg_speed = (final_leg_distance / final_leg_duration) * 60 if final_leg_duration > 0 else 60
         
         legs.append(DriveLeg(
             type="drive",
             start_point=current_point,
             end_point=end_point,
-            distance_km=round(remaining_distance, 1),
-            duration_minutes=round(max(0, remaining_duration), 1),
+            distance_km=round(final_leg_distance, 1),
+            duration_minutes=round(max(0, final_leg_duration), 1),
             avg_speed_kmh=round(avg_speed, 1),
             consumption_kwh=round(max(0, final_leg_consumption), 2),
             start_soc_percent=round(current_soc, 1),
-            end_soc_percent=round(final_soc, 1)
+            end_soc_percent=round(max(0, calculated_final_soc), 1)
         ))
     
     logger.info(f"Multi-leg built: {len(legs)} legs (drive + charge)")
@@ -476,18 +487,17 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             f"{charge_stops} stations, final_soc={sim_result.final_soc}%"
         )
         
-        # STEP 11: Multi-Leg Builder (gerçekçi şarj süreleri için hava durumu dahil)
+        # STEP 11: Multi-Leg Builder (SEGMENT BAZLI TÜKETİM)
         legs = _build_multi_legs(
             start_point=GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"]),
             end_point=GeoPoint(lat=end_coords["lat"], lon=end_coords["lng"]),
             total_distance_km=route_distance_km,
             total_duration_min=route_duration_min,
-            total_consumption_kwh=total_consumption,
+            segments_with_consumption=segments_with_consumption,  # 🔧 Gerçek segment tüketimleri
             start_soc=request.current_soc_percent,
             final_soc=sim_result.final_soc,
             hotspots=hotspots,
             station_results=station_results,
-            charge_target_soc=charge_target_soc,
             polyline=polyline,
             battery_capacity_kwh=battery_kwh,
             temperature_c=avg_weather.temp_c if avg_weather else None
