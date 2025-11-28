@@ -414,6 +414,100 @@ def calculate_segment_consumption_kwh(
     return result.practical_consumption_kwh
 
 
+# =============================================================================
+# V2.0: ROUTE CONSUMPTION CALCULATOR (Tüm segmentler için)
+# =============================================================================
+
+def calculate_route_consumption(
+    vehicle,
+    segments,  # List[RouteSegment] from route_segmenter_v2
+    temperature_celsius: float = 20.0,
+    wind_speed_mps: float = 0.0,
+    weather_condition: str = "clear",
+    extra_load_kg: float = 0.0,
+    passenger_count: int = 1,
+    child_count: int = 0
+):
+    """
+    V2.0: Tüm segmentler için tüketim hesapla (TEK KAYNAK).
+    
+    RouteSegmenter'dan gelen segmentleri alır ve her biri için
+    MainCalculator kullanarak doğru tüketim hesaplar.
+    
+    Args:
+        vehicle: VehicleModel
+        segments: RouteSegment listesi (route_segmenter_v2'den)
+        temperature_celsius: Ortalama sıcaklık (°C)
+        wind_speed_mps: Ortalama rüzgar hızı (m/s)
+        weather_condition: Hava durumu (clear, rain, snow, fog)
+        extra_load_kg: Ekstra yük (kg)
+        passenger_count: Yetişkin yolcu sayısı
+        child_count: Çocuk yolcu sayısı
+        
+    Returns:
+        List[SegmentWithConsumption] - SOCSimulator için hazır
+    """
+    from app.soc_simulator import SegmentWithConsumption
+    
+    # Weather condition mapping
+    condition_map = {
+        "clear": WeatherCondition.CLEAR,
+        "rain": WeatherCondition.RAIN,
+        "snow": WeatherCondition.SNOW,
+        "fog": WeatherCondition.FOG,
+        "windy": WeatherCondition.WINDY
+    }
+    weather_cond = condition_map.get(weather_condition.lower(), WeatherCondition.CLEAR)
+    
+    results = []
+    total_consumption = 0.0
+    
+    logger.info(
+        f"Calculating consumption for {len(segments)} segments",
+        temperature=temperature_celsius,
+        weather=weather_condition,
+        passengers=passenger_count,
+        children=child_count,
+        extra_load=extra_load_kg
+    )
+    
+    for segment in segments:
+        # Her segment için tüketim hesapla
+        consumption_kwh = calculate_segment_consumption_kwh(
+            vehicle=vehicle,
+            segment_distance_km=segment.distance_km,
+            segment_elevation_gain_m=segment.elevation_gain_m,
+            segment_elevation_loss_m=segment.elevation_loss_m,
+            temperature_celsius=temperature_celsius,
+            extra_load_kg=extra_load_kg,
+            passenger_count=passenger_count,
+            child_count=child_count
+        )
+        
+        # SegmentWithConsumption oluştur
+        seg_with_cons = SegmentWithConsumption(
+            segment=segment,
+            consumption_kwh=round(consumption_kwh, 3)
+        )
+        results.append(seg_with_cons)
+        total_consumption += consumption_kwh
+        
+        logger.debug(
+            f"Segment {segment.index}: "
+            f"distance={segment.distance_km}km, "
+            f"elevation=+{segment.elevation_gain_m}/-{segment.elevation_loss_m}m, "
+            f"consumption={consumption_kwh:.2f}kWh"
+        )
+    
+    logger.info(
+        f"Route consumption calculated: "
+        f"total={round(total_consumption, 2)}kWh, "
+        f"avg={round(total_consumption/len(segments), 2)}kWh/segment"
+    )
+    
+    return results
+
+
 # ---------------------------------------------------
 # TEST & VALIDATION
 # ---------------------------------------------------

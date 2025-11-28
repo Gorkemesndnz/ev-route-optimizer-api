@@ -33,7 +33,7 @@ from app.models import (
     MultiStopRouteResponse, 
     GeoPoint
 )
-from app.route_planner import plan_full_route
+from app.route_planner import plan_route_v2 as plan_full_route  # V2.0 Clean Architecture
 from app.services.base_service import ExternalAPIError
 from app.services.google_service import google_maps
 from app.utils.logger import get_logger

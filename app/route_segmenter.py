@@ -1,35 +1,29 @@
 """
-Route Segmenter v1.5
+Route Segmenter v2.0
 =====================
 
-V1.5 Dinamik Şarj Planlama için rota segmentasyonu ve SOC takibi.
+V2.0: Sadece geometrik segmentasyon.
+Tüketim hesabı MainCalculator'a, SOC simülasyonu SOCSimulator'a devredildi.
 
-Özellikler:
+Görev:
 - Google Polyline decode
 - Rota segmentasyonu (her X km'de bir)
-- Segment bazlı SOC hesaplama
-- Şarj gerekli noktaların (Hotspot) tespiti
-- Dinamik eşik hesaplama (varış hedefine göre)
+- Her segment için elevation dağılımı
 
 Flow:
 1. Polyline → Koordinat listesi
-2. Koordinatlar → RouteSegment listesi
-3. Her segment için consumption hesapla
-4. SOC takibi yap
-5. Şarj gerekli noktaları tespit et
+2. Koordinatlar → RouteSegment listesi (elevation ile)
 
 Kullanım:
-    from app.route_segmenter import RouteSegmenter
+    from app.route_segmenter_v2 import RouteSegmenter
     
-    segmenter = RouteSegmenter(vehicle, start_soc=80.0, target_arrival_soc=30.0)
-    segments = segmenter.create_segments_from_polyline(polyline)
-    hotspots = segmenter.find_charge_hotspots()
+    segmenter = RouteSegmenter(segment_length_km=10.0)
+    segments = segmenter.create_segments(polyline, elevation_gain, elevation_loss)
 """
 
-from typing import List, Optional, Tuple
-from dataclasses import dataclass, field
+from typing import List, Tuple
+from dataclasses import dataclass
 from app.models import GeoPoint
-from app.consumption_engine.vehicle_models import VehicleModel
 from app.utils.logger import get_logger
 
 logger = get_logger("route_segmenter")
@@ -40,8 +34,6 @@ logger = get_logger("route_segmenter")
 # =============================================================================
 
 DEFAULT_SEGMENT_KM = 10.0  # Her 10km'de bir segment
-SAFETY_BUFFER_PERCENT = 10.0  # Güvenlik marjı
-MIN_CHARGE_THRESHOLD_PERCENT = 15.0  # Minimum şarj seviyesi
 
 
 # =============================================================================
@@ -51,7 +43,7 @@ MIN_CHARGE_THRESHOLD_PERCENT = 15.0  # Minimum şarj seviyesi
 @dataclass
 class RouteSegment:
     """
-    Rota üzerindeki bir segment.
+    Rota üzerindeki bir segment (V2.0 - Sadece geometri).
     
     Attributes:
         index: Segment sırası (0'dan başlar)
@@ -61,10 +53,6 @@ class RouteSegment:
         cumulative_distance_km: Toplam kümülatif mesafe
         elevation_gain_m: Yükselme (metre)
         elevation_loss_m: İniş (metre)
-        soc_at_start: Segment başındaki batarya (%)
-        soc_at_end: Segment sonundaki batarya (%)
-        consumption_kwh: Bu segmentte harcanan enerji
-        is_charge_needed: Bu segmentten sonra şarj gerekli mi?
     """
     index: int
     start_point: GeoPoint
@@ -73,31 +61,6 @@ class RouteSegment:
     cumulative_distance_km: float = 0.0
     elevation_gain_m: float = 0.0
     elevation_loss_m: float = 0.0
-    soc_at_start: float = 100.0
-    soc_at_end: float = 100.0
-    consumption_kwh: float = 0.0
-    is_charge_needed: bool = False
-
-
-@dataclass
-class ChargeHotspot:
-    """
-    Şarj gerekli olan nokta.
-    
-    Attributes:
-        segment_index: Hangi segment sonrası
-        location: Şarj gerekli koordinat
-        soc_at_point: O noktadaki batarya (%)
-        remaining_distance_km: Varışa kalan mesafe
-        min_required_soc: Devam için gereken minimum batarya
-        recommended_charge_to: Önerilen şarj hedefi (%)
-    """
-    segment_index: int
-    location: GeoPoint
-    soc_at_point: float
-    remaining_distance_km: float
-    min_required_soc: float
-    recommended_charge_to: float = 80.0
 
 
 # =============================================================================
@@ -113,9 +76,6 @@ def decode_polyline(polyline_str: str) -> List[Tuple[float, float]]:
         
     Returns:
         List of (latitude, longitude) tuples
-        
-    Reference:
-        https://developers.google.com/maps/documentation/utilities/polylinealgorithm
     """
     index = 0
     lat = 0
@@ -157,13 +117,6 @@ def decode_polyline(polyline_str: str) -> List[Tuple[float, float]]:
 def calculate_distance_km(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
     """
     İki koordinat arası Haversine mesafesi (km).
-    
-    Args:
-        point1: (lat, lon) tuple
-        point2: (lat, lon) tuple
-        
-    Returns:
-        Mesafe (km)
     """
     import math
     
@@ -185,111 +138,47 @@ def calculate_distance_km(point1: Tuple[float, float], point2: Tuple[float, floa
 
 
 # =============================================================================
-# ROUTE SEGMENTER CLASS
+# ROUTE SEGMENTER CLASS (V2.0 - Sadece Geometri)
 # =============================================================================
 
 class RouteSegmenter:
     """
-    V1.5 Rota Segmentasyon ve SOC Takip Motoru.
+    V2.0: Sadece geometrik segmentasyon.
+    
+    Tüketim hesabı MainCalculator'a devredildi.
+    SOC simülasyonu SOCSimulator'a devredildi.
+    
+    Görev:
+    - Polyline'ı segmentlere böl
+    - Her segment için elevation dağılımı yap
     
     Kullanım:
-        segmenter = RouteSegmenter(vehicle, start_soc=80.0, target_arrival_soc=30.0)
-        segments = segmenter.create_segments_from_polyline(polyline)
-        hotspots = segmenter.find_charge_hotspots()
+        segmenter = RouteSegmenter(segment_length_km=10.0)
+        segments = segmenter.create_segments(polyline, elevation_gain, elevation_loss)
     """
     
-    def __init__(
-        self,
-        vehicle: VehicleModel,
-        start_soc: float = 100.0,
-        target_arrival_soc: float = 20.0,
-        charge_min_soc: float = 20.0,
-        charge_target_soc: float = 80.0,
-        segment_length_km: float = DEFAULT_SEGMENT_KM,
-        # V1.6: Yük parametreleri
-        passenger_count: int = 1,
-        child_count: int = 0,
-        extra_load_kg: float = 0.0,
-        # V1.6: Hava durumu parametreleri
-        temperature_c: float = 20.0,
-        wind_speed_mps: float = 0.0,
-        weather_condition: str = "clear"
-    ):
+    def __init__(self, segment_length_km: float = DEFAULT_SEGMENT_KM):
         """
         Args:
-            vehicle: Araç modeli
-            start_soc: Başlangıç batarya yüzdesi
-            target_arrival_soc: Varışta hedef batarya yüzdesi
-            charge_min_soc: Şarj istasyonuna varış eşiği (bu %'e düşünce şarj et)
-            charge_target_soc: Şarj istasyonunda hedef % (max 100)
-            segment_length_km: Her segment uzunluğu
-            passenger_count: Yetişkin yolcu sayısı
-            child_count: Çocuk yolcu sayısı
-            extra_load_kg: Ekstra yük (kg)
-            temperature_c: Ortalama sıcaklık (°C)
-            wind_speed_mps: Ortalama rüzgar hızı (m/s)
-            weather_condition: Hava durumu (clear, rain, snow, fog)
+            segment_length_km: Her segment uzunluğu (default 10km)
         """
-        self.vehicle = vehicle
-        self.start_soc = start_soc
-        self.target_arrival_soc = target_arrival_soc
-        self.charge_min_soc = charge_min_soc
-        self.charge_target_soc = min(100.0, charge_target_soc)  # Max %100
         self.segment_length_km = segment_length_km
-        
-        # V1.6: Yük parametreleri
-        self.passenger_count = passenger_count
-        self.child_count = child_count
-        self.extra_load_kg = extra_load_kg
-        
-        # V1.6: Hava durumu parametreleri
-        self.temperature_c = temperature_c
-        self.wind_speed_mps = wind_speed_mps
-        self.weather_condition = weather_condition
-        
         self.segments: List[RouteSegment] = []
         self.total_distance_km: float = 0.0
-        self.total_consumption_kwh: float = 0.0
         
-        # Araç özellikleri
-        self.battery_capacity_kwh = vehicle.battery_capacity_kwh
-        self.base_consumption_wh_km = getattr(vehicle, 'base_consumption_wh_km', 180.0)
-        
-        # V1.6: Yük faktörünü hesapla
-        from app.consumption_engine.v1_rule_based.load_layer import LoadEffectCalculator
-        self.load_factor = LoadEffectCalculator.calculate_mass_factor(
-            base_vehicle_weight_kg=getattr(vehicle, 'curb_weight_kg', 1700),
-            passenger_count=passenger_count,
-            extra_load_kg=extra_load_kg,
-            child_count=child_count
-        )
-        
-        # V1.6: Hava durumu faktörünü hesapla
-        self.weather_factor = self._calculate_weather_factor()
-        
-        logger.info(
-            "RouteSegmenter initialized",
-            vehicle=vehicle.model_name,
-            battery_kwh=self.battery_capacity_kwh,
-            start_soc=start_soc,
-            target_arrival_soc=target_arrival_soc,
-            passengers=passenger_count,
-            children=child_count,
-            extra_load_kg=extra_load_kg,
-            load_factor=round(self.load_factor, 3),
-            temperature_c=temperature_c,
-            weather_condition=weather_condition,
-            weather_factor=round(self.weather_factor, 3)
-        )
+        logger.debug(f"RouteSegmenter V2.0 initialized, segment_length={segment_length_km}km")
     
-    def create_segments_from_polyline(
+    def create_segments(
         self,
         polyline: str,
         total_elevation_gain_m: float = 0.0,
         total_elevation_loss_m: float = 0.0
     ) -> List[RouteSegment]:
         """
-        Polyline'dan segment listesi oluşturur ve SOC hesaplar.
+        Polyline'dan segment listesi oluşturur.
+        
+        V2.0: Sadece geometrik segmentasyon + elevation dağılımı.
+        Tüketim hesabı YAPILMAZ.
         
         Args:
             polyline: Google encoded polyline
@@ -297,7 +186,7 @@ class RouteSegmenter:
             total_elevation_loss_m: Toplam iniş (metre)
             
         Returns:
-            RouteSegment listesi
+            RouteSegment listesi (elevation ile)
         """
         # 1️⃣ Polyline'ı decode et
         coordinates = decode_polyline(polyline)
@@ -306,7 +195,7 @@ class RouteSegmenter:
             logger.warning("Polyline too short, returning empty segments")
             return []
         
-        logger.info(f"Decoded polyline with {len(coordinates)} points")
+        logger.info(f"Decoded polyline: {len(coordinates)} points")
         
         # 2️⃣ Koordinatları segmentlere ayır
         segments = []
@@ -323,8 +212,14 @@ class RouteSegmenter:
             if current_segment_distance >= self.segment_length_km or i == len(coordinates) - 1:
                 segment = RouteSegment(
                     index=len(segments),
-                    start_point=GeoPoint(lat=coordinates[segment_start_idx][0], lon=coordinates[segment_start_idx][1]),
-                    end_point=GeoPoint(lat=coordinates[i][0], lon=coordinates[i][1]),
+                    start_point=GeoPoint(
+                        lat=coordinates[segment_start_idx][0], 
+                        lon=coordinates[segment_start_idx][1]
+                    ),
+                    end_point=GeoPoint(
+                        lat=coordinates[i][0], 
+                        lon=coordinates[i][1]
+                    ),
                     distance_km=round(current_segment_distance, 2),
                     cumulative_distance_km=round(cumulative_distance, 2)
                 )
@@ -339,289 +234,77 @@ class RouteSegmenter:
         # 3️⃣ Elevation dağılımı (orantılı)
         if total_elevation_gain_m > 0 or total_elevation_loss_m > 0:
             for segment in segments:
-                ratio = segment.distance_km / self.total_distance_km
+                ratio = segment.distance_km / self.total_distance_km if self.total_distance_km > 0 else 0
                 segment.elevation_gain_m = round(total_elevation_gain_m * ratio, 1)
                 segment.elevation_loss_m = round(total_elevation_loss_m * ratio, 1)
-        
-        # 4️⃣ SOC hesapla
-        self._calculate_soc_for_segments(segments)
         
         self.segments = segments
         
         logger.info(
-            "Segments created",
-            segment_count=len(segments),
-            total_distance_km=round(self.total_distance_km, 1),
-            total_consumption_kwh=round(self.total_consumption_kwh, 2)
+            f"Segments created: count={len(segments)}, "
+            f"total_distance={round(self.total_distance_km, 1)}km"
         )
         
         return segments
     
-    def _calculate_soc_for_segments(self, segments: List[RouteSegment]) -> None:
+    def get_segment_at_distance(self, distance_km: float) -> RouteSegment | None:
         """
-        Her segment için SOC hesapla.
+        Belirli bir mesafedeki segmenti döndürür.
         
-        Forward simulation: İlk segmentten başla, her segment için
-        tüketimi hesapla ve kalan SOC'u takip et.
-        """
-        current_soc = self.start_soc
-        total_consumption = 0.0
-        
-        for segment in segments:
-            # Segment başlangıç SOC
-            segment.soc_at_start = round(current_soc, 1)
+        Args:
+            distance_km: Başlangıçtan itibaren mesafe
             
-            # Bu segment için tüketim hesapla
-            consumption_kwh = self._estimate_segment_consumption(segment)
-            segment.consumption_kwh = round(consumption_kwh, 3)
-            total_consumption += consumption_kwh
-            
-            # SOC düşüşü hesapla
-            soc_drop = (consumption_kwh / self.battery_capacity_kwh) * 100
-            current_soc = max(0, current_soc - soc_drop)
-            segment.soc_at_end = round(current_soc, 1)
-            
-            # Şarj gerekli mi kontrol et (dinamik eşik)
-            remaining_distance = self.total_distance_km - segment.cumulative_distance_km
-            min_required = self._calculate_min_required_soc(remaining_distance)
-            
-            if current_soc < min_required:
-                segment.is_charge_needed = True
-                logger.debug(
-                    f"Charge needed at segment {segment.index}",
-                    soc=round(current_soc, 1),
-                    min_required=round(min_required, 1),
-                    remaining_km=round(remaining_distance, 1)
-                )
-        
-        self.total_consumption_kwh = total_consumption
-    
-    def _calculate_weather_factor(self) -> float:
-        """
-        V1.6: Hava durumu faktörünü hesapla.
-        
-        Faktörler:
-        - Sıcaklık: Soğuk/sıcak havada HVAC tüketimi artar
-        - Rüzgar: Aerodinamik direnç
-        - Yağış: Lastik direnci ve görüş için ekstra tüketim
-        """
-        from app.consumption_engine.v1_rule_based.weather_layer import WeatherEffectCalculator
-        
-        # Sıcaklık faktörü
-        temp_factor = WeatherEffectCalculator.temperature_factor(self.temperature_c)
-        
-        # Rüzgar faktörü (basit - heading olmadan ortalama)
-        wind_factor = 1.0
-        if self.wind_speed_mps > 3:
-            wind_factor = 1.0 + (self.wind_speed_mps - 3) * 0.01  # Her m/s için %1 artış
-            wind_factor = min(1.15, wind_factor)
-        
-        # Yağış faktörü
-        precip_factor = 1.0
-        condition = self.weather_condition.lower()
-        if condition == "rain":
-            precip_factor = 1.10
-        elif condition == "snow":
-            precip_factor = 1.25
-        elif condition == "fog":
-            precip_factor = 1.05
-        
-        final_factor = temp_factor * wind_factor * precip_factor
-        return max(0.9, min(2.0, final_factor))
-    
-    def _estimate_segment_consumption(self, segment: RouteSegment) -> float:
-        """
-        Segment için tüketim tahmini (kWh).
-        
-        V1.6 Fiziksel hesaplama:
-        - Baz tüketim (Wh/km → kWh)
-        - Yük faktörü (yetişkin 75kg, çocuk 30kg, bagaj)
-        - Hava durumu faktörü (sıcaklık, rüzgar, yağış)
-        - Elevation faktörü (tırmanış/iniş)
-        """
-        # Baz tüketim + Yük faktörü + Hava durumu faktörü
-        base_kwh = (self.base_consumption_wh_km / 1000.0) * segment.distance_km
-        adjusted_kwh = base_kwh * self.load_factor * self.weather_factor
-        
-        # Elevation etkisi (basit fizik)
-        # Tırmanış: +enerji, iniş: -enerji (regen)
-        gravity = 9.81
-        vehicle_mass = getattr(self.vehicle, 'curb_weight_kg', 1700)
-        # V1.6: Yolcu ve yük ağırlığını da ekle
-        passenger_mass = (self.passenger_count * 75) + (self.child_count * 30) + self.extra_load_kg
-        total_mass = vehicle_mass + passenger_mass
-        
-        regen_efficiency = 0.6
-        # V1.6: Soğuk havada regen verimliliği düşer
-        if self.temperature_c < 5:
-            regen_efficiency = 0.4
-        elif self.temperature_c < 15:
-            regen_efficiency = 0.5
-        
-        joule_to_kwh = 3_600_000
-        
-        uphill_kwh = (total_mass * gravity * segment.elevation_gain_m) / joule_to_kwh
-        downhill_kwh = (total_mass * gravity * segment.elevation_loss_m * regen_efficiency) / joule_to_kwh
-        
-        elevation_kwh = uphill_kwh - downhill_kwh
-        
-        total_kwh = adjusted_kwh + elevation_kwh
-        
-        return max(0.0, total_kwh)
-    
-    def _calculate_min_required_soc(self, remaining_distance_km: float) -> float:
-        """
-        Kalan mesafe için gereken minimum SOC hesapla.
-        
-        V1.6: Yük ve hava durumu faktörlerini de dahil et.
-        
-        Formül:
-        min_required = target_arrival_soc + safety_buffer + remaining_consumption_percent
-        """
-        # Kalan mesafe için tahmini tüketim (yük + hava durumu faktörü dahil)
-        base_consumption_kwh = (self.base_consumption_wh_km / 1000.0) * remaining_distance_km
-        remaining_consumption_kwh = base_consumption_kwh * self.load_factor * self.weather_factor
-        remaining_consumption_percent = (remaining_consumption_kwh / self.battery_capacity_kwh) * 100
-        
-        min_required = (
-            self.target_arrival_soc + 
-            SAFETY_BUFFER_PERCENT + 
-            remaining_consumption_percent
-        )
-        
-        return min(100.0, max(MIN_CHARGE_THRESHOLD_PERCENT, min_required))
-    
-    def find_charge_hotspots(self) -> List[ChargeHotspot]:
-        """
-        Şarj gerekli noktaları (hotspots) tespit et.
-        
-        V1.5: Şarj sonrası SOC simülasyonu ile gerçekçi hotspot tespiti.
-        Bir hotspot'ta şarj yapıldığını varsayarak sonraki hotspot'ları hesapla.
-        
         Returns:
-            ChargeHotspot listesi
+            O mesafedeki RouteSegment veya None
         """
-        hotspots = []
-        simulated_soc = self.start_soc  # Simüle edilen SOC
-        last_hotspot_km = 0.0  # Son hotspot mesafesi
-        min_distance_between_stops = 100.0  # Min 100km aralık
-        
-        # V1.5: Kullanıcının belirlediği şarj eşikleri
-        user_charge_threshold = self.charge_min_soc  # Bu %'e düşünce şarj et
-        user_charge_target = self.charge_target_soc  # Bu %'e kadar şarj et (max 100)
-        
-        logger.info(
-            f"Hotspot detection started",
-            user_threshold=user_charge_threshold,
-            user_target=user_charge_target,
-            start_soc=self.start_soc
-        )
-        
         for segment in self.segments:
-            # Simüle edilen SOC ile segment tüketimini hesapla
-            consumption_percent = (segment.consumption_kwh / self.battery_capacity_kwh) * 100
-            simulated_soc = max(0, simulated_soc - consumption_percent)
-            
-            # Kalan mesafe
-            remaining_distance = self.total_distance_km - segment.cumulative_distance_km
-            
-            # V1.5 FIX: SADECE kullanıcının belirlediği eşiğe düşünce şarj et
-            # Emergency: Sadece batarya %10'un altına düşerse (güvenlik için)
-            emergency_charge = simulated_soc <= 10.0
-            
-            # Kullanıcı eşiği: simulated_soc kullanıcının belirlediği değere düştüyse
-            charge_needed = simulated_soc <= user_charge_threshold or emergency_charge
-            
-            # Şarj gerekli mi? (Ve son hotspot'tan yeterli mesafe var mı?)
-            distance_since_last = segment.cumulative_distance_km - last_hotspot_km
-            
-            if charge_needed and distance_since_last >= min_distance_between_stops:
-                # V1.5 FIX: Kullanıcının hedefini kullan, max %100
-                recommended_charge = min(100.0, user_charge_target)
-                
-                # Kalan mesafe için gereken minimum SOC
-                min_to_finish = (remaining_distance * self.base_consumption_wh_km / 1000) / self.battery_capacity_kwh * 100
-                
-                hotspot = ChargeHotspot(
-                    segment_index=segment.index,
-                    location=segment.end_point,
-                    soc_at_point=round(simulated_soc, 1),
-                    remaining_distance_km=round(remaining_distance, 1),
-                    min_required_soc=round(min_to_finish + self.target_arrival_soc, 1),
-                    recommended_charge_to=round(recommended_charge, 1)
-                )
-                hotspots.append(hotspot)
-                
-                # Şarj yapıldığını varsay - SOC'u güncelle
-                simulated_soc = recommended_charge
-                last_hotspot_km = segment.cumulative_distance_km
-                
-                logger.info(
-                    f"Charge hotspot found",
-                    segment=segment.index,
-                    arrival_soc=hotspot.soc_at_point,
-                    target_soc=hotspot.recommended_charge_to,
-                    emergency=emergency_charge
-                )
-        
-        logger.info(f"Total hotspots found: {len(hotspots)}")
-        return hotspots
+            if segment.cumulative_distance_km >= distance_km:
+                return segment
+        return self.segments[-1] if self.segments else None
     
-    def get_route_summary(self) -> dict:
+    def get_coordinates_at_distance(self, distance_km: float) -> GeoPoint | None:
         """
-        Rota özeti döndür.
+        Belirli bir mesafedeki koordinatı döndürür (interpolasyon).
+        
+        Args:
+            distance_km: Başlangıçtan itibaren mesafe
+            
+        Returns:
+            O mesafedeki GeoPoint veya None
         """
-        return {
-            "total_distance_km": round(self.total_distance_km, 1),
-            "total_consumption_kwh": round(self.total_consumption_kwh, 2),
-            "segment_count": len(self.segments),
-            "start_soc": self.start_soc,
-            "estimated_arrival_soc": self.segments[-1].soc_at_end if self.segments else self.start_soc,
-            "target_arrival_soc": self.target_arrival_soc,
-            "charge_stops_needed": sum(1 for s in self.segments if s.is_charge_needed),
-            "vehicle": self.vehicle.model_name
-        }
+        segment = self.get_segment_at_distance(distance_km)
+        if segment:
+            # Basit: Segment sonunu döndür
+            # TODO: Segment içinde interpolasyon
+            return segment.end_point
+        return None
 
 
 # =============================================================================
-# CONVENIENCE FUNCTIONS
+# HELPER FUNCTIONS
 # =============================================================================
 
 def create_route_segments(
     polyline: str,
-    vehicle: VehicleModel,
-    start_soc: float,
-    target_arrival_soc: float,
-    elevation_gain_m: float = 0.0,
-    elevation_loss_m: float = 0.0
-) -> Tuple[List[RouteSegment], List[ChargeHotspot], dict]:
+    total_elevation_gain_m: float = 0.0,
+    total_elevation_loss_m: float = 0.0,
+    segment_length_km: float = DEFAULT_SEGMENT_KM
+) -> List[RouteSegment]:
     """
-    Convenience function: Polyline'dan segmentler ve hotspotlar oluştur.
+    Convenience function: Tek satırda segment oluştur.
     
     Args:
         polyline: Google encoded polyline
-        vehicle: Araç modeli
-        start_soc: Başlangıç SOC (%)
-        target_arrival_soc: Hedef varış SOC (%)
-        elevation_gain_m: Toplam yükselme
-        elevation_loss_m: Toplam iniş
+        total_elevation_gain_m: Toplam yükselme
+        total_elevation_loss_m: Toplam iniş
+        segment_length_km: Segment uzunluğu
         
     Returns:
-        (segments, hotspots, summary) tuple
+        RouteSegment listesi
     """
-    segmenter = RouteSegmenter(
-        vehicle=vehicle,
-        start_soc=start_soc,
-        target_arrival_soc=target_arrival_soc
-    )
-    
-    segments = segmenter.create_segments_from_polyline(
+    segmenter = RouteSegmenter(segment_length_km=segment_length_km)
+    return segmenter.create_segments(
         polyline=polyline,
-        total_elevation_gain_m=elevation_gain_m,
-        total_elevation_loss_m=elevation_loss_m
+        total_elevation_gain_m=total_elevation_gain_m,
+        total_elevation_loss_m=total_elevation_loss_m
     )
-    
-    hotspots = segmenter.find_charge_hotspots()
-    summary = segmenter.get_route_summary()
-    
-    return segments, hotspots, summary

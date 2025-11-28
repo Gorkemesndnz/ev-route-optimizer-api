@@ -35,7 +35,7 @@ from typing import Tuple, Optional, Dict, Any, List
 from dataclasses import dataclass, field
 
 from app.models import GeoPoint
-from app.route_segmenter import ChargeHotspot
+from app.soc_simulator import ChargeHotspot
 from app.services.ocm_service import ocm_service
 from app.services.google_service import google_maps
 from app.services.weather_service import weather_service
