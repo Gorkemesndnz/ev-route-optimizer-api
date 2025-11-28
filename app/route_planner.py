@@ -23,8 +23,9 @@ from app.models import (
     ChargeLeg,
     GeoPoint,
     StationInfo,
-    WeatherInfo,
-    WeatherCondition
+    ConnectorInfo,
+    PlugType,
+    ChargerType
 )
 
 from app.route_segmenter import RouteSegmenter, RouteSegment
@@ -53,6 +54,139 @@ def _create_error_response(status: str, message: str = None) -> MultiStopRouteRe
         legs=[],
         message=message
     )
+
+
+def _build_multi_legs(
+    start_point: GeoPoint,
+    end_point: GeoPoint,
+    total_distance_km: float,
+    total_duration_min: float,
+    total_consumption_kwh: float,
+    start_soc: float,
+    final_soc: float,
+    hotspots: List[ChargeHotspot],
+    station_results: List,
+    charge_target_soc: float,
+    polyline: str
+) -> List:
+    """
+    Multi-leg yapısı oluştur: DriveLeg + ChargeLeg + DriveLeg + ...
+    
+    Her şarj durağı için:
+    1. DriveLeg (önceki nokta → şarj istasyonu)
+    2. ChargeLeg (şarj süresi)
+    
+    Son olarak:
+    3. DriveLeg (son şarj istasyonu → varış)
+    """
+    legs = []
+    
+    # Şarj durağı yoksa tek DriveLeg
+    if not hotspots or not station_results:
+        avg_speed = (total_distance_km / total_duration_min) * 60 if total_duration_min > 0 else 60
+        legs.append(DriveLeg(
+            type="drive",
+            start_point=start_point,
+            end_point=end_point,
+            distance_km=round(total_distance_km, 1),
+            duration_minutes=round(total_duration_min, 1),
+            avg_speed_kmh=round(avg_speed, 1),
+            consumption_kwh=round(total_consumption_kwh, 2),
+            start_soc_percent=round(start_soc, 1),
+            end_soc_percent=round(final_soc, 1),
+            polyline=polyline
+        ))
+        return legs
+    
+    # Multi-leg: Şarj durakları var
+    current_point = start_point
+    current_soc = start_soc
+    remaining_distance = total_distance_km
+    remaining_duration = total_duration_min
+    remaining_consumption = total_consumption_kwh
+    
+    # Her hotspot + istasyon için leg oluştur
+    for i, (hotspot, station_result) in enumerate(zip(hotspots, station_results)):
+        if not station_result.best_station:
+            continue
+        
+        station = station_result.best_station
+        station_location = station.location
+        
+        # Bu segmentin mesafesi (orantılı hesapla)
+        segment_ratio = hotspot.distance_from_start_km / total_distance_km if total_distance_km > 0 else 0
+        leg_distance = hotspot.distance_from_start_km - (total_distance_km - remaining_distance)
+        leg_duration = remaining_duration * (leg_distance / remaining_distance) if remaining_distance > 0 else 0
+        leg_consumption = remaining_consumption * (leg_distance / remaining_distance) if remaining_distance > 0 else 0
+        
+        # 1. DriveLeg: Mevcut nokta → Şarj istasyonu
+        avg_speed = (leg_distance / leg_duration) * 60 if leg_duration > 0 else 60
+        legs.append(DriveLeg(
+            type="drive",
+            start_point=current_point,
+            end_point=station_location,
+            distance_km=round(max(0, leg_distance), 1),
+            duration_minutes=round(max(0, leg_duration), 1),
+            avg_speed_kmh=round(avg_speed, 1),
+            consumption_kwh=round(max(0, leg_consumption), 2),
+            start_soc_percent=round(current_soc, 1),
+            end_soc_percent=round(hotspot.soc_at_point, 1)
+        ))
+        
+        # 2. ChargeLeg: Şarj süresi hesapla
+        soc_to_add = charge_target_soc - hotspot.soc_at_point
+        charge_power_kw = station.power_kw if station.power_kw > 0 else 50.0
+        # Basit hesap: kWh = SOC * batarya / 100
+        kwh_to_add = (soc_to_add / 100) * 51  # TODO: Gerçek batarya kapasitesi
+        charge_duration = (kwh_to_add / charge_power_kw) * 60  # dakika
+        
+        # StationInfo oluştur (model uyumlu)
+        station_info = StationInfo(
+            id=station.station_id,
+            name=station.station_name,
+            location=station_location,
+            connectors=[
+                ConnectorInfo(
+                    plug_type=PlugType.CCS2,
+                    charger_type=ChargerType.DC,
+                    power_kw=station.power_kw if station.power_kw > 0 else 50.0
+                )
+            ]
+        )
+        
+        legs.append(ChargeLeg(
+            type="charge",
+            station=station_info,
+            arrival_soc_percent=round(hotspot.soc_at_point, 1),
+            target_soc_percent=round(charge_target_soc, 1),
+            energy_added_kwh=round(kwh_to_add, 2),
+            duration_minutes=round(max(10, charge_duration), 1)
+        ))
+        
+        # Güncellemeler
+        current_point = station_location
+        current_soc = charge_target_soc
+        remaining_distance -= leg_distance
+        remaining_duration -= leg_duration
+        remaining_consumption -= leg_consumption
+    
+    # Son DriveLeg: Son şarj istasyonu → Varış
+    if remaining_distance > 0:
+        avg_speed = (remaining_distance / remaining_duration) * 60 if remaining_duration > 0 else 60
+        legs.append(DriveLeg(
+            type="drive",
+            start_point=current_point,
+            end_point=end_point,
+            distance_km=round(remaining_distance, 1),
+            duration_minutes=round(max(0, remaining_duration), 1),
+            avg_speed_kmh=round(avg_speed, 1),
+            consumption_kwh=round(max(0, remaining_consumption), 2),
+            start_soc_percent=round(current_soc, 1),
+            end_soc_percent=round(final_soc, 1)
+        ))
+    
+    logger.info(f"Multi-leg built: {len(legs)} legs (drive + charge)")
+    return legs
 
 
 async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
@@ -180,27 +314,22 @@ async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
             f"{charge_stops} stations, final_soc={sim_with_stations.final_soc}%"
         )
         
-        legs = []
-        
-        # STEP 9: DriveLeg olustur (basit - tek leg)
-        start_soc = request.current_soc_percent
-        end_soc = sim_with_stations.final_soc
-        
-        drive_leg = DriveLeg(
-            type="drive",
+        # STEP 9: Multi-Leg Builder
+        legs = _build_multi_legs(
             start_point=GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"]),
             end_point=GeoPoint(lat=end_coords["lat"], lon=end_coords["lng"]),
-            distance_km=round(route_distance_km, 1),
-            duration_minutes=round(route_duration_min, 1),
-            avg_speed_kmh=round((route_distance_km / route_duration_min) * 60 if route_duration_min > 0 else 60, 1),
-            consumption_kwh=round(total_consumption, 2),
-            start_soc_percent=round(start_soc, 1),
-            end_soc_percent=round(end_soc, 1),
-            elevation_gain_m=round(elevation_gain_m, 1),
-            elevation_loss_m=round(elevation_loss_m, 1),
+            total_distance_km=route_distance_km,
+            total_duration_min=route_duration_min,
+            total_consumption_kwh=total_consumption,
+            start_soc=request.current_soc_percent,
+            final_soc=sim_with_stations.final_soc,
+            hotspots=hotspots,
+            station_results=sim_with_stations.station_results,
+            charge_target_soc=request.charge_target_soc_percent,
             polyline=polyline
         )
-        legs.append(drive_leg)
+        
+        end_soc = sim_with_stations.final_soc
         
         # STEP 10: CO2 tasarrufu
         try:
@@ -211,7 +340,7 @@ async def plan_route_v2(request: RouteRequest) -> MultiStopRouteResponse:
         # Mesaj olustur
         if charge_stops > 0:
             message = f"V2.0: {charge_stops} sarj duragi gerekli"
-        elif sim_result.can_complete_without_charging:
+        elif sim_with_stations.simulation.can_complete_without_charging:
             message = f"V2.0: Sarj gerekmez. Varis SOC: %{round(end_soc)}"
         else:
             message = f"V2.0: Dikkat! Varis SOC: %{round(end_soc)}"
