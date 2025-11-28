@@ -165,9 +165,14 @@ class SOCSimulator:
         total_consumption = 0.0
         last_hotspot_km = 0.0
         
+        # MainCalculator'dan gelen GERÇEK ortalama tüketimi hesapla
+        route_total_consumption = sum(s.consumption_kwh for s in segments_with_consumption)
+        avg_consumption_per_km = route_total_consumption / total_distance_km if total_distance_km > 0 else 0.20
+        
         logger.info(
             f"SOC simulation started: {len(segments_with_consumption)} segments, "
-            f"start_soc={self.start_soc}%"
+            f"start_soc={self.start_soc}%, "
+            f"avg_consumption={avg_consumption_per_km:.3f} kWh/km (MainCalculator)"
         )
         
         for seg_with_cons in segments_with_consumption:
@@ -188,8 +193,8 @@ class SOCSimulator:
             # Kalan mesafe
             remaining_distance = total_distance_km - segment.cumulative_distance_km
             
-            # Minimum gerekli SOC hesapla
-            min_required_soc = self._calculate_min_required_soc(remaining_distance)
+            # Minimum gerekli SOC hesapla (GERÇEK tüketim değeriyle)
+            min_required_soc = self._calculate_min_required_soc(remaining_distance, avg_consumption_per_km)
             
             # Hotspot kontrolü
             should_create_hotspot = self._should_create_hotspot(
@@ -242,17 +247,19 @@ class SOCSimulator:
         
         return result
     
-    def _calculate_min_required_soc(self, remaining_distance_km: float) -> float:
+    def _calculate_min_required_soc(self, remaining_distance_km: float, avg_consumption_per_km: float) -> float:
         """
         Kalan mesafe için gereken minimum SOC hesapla.
         
-        Basit ve güvenilir mantık:
+        Args:
+            remaining_distance_km: Kalan mesafe (km)
+            avg_consumption_per_km: MainCalculator'dan gelen GERÇEK ortalama tüketim (kWh/km)
+        
+        Mantık:
         - Varışa yetecek kadar SOC var mı kontrol et
         - Yoksa şarj gerekli
         """
-        avg_consumption_per_km = 0.20  # kWh/km
-        
-        # Kalan mesafe için gereken enerji
+        # Kalan mesafe için gereken enerji (GERÇEK tüketim değeriyle)
         required_kwh = avg_consumption_per_km * remaining_distance_km
         required_percent = (required_kwh / self.battery_capacity_kwh) * 100
         
