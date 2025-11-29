@@ -515,10 +515,26 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         
         end_soc = sim_result.final_soc
         
-        # STEP 12: CO2 tasarrufu
+        # STEP 12: 🆕 Gerçekçi CO2 tasarrufu (EV elektrik tüketimi dahil)
         try:
-            co2_savings = calculate_co2_savings(route_distance_km)
-        except:
+            # 🎯 Yeni formül: CO2 Tasarrufu = (ICE CO2) - (EV Elektrik CO2)
+            ev_consumption_kwh = sim_result.total_consumption_kwh
+            
+            # 🔧 Validation: EV tüketimi verisi kontrolü
+            if ev_consumption_kwh <= 0:
+                logger.warning("EV consumption data missing or zero, using legacy calculation")
+                co2_savings = calculate_co2_savings(route_distance_km, 0.0, "TR")
+            else:
+                co2_savings = calculate_co2_savings(route_distance_km, ev_consumption_kwh, "TR")
+            
+            logger.info(
+                "Realistic CO2 savings calculated",
+                distance_km=route_distance_km,
+                ev_consumption_kwh=ev_consumption_kwh,
+                net_co2_savings_kg=co2_savings
+            )
+        except Exception as e:
+            logger.warning(f"CO2 calculation failed, using 0: {e}")
             co2_savings = 0.0
         
         # Mesaj oluştur
