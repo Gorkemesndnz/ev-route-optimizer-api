@@ -20,6 +20,7 @@ Kullanım:
 """
 
 from typing import Optional, Dict, Any
+from datetime import datetime
 from app.utils.config_manager import config
 from app.utils.logger import get_logger
 
@@ -145,6 +146,8 @@ def calculate_energy_savings_kwh(co2_kg: float) -> float:
     """
     CO2 tasarrufunun kaç kWh enerjiye denk geldiğini hesaplar.
     
+    Formül: CO2 → Benzin litresi → kWh enerji
+    
     Args:
         co2_kg: CO2 miktarı (kg)
     
@@ -154,7 +157,9 @@ def calculate_energy_savings_kwh(co2_kg: float) -> float:
     if co2_kg <= 0:
         return 0.0
     
-    kwh = round(co2_kg / CO2_KG_PER_LITER_GASOLINE * KWH_PER_LITER_GASOLINE, 2)
+    # Önce CO2'yi benzin litresine çevir, sonra kWh'e
+    fuel_liters = co2_kg / CO2_KG_PER_LITER_GASOLINE
+    kwh = round(fuel_liters * KWH_PER_LITER_GASOLINE, 2)
     
     logger.debug(
         "Energy equivalent calculated",
@@ -193,9 +198,7 @@ def calculate_sustainability_metrics(
             "equivalent_trees": calculate_equivalent_trees(co2_kg),
             "fuel_savings_liters": calculate_fuel_savings_liters(co2_kg),
             "energy_savings_kwh": calculate_energy_savings_kwh(co2_kg),
-            "calculation_timestamp": logger.handlers[0].formatter.formatTime(
-                logger.makeRecord("", 0, "", 0, "", (), None)
-            ) if logger.handlers else None
+            "calculation_timestamp": datetime.utcnow().isoformat()
         }
         
         logger.info(
