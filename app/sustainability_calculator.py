@@ -91,7 +91,7 @@ def calculate_co2_savings(
         raise
     except Exception as e:
         logger.error("CO2 calculation failed", error=str(e), distance=total_distance_km, region=region_code)
-        return 0.0
+        raise  # Hatayı yukarı ilet, gizleme
 
 
 def calculate_equivalent_trees(co2_kg: float) -> int:
@@ -142,28 +142,34 @@ def calculate_fuel_savings_liters(co2_kg: float) -> float:
     return liters
 
 
-def calculate_energy_savings_kwh(co2_kg: float) -> float:
+def calculate_energy_savings_kwh(total_distance_km: float) -> float:
     """
-    CO2 tasarrufunun kaç kWh enerjiye denk geldiğini hesaplar.
+    Elektrikli araç yerine benzinli araç kullanılsaydı harcanan enerji eşdeğerini hesaplar.
     
-    Formül: CO2 → Benzin litresi → kWh enerji
+    Formül: Mesafe → Benzin litresi → kWh enerji
     
     Args:
-        co2_kg: CO2 miktarı (kg)
+        total_distance_km: Toplam mesafe (km)
     
     Returns:
-        Equivalent enerji (kWh)
+        Equivalent enerji tasarrufu (kWh)
     """
-    if co2_kg <= 0:
+    if total_distance_km <= 0:
         return 0.0
     
-    # Önce CO2'yi benzin litresine çevir, sonra kWh'e
-    fuel_liters = co2_kg / CO2_KG_PER_LITER_GASOLINE
-    kwh = round(fuel_liters * KWH_PER_LITER_GASOLINE, 2)
+    # Configuration'dan benzin tüketimini al
+    co2_avg_ice_l_per_100km = config.get_co2_avg_ice_consumption()
+    
+    # Toplam benzin tüketimini hesapla
+    total_liters = (co2_avg_ice_l_per_100km / 100.0) * total_distance_km
+    
+    # Benzini enerji eşdeğerine çevir
+    kwh = round(total_liters * KWH_PER_LITER_GASOLINE, 2)
     
     logger.debug(
         "Energy equivalent calculated",
-        co2_kg=co2_kg,
+        distance_km=total_distance_km,
+        fuel_liters=total_liters,
         energy_kwh=kwh
     )
     
@@ -197,7 +203,7 @@ def calculate_sustainability_metrics(
             "co2_savings_kg": co2_kg,
             "equivalent_trees": calculate_equivalent_trees(co2_kg),
             "fuel_savings_liters": calculate_fuel_savings_liters(co2_kg),
-            "energy_savings_kwh": calculate_energy_savings_kwh(co2_kg),
+            "energy_savings_kwh": calculate_energy_savings_kwh(total_distance_km),  # Mesafeden hesapla
             "calculation_timestamp": datetime.utcnow().isoformat()
         }
         
@@ -210,15 +216,7 @@ def calculate_sustainability_metrics(
         
     except Exception as e:
         logger.error("Sustainability metrics calculation failed", error=str(e))
-        return {
-            "distance_km": total_distance_km,
-            "region_code": region_code,
-            "co2_savings_kg": 0.0,
-            "equivalent_trees": 0,
-            "fuel_savings_liters": 0.0,
-            "energy_savings_kwh": 0.0,
-            "error": str(e)
-        }
+        raise  # Hatayı yukarı ilet, gizleme
 
 
 # =============================================================================
