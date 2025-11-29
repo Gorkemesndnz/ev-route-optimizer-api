@@ -47,10 +47,19 @@ MIN_CHARGE_THRESHOLD_PERCENT = 15.0  # Minimum şarj seviyesi
 MIN_DISTANCE_BETWEEN_STOPS_KM = 50.0  # Şarj durakları arası minimum mesafe
 
 # Optimizer sabitleri
-STOP_PENALTY_MINUTES = 40.0  # Her ek durak için zaman penaltisi (dk) - ÇOK AĞIR
-SHORT_INTERVAL_PENALTY_MINUTES = 20.0  # Kısa aralıklı durak penaltisi (dk)
-MIN_DRIVING_INTERVAL_MINUTES = 90.0  # 1.5 saatten kısa sürüş aralıkları penalize edilir
-TARGET_SOC_CANDIDATES = [90.0, 95.0]  # Sadece yüksek hedefler - minimum durak için
+STOP_PENALTY_MINUTES = 60.0  # Her ek durak = 60 dk ceza (park, bul, bekle, çık)
+SHORT_INTERVAL_PENALTY_MINUTES = 15.0  # Kısa aralıklı durak penaltisi (dk)
+MIN_DRIVING_INTERVAL_MINUTES = 75.0  # 1.25 saatten kısa sürüş aralıkları penalize edilir
+
+# 🔧 DİNAMİK TARGET SOC: Statik liste KALDIRILDI
+# Artık %65-95 arası TÜM değerler deneniyor
+TARGET_SOC_MIN = 65
+TARGET_SOC_MAX = 95
+TARGET_SOC_STEP = 5  # %5 aralıklarla dene (hız için)
+
+# Hotspot üretim sınırları (agresif üretimi önle)
+MAX_MIN_REQUIRED_SOC = 70.0  # min_required_soc üst sınırı
+HOTSPOT_SOC_BUFFER = 15.0  # SOC tampon marjı
 
 
 # =============================================================================
@@ -478,26 +487,31 @@ class SOCSimulator:
         """
         Bu noktada hotspot oluşturulmalı mı?
         
-        Koşullar:
-        1. SOC, charge_min_soc'un altına düştü
-        2. VEYA SOC, min_required_soc'un altına düştü
-        3. VE son hotspot'tan yeterli mesafe var
+        🔧 V2.2: YUMUŞATILMIŞ KOŞULLAR
+        - SOC %60'a düşse bile panikleyip hotspot üretme
+        - min_required_soc'a buffer ekle (esneklik)
+        - Gereksiz erken hotspot'ları önle
         """
         # Son hotspot'tan mesafe kontrolü
         distance_since_last = cumulative_km - last_hotspot_km
         if distance_since_last < MIN_DISTANCE_BETWEEN_STOPS_KM and last_hotspot_km > 0:
             return False
         
+        # 🔧 min_required_soc üst sınırı (agresif hotspot önleme)
+        capped_min_required = min(min_required_soc, MAX_MIN_REQUIRED_SOC)
+        
+        # Acil durum (çok düşük SOC) - en öncelikli
+        if current_soc <= MIN_CHARGE_THRESHOLD_PERCENT:
+            return True
+        
         # Kullanıcı eşiği
         if current_soc <= self.charge_min_soc:
             return True
         
-        # Dinamik eşik (varışa yetmeyecek)
-        if current_soc < min_required_soc:
-            return True
-        
-        # Acil durum (çok düşük SOC)
-        if current_soc <= MIN_CHARGE_THRESHOLD_PERCENT:
+        # 🔧 YUMUŞATILMIŞ: Dinamik eşik - BUFFER ile kontrol
+        # Eğer SOC, (min_required - buffer)'ın altına düştüyse hotspot oluştur
+        # Bu sayede %60 SOC'ta panikleyip hotspot üretmez
+        if current_soc < (capped_min_required - HOTSPOT_SOC_BUFFER):
             return True
         
         return False
@@ -639,14 +653,20 @@ class ChargePlanOptimizer:
         self.battery_capacity_kwh = battery_capacity_kwh
         
         best_score = float('inf')
-        best_target_soc = 80.0
+        best_target_soc = 75.0
         best_result = None
+        single_stop_result = None  # Tek durak çözümü için
+        single_stop_soc = None
+        
+        # 🔧 DİNAMİK ARALIK: %65-95 arası TÜM değerleri dene
+        target_soc_range = range(TARGET_SOC_MIN, TARGET_SOC_MAX + 1, TARGET_SOC_STEP)
         
         logger.info(
-            f"ChargePlanOptimizer: Testing {len(TARGET_SOC_CANDIDATES)} target SOC candidates"
+            f"ChargePlanOptimizer: Testing {len(list(target_soc_range))} target SOC values "
+            f"({TARGET_SOC_MIN}%-{TARGET_SOC_MAX}%)"
         )
         
-        for target_soc in TARGET_SOC_CANDIDATES:
+        for target_soc in target_soc_range:
             # Bu target_soc ile simülasyon yap
             simulator = SOCSimulator(
                 battery_capacity_kwh=battery_capacity_kwh,
@@ -663,6 +683,13 @@ class ChargePlanOptimizer:
                 logger.info(f"ChargePlanOptimizer: No charging needed! (early exit)")
                 return target_soc, result
             
+            # 🔧 TEK DURAK OPTİMİZASYONU: En düşük SOC'lu tek durak çözümünü sakla
+            if len(result.hotspots) == 1 and result.final_soc >= target_arrival_soc:
+                if single_stop_result is None or target_soc < single_stop_soc:
+                    single_stop_result = result
+                    single_stop_soc = target_soc
+                    logger.debug(f"  Single-stop solution found at {target_soc}%")
+            
             # Plan skorunu hesapla
             score = self._calculate_plan_score(result, target_soc, avg_speed_kmh)
             
@@ -676,6 +703,17 @@ class ChargePlanOptimizer:
                 best_score = score
                 best_target_soc = target_soc
                 best_result = result
+        
+        # 🔧 TEK DURAK TERCİHİ: Eğer tek durakla gidilebiliyorsa, onu tercih et
+        if single_stop_result is not None:
+            single_stop_score = self._calculate_plan_score(single_stop_result, single_stop_soc, avg_speed_kmh)
+            # Tek durak çözümü en iyi veya çok yakınsa, onu kullan
+            if single_stop_score <= best_score * 1.1:  # %10 tolerans
+                logger.info(
+                    f"ChargePlanOptimizer: Single-stop solution preferred - "
+                    f"target_soc={single_stop_soc}%, score={single_stop_score:.1f}"
+                )
+                return single_stop_soc, single_stop_result
         
         logger.info(
             f"ChargePlanOptimizer: Optimal plan found - "
@@ -748,10 +786,12 @@ class ChargePlanOptimizer:
             
             prev_km = hotspot.distance_from_start_km
         
-        # 4. YÜKSEK SOC PENALTİSİ
-        # %80 üzeri şarj çok yavaş - charging_model'den penaltı al
-        high_soc_penalty = apply_high_soc_penalty(target_soc) * num_stops
+        # 4. YÜKSEK SOC PENALTİSİ (yumuşatılmış)
+        # %80 üzeri şarj yavaş ama aşırı cezalandırma yapma
+        high_soc_penalty = apply_high_soc_penalty(target_soc) * num_stops * 0.5  # %50 azaltılmış
         
+        # 🔧 V2.2: Yeni skor formülü
+        # Durak sayısı en önemli faktör (60 dk/durak)
         total_score = stop_penalty + total_charge_time + short_interval_penalty + high_soc_penalty
         
         return total_score
