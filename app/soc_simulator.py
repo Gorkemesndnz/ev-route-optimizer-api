@@ -58,8 +58,10 @@ TARGET_SOC_MAX = 95
 TARGET_SOC_STEP = 5  # %5 aralıklarla dene (hız için)
 
 # Hotspot üretim sınırları (agresif üretimi önle)
-MAX_MIN_REQUIRED_SOC = 70.0  # min_required_soc üst sınırı
-HOTSPOT_SOC_BUFFER = 15.0  # SOC tampon marjı
+# 🔧 V2.4: Daha düşük eşikler - %20-30'a kadar git, sonra şarj et
+MAX_MIN_REQUIRED_SOC = 50.0  # min_required_soc üst sınırı (70→50)
+HOTSPOT_SOC_BUFFER = 20.0  # SOC tampon marjı (15→20)
+# Sonuç: Hotspot eşiği = 50-20 = %30 civarı
 
 # 🔧 V2.3: UZUN ROTA İÇİN DİNAMİK HEDEFLER
 # Birden fazla şarj durağı olan rotalarda daha düşük hedefler
