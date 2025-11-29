@@ -61,6 +61,17 @@ TARGET_SOC_STEP = 5  # %5 aralıklarla dene (hız için)
 MAX_MIN_REQUIRED_SOC = 70.0  # min_required_soc üst sınırı
 HOTSPOT_SOC_BUFFER = 15.0  # SOC tampon marjı
 
+# 🔧 V2.3: UZUN ROTA İÇİN DİNAMİK HEDEFLER
+# Birden fazla şarj durağı olan rotalarda daha düşük hedefler
+MULTI_STOP_TARGET_MIN = 72  # Ara duraklar için minimum hedef
+MULTI_STOP_TARGET_MAX = 82  # Ara duraklar için maksimum hedef
+FINAL_STOP_TARGET_MIN = 60  # Son durak için minimum hedef
+FINAL_STOP_TARGET_MAX = 85  # Son durak için maksimum hedef
+
+# Varış SOC hedefi (uzun rotalarda düşük tutulmalı)
+DEFAULT_ARRIVAL_SOC = 20.0  # Varsayılan varış hedefi %20
+LONG_ROUTE_ARRIVAL_SOC = 15.0  # Uzun rotalarda %15 yeterli
+
 
 # =============================================================================
 # DATA CLASSES
@@ -384,20 +395,19 @@ class SOCSimulator:
         avg_consumption_per_km: float
     ) -> None:
         """
-        Her hotspot için DİNAMİK şarj hedefi hesapla.
+        🔧 V2.3: Her hotspot için DİNAMİK şarj hedefi hesapla.
         
-        MANTIK:
-        - SON DURAK: Hedefe tam yetecek kadar (gereksiz şarj önle)
-        - ARA DURAKLAR: Sonraki durağa yetecek + güvenlik payı
-          → Ama minimum %70 (çok düşük olmasın, UX kötüleşir)
-          → Maximum %90 (gereksiz uzun şarj önle)
+        UZUN ROTA STRATEJİSİ (hotspots > 1):
+        - Ara duraklar: %72-82 bandı (90-95 DEĞİL!)
+        - Son durak: %60-85 bandı
+        - Sonraki durağa %25 SOC ile varmayı hedefle
         
-        Bu sayede:
-        - Her durak FARKLI hedeflere şarj eder (dinamik)
-        - Son durak gereksiz yüksek şarj yapmaz
-        - Ara duraklar makul seviyede kalır
+        TEK DURAK STRATEJİSİ (hotspots == 1):
+        - Mevcut davranış: %90'a kadar izin ver
+        - Hedefe yetecek kadar şarj et
         """
         num_hotspots = len(hotspots)
+        is_long_route = num_hotspots > 1  # Birden fazla durak = uzun rota
         
         for i, hotspot in enumerate(hotspots):
             is_last_stop = (i == num_hotspots - 1)
@@ -409,10 +419,16 @@ class SOCSimulator:
                 required_soc = (required_kwh / self.battery_capacity_kwh) * 100
                 
                 # Hedef = varış SOC + kalan mesafe tüketimi + güvenlik
-                target = self.target_arrival_soc + required_soc + SAFETY_BUFFER_PERCENT
+                # 🔧 Uzun rotalarda varış hedefi daha düşük (%15-20)
+                arrival_target = LONG_ROUTE_ARRIVAL_SOC if is_long_route else self.target_arrival_soc
+                target = arrival_target + required_soc + SAFETY_BUFFER_PERCENT
                 
-                # Sınırla: min %50, max %90 (son durak için yüksek şarj gereksiz)
-                target = max(50.0, min(90.0, target))
+                if is_long_route:
+                    # 🔧 UZUN ROTA: Son durak için daha düşük hedef (%60-85)
+                    target = max(FINAL_STOP_TARGET_MIN, min(FINAL_STOP_TARGET_MAX, target))
+                else:
+                    # TEK DURAK: Mevcut davranış (%50-90)
+                    target = max(50.0, min(90.0, target))
                 
             else:
                 # ARA DURAK: Sonraki durağa yetecek + güvenlik (DİNAMİK)
@@ -421,16 +437,20 @@ class SOCSimulator:
                 required_kwh = distance_to_next * avg_consumption_per_km
                 required_soc = (required_kwh / self.battery_capacity_kwh) * 100
                 
-                # Hedef = sonraki durağa varış için gereken + güvenlik payı (%25)
-                # Sonraki durağa %25-30 civarı SOC ile varmayı hedefle
-                target = 30.0 + required_soc + SAFETY_BUFFER_PERCENT
+                # 🔧 V2.3: Sonraki durağa %25 SOC ile varmayı hedefle (40 değil!)
+                target = 25.0 + required_soc + SAFETY_BUFFER_PERCENT
                 
-                # Sınırla: min %80 (yüksek tut - az durak için), max %95
-                target = max(80.0, min(95.0, target))
+                # 🔧 UZUN ROTA: Ara duraklar için daha düşük bant (%72-82)
+                # ESKİ: max(80.0, min(95.0, target)) - çok yüksek!
+                # YENİ: max(72, min(82, target))
+                target = max(MULTI_STOP_TARGET_MIN, min(MULTI_STOP_TARGET_MAX, target))
             
-            # Mevcut SOC'dan düşük olamaz (en az %20 şarj et)
-            target = max(target, hotspot.soc_at_point + 20)
-            target = min(95.0, target)
+            # Mevcut SOC'dan düşük olamaz (en az %15 şarj et)
+            target = max(target, hotspot.soc_at_point + 15)
+            
+            # Uzun rotalarda üst sınır: %85 (tek durakta %95)
+            max_target = 85.0 if is_long_route else 95.0
+            target = min(max_target, target)
             
             old_target = hotspot.recommended_charge_to
             hotspot.recommended_charge_to = round(target, 0)
@@ -786,11 +806,19 @@ class ChargePlanOptimizer:
             
             prev_km = hotspot.distance_from_start_km
         
-        # 4. YÜKSEK SOC PENALTİSİ (yumuşatılmış)
-        # %80 üzeri şarj yavaş ama aşırı cezalandırma yapma
-        high_soc_penalty = apply_high_soc_penalty(target_soc) * num_stops * 0.5  # %50 azaltılmış
+        # 4. YÜKSEK SOC PENALTİSİ (rota türüne göre)
+        # 🔧 V2.3: Uzun rotalarda yüksek SOC'u daha fazla penalize et
+        base_high_soc_penalty = apply_high_soc_penalty(target_soc)
         
-        # 🔧 V2.2: Yeni skor formülü
+        if num_stops == 1:
+            # TEK DURAK: Yüksek SOC penaltisini çok azalt (%90 makul)
+            high_soc_penalty = base_high_soc_penalty * 0.3
+        else:
+            # UZUN ROTA: %80 üzeri hedefleri agresif penalize et
+            # Her durak için penaltı katlanır (2+ durak = çok fazla şarj süresi)
+            high_soc_penalty = base_high_soc_penalty * num_stops * 1.5
+        
+        # 🔧 V2.3: Yeni skor formülü
         # Durak sayısı en önemli faktör (60 dk/durak)
         total_score = stop_penalty + total_charge_time + short_interval_penalty + high_soc_penalty
         
