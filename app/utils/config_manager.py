@@ -156,6 +156,21 @@ class ConfigManager:
     def co2_region_multiplier() -> float:
         return ConfigManager._get_float("CO2_REGION_MULTIPLIER_TR", 1.1)
 
+    @staticmethod
+    def electricity_emission_factor_tr() -> float:
+        """Türkiye elektrik şebekesi emisyon faktörü (gCO2/kWh)"""
+        return ConfigManager._get_float("ELECTRICITY_EMISSION_FACTOR_TR", 475.0)
+
+    @staticmethod
+    def electricity_emission_factor_eu() -> float:
+        """AB elektrik şebekesi emisyon faktörü (gCO2/kWh)"""
+        return ConfigManager._get_float("ELECTRICITY_EMISSION_FACTOR_EU", 300.0)
+
+    @staticmethod
+    def electricity_emission_factor_us() -> float:
+        """ABD elektrik şebekesi emisyon faktörü (gCO2/kWh)"""
+        return ConfigManager._get_float("ELECTRICITY_EMISSION_FACTOR_US", 400.0)
+
     # -------------------------------------------------------------------------
     # LOGGING
     # -------------------------------------------------------------------------
@@ -217,6 +232,9 @@ class ConfigManager:
     # CO2 / Sustainability
     get_co2_avg_ice_consumption = co2_avg_ice_consumption
     get_co2_region_multiplier_tr = co2_region_multiplier
+    get_electricity_emission_factor_tr = electricity_emission_factor_tr
+    get_electricity_emission_factor_eu = electricity_emission_factor_eu
+    get_electricity_emission_factor_us = electricity_emission_factor_us
     
     # Environment
     get_environment = environment

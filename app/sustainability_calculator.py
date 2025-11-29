@@ -41,25 +41,32 @@ logger = get_logger("sustainability_calculator")
 
 def calculate_co2_savings(
     total_distance_km: float, 
+    ev_consumption_kwh: float = 0.0,  # 🆕 EV tüketimi parametresi
     region_code: str = "TR"
 ) -> float:
     """
-    Elektrikli araç kullanımında tasarruf edilen CO2 miktarını (kg) hesaplar.
+    Elektrikli araç kullanımında tasarruf edilen NET CO2 miktarını (kg) hesaplar.
+    
+    🆕 Gerçekçi Formül: CO2 Tasarrufu = (Benzinli Araç CO2) - (Elektrikli Araç CO2)
     
     Args:
         total_distance_km: Toplam mesafe (km)
+        ev_consumption_kwh: Elektrikli aracın toplam elektrik tüketimi (kWh)
         region_code: Bölge kodu (varsayılan "TR")
     
     Returns:
-        CO2 tasarrufu (kg), 2 decimal hassasiyetle
+        NET CO2 tasarrufu (kg), 2 decimal hassasiyetle
+        Pozitif = tasarruf, Negatif = EV daha fazla CO2 üretiyor
     
     Raises:
-        ValueError: Negatif mesafe için
+        ValueError: Negatif mesafe veya tüketim için
     """
     try:
         # Validation
         if total_distance_km < 0:
             raise ValueError("Distance cannot be negative")
+        if ev_consumption_kwh < 0:
+            raise ValueError("EV consumption cannot be negative")
         
         if total_distance_km == 0:
             return 0.0
@@ -67,21 +74,33 @@ def calculate_co2_savings(
         # Configuration values
         co2_avg_ice_l_per_100km = config.get_co2_avg_ice_consumption()
         region_multiplier = _get_region_multiplier(region_code)
+        electricity_grid_factor = _get_electricity_emission_factor(region_code)
         
-        # CO2 calculation
+        # 🆕 ICE araç CO2 hesabı (mevcut mantık)
         total_liters = (co2_avg_ice_l_per_100km / 100.0) * total_distance_km
-        total_co2_kg_produced = total_liters * CO2_KG_PER_LITER_GASOLINE * region_multiplier
+        ice_co2_kg = total_liters * CO2_KG_PER_LITER_GASOLINE * region_multiplier
         
-        result = round(total_co2_kg_produced, 2)
+        # 🆕 EV araç CO2 hesabı (yeni mantık)
+        # gCO2/kWh -> kgCO2/kWh çevirimi
+        ev_co2_kg = (ev_consumption_kwh * electricity_grid_factor) / 1000.0
+        
+        # 🆕 NET CO2 tasarrufu
+        net_co2_savings = ice_co2_kg - ev_co2_kg
+        
+        result = round(net_co2_savings, 2)
         
         # Structured logging
         logger.info(
             "CO2 savings calculated",
             distance_km=total_distance_km,
             region_code=region_code,
-            co2_kg=result,
+            ev_consumption_kwh=ev_consumption_kwh,
+            ice_co2_kg=round(ice_co2_kg, 2),
+            ev_co2_kg=round(ev_co2_kg, 2),
+            net_co2_savings_kg=result,
             ice_consumption=co2_avg_ice_l_per_100km,
-            region_multiplier=region_multiplier
+            region_multiplier=region_multiplier,
+            electricity_grid_factor=electricity_grid_factor
         )
         
         return result
@@ -182,20 +201,22 @@ def calculate_energy_savings_kwh(total_distance_km: float) -> float:
 
 def calculate_sustainability_metrics(
     total_distance_km: float,
+    ev_consumption_kwh: float = 0.0,  # 🆕 EV tüketimi parametresi
     region_code: str = "TR"
 ) -> Dict[str, Any]:
     """
-    Tüm sürdürülebilirlik metriklerini hesaplar.
+    🆕 Tüm sürdürülebilirlik metriklerini hesaplar (gerçekçi CO2 ile).
     
     Args:
         total_distance_km: Toplam mesafe (km)
+        ev_consumption_kwh: Elektrikli aracın toplam elektrik tüketimi (kWh)
         region_code: Bölge kodu
     
     Returns:
         Sürdürülebilirlik metrikleri sözlüğü
     """
     try:
-        co2_kg = calculate_co2_savings(total_distance_km, region_code)
+        co2_kg = calculate_co2_savings(total_distance_km, ev_consumption_kwh, region_code)
         
         metrics = {
             "distance_km": total_distance_km,
@@ -253,6 +274,36 @@ def _get_region_multiplier(region_code: str) -> float:
     return multiplier
 
 
+def _get_electricity_emission_factor(region_code: str) -> float:
+    """
+    🆕 Bölge koduna göre elektrik şebekesi emisyon faktörünü döndürür (gCO2/kWh).
+    
+    Args:
+        region_code: Bölge kodu (TR, EU, US, vb.)
+    
+    Returns:
+        Bölgeye özel elektrik şebekesi emisyon faktörü (gCO2/kWh)
+    """
+    # 🆕 Region-specific electricity emission factors (gCO2/kWh)
+    electricity_emission_factors = {
+        "TR": config.get_electricity_emission_factor_tr(),  # Türkiye: 475 gCO2/kWh
+        "EU": config.get_electricity_emission_factor_eu(),  # AB: 300 gCO2/kWh
+        "US": config.get_electricity_emission_factor_us(),  # ABD: 400 gCO2/kWh
+        "CN": 600.0,  # Çin: 600 gCO2/kWh
+        "IN": 550.0,  # Hindistan: 550 gCO2/kWh
+    }
+    
+    factor = electricity_emission_factors.get(region_code.upper(), 475.0)  # Default: Türkiye
+    
+    logger.debug(
+        "Electricity emission factor applied",
+        region_code=region_code,
+        emission_factor_gco2_per_kwh=factor
+    )
+    
+    return factor
+
+
 # =============================================================================
 # BACKWARD COMPATIBILITY
 # =============================================================================
@@ -269,4 +320,6 @@ def calculate_co2_savings_legacy(total_distance_km: float) -> float:
         function="calculate_co2_savings_legacy",
         recommendation="Use calculate_co2_savings() instead"
     )
-    return calculate_co2_savings(total_distance_km, "TR")
+    # 🔧 DÜZELT: Doğru parametre sırası ile çağır
+    # calculate_co2_savings(distance, ev_consumption_kwh, region_code)
+    return calculate_co2_savings(total_distance_km, 0.0, "TR")
