@@ -215,18 +215,35 @@ class SOCSimulator:
             seg_with_cons.soc_at_start = current_soc
             soc_before_segment = current_soc  # Segment öncesi SOC (hotspot için)
             
-            # 🔧 FIX: Segment işlenmeden ÖNCE hotspot kontrolü yap
-            # Bu sayede SOC %0'a düşmeden ÖNCE şarj durağı oluşturulur
+            # 🔧 DEBUG: Segment bazlı tüketim kontrolü
+            logger.debug(
+                f"[SIM] seg={segment.index}, dist={segment.distance_km:.1f}km, "
+                f"cum={segment.cumulative_distance_km:.1f}km, cons={consumption_kwh:.2f}kWh, "
+                f"soc_before={current_soc:.1f}%"
+            )
             
             # Bu segment sonrası SOC ne olacak? (önceden hesapla)
             soc_drop = (consumption_kwh / self.battery_capacity_kwh) * 100
             projected_soc_after = current_soc - soc_drop
+            
+            # 🔧 KRİTİK: Eğer tek segment tüketimi bataryayı aşıyorsa HEMEN hotspot oluştur
+            if soc_drop > current_soc:
+                logger.warning(
+                    f"[CRITICAL] Segment {segment.index} tüketimi SOC'u aşıyor! "
+                    f"soc_drop={soc_drop:.1f}%, current_soc={current_soc:.1f}%"
+                )
             
             # Kalan mesafe (segment sonunda)
             remaining_distance = total_distance_km - segment.cumulative_distance_km
             
             # Minimum gerekli SOC hesapla
             min_required_soc = self._calculate_min_required_soc(remaining_distance, avg_consumption_per_km)
+            
+            # 🔧 DEBUG: Hotspot karar verme
+            logger.debug(
+                f"[REQ] remaining={remaining_distance:.1f}km, min_req={min_required_soc:.1f}%, "
+                f"projected_soc={projected_soc_after:.1f}%, charge_min={self.charge_min_soc}%"
+            )
             
             # 🔧 ERKEN HOTSPOT TESPİTİ: Segment SONRASI SOC çok düşecekse, ÖNCE şarj et
             should_create_hotspot = self._should_create_hotspot(
@@ -435,10 +452,19 @@ class SOCSimulator:
         # = kalan mesafe tüketimi + varış hedefi + güvenlik
         min_required = self.target_arrival_soc + required_percent + SAFETY_BUFFER_PERCENT
         
-        # Eğer 100%'ü aşıyorsa, ara şarj kaçınılmaz
-        # Bu durumda sadece charge_min_soc + güvenlik döndür
+        # 🔧 FIX: Eğer 100%'ü aşıyorsa, ara şarj kaçınılmaz
+        # ESKİ HATALI: return charge_min_soc + 10 = 30% (çok düşük!)
+        # YENİ: Kalan mesafeye göre akıllı eşik döndür
         if min_required > 100.0:
-            return self.charge_min_soc + SAFETY_BUFFER_PERCENT  # 30%
+            # Bir şarjla ne kadar gidilebilir? (80% kullanılabilir enerji varsayımı)
+            max_range_km = (0.80 * self.battery_capacity_kwh) / avg_consumption_per_km if avg_consumption_per_km > 0 else 200
+            
+            # Kalan mesafe bir şarjdan fazlaysa, en az %50 SOC'ta şarj et
+            if remaining_distance_km > max_range_km:
+                return max(50.0, self.charge_min_soc + 30)  # En az %50
+            else:
+                # Tek şarjla bitirilecek - standart eşik
+                return max(35.0, self.charge_min_soc + SAFETY_BUFFER_PERCENT)
         
         return max(MIN_CHARGE_THRESHOLD_PERCENT, min_required)
     

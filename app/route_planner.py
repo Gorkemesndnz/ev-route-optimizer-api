@@ -200,6 +200,8 @@ def _build_multi_legs(
     # Multi-leg: Şarj durakları var
     current_point = start_point
     current_soc = start_soc
+    remaining_distance = total_distance_km  # Kalan mesafe takibi
+    remaining_duration = total_duration_min  # Kalan süre takibi
     last_segment_index = -1  # Son işlenen segment
     
     # Her hotspot + istasyon için leg oluştur
@@ -210,21 +212,28 @@ def _build_multi_legs(
         station = station_result.best_station
         station_location = station.location
         
-        # 🔧 SEGMENT BAZLI TÜKETİM: Bu leg'in segmentlerini topla
-        leg_segments = [
-            s for s in segments_with_consumption 
-            if last_segment_index < s.segment.index <= hotspot.segment_index
-        ]
+        # 🔧 V2.1: SOC ve TÜKETİM HESABI
+        # SOCSimulator zaten doğru hesaplamış - onun değerlerini kullan
+        # hotspot.soc_at_point = o noktadaki SOC (şarj öncesi)
         
-        leg_consumption = sum(s.consumption_kwh for s in leg_segments)
-        leg_distance = sum(s.segment.distance_km for s in leg_segments)
+        # Mesafe hesabı (hotspot konumuna kadar)
+        leg_distance = hotspot.distance_from_start_km - (total_distance_km - remaining_distance)
+        leg_distance = max(0, leg_distance)  # Negatif olmasın
         
         # Süre hesabı (mesafe oranına göre)
         leg_duration = (leg_distance / total_distance_km) * total_duration_min if total_distance_km > 0 else 0
         
-        # SOC hesabı (segment bazlı tüketimden)
-        soc_drop = (leg_consumption / battery_capacity_kwh) * 100
-        end_soc = current_soc - soc_drop
+        # 🔧 FIX: Tüketim = SOC farkı × batarya kapasitesi
+        # Bu değer fiziksel olarak doğru ve batarya kapasitesini aşamaz
+        end_soc = hotspot.soc_at_point  # SOCSimulator'dan gelen değer
+        soc_drop = current_soc - end_soc
+        leg_consumption = (soc_drop / 100) * battery_capacity_kwh
+        
+        # 🔧 DEBUG: Leg tüketim kontrolü
+        logger.debug(
+            f"[LEG {i+1}] dist={leg_distance:.1f}km, soc={current_soc:.1f}%→{end_soc:.1f}%, "
+            f"drop={soc_drop:.1f}%, cons={leg_consumption:.2f}kWh"
+        )
         
         # 1. DriveLeg: Mevcut nokta → Şarj istasyonu
         avg_speed = (leg_distance / leg_duration) * 60 if leg_duration > 0 else 60
@@ -279,24 +288,25 @@ def _build_multi_legs(
         # Güncellemeler
         current_point = station_location
         current_soc = hotspot_target_soc
+        remaining_distance -= leg_distance
+        remaining_duration -= leg_duration
         last_segment_index = hotspot.segment_index
     
     # Son DriveLeg: Son şarj istasyonu → Varış
-    # Kalan segmentlerin tüketimini topla
-    remaining_segments = [
-        s for s in segments_with_consumption 
-        if s.segment.index > last_segment_index
-    ]
-    
-    if remaining_segments:
-        final_leg_consumption = sum(s.consumption_kwh for s in remaining_segments)
-        final_leg_distance = sum(s.segment.distance_km for s in remaining_segments)
-        final_leg_duration = (final_leg_distance / total_distance_km) * total_duration_min if total_distance_km > 0 else 0
-        
-        final_soc_drop = (final_leg_consumption / battery_capacity_kwh) * 100
-        calculated_final_soc = current_soc - final_soc_drop
+    if remaining_distance > 0:
+        # 🔧 V2.1: SOC farkından tüketim hesapla
+        final_soc_drop = current_soc - final_soc
+        final_leg_consumption = (final_soc_drop / 100) * battery_capacity_kwh
+        final_leg_distance = remaining_distance
+        final_leg_duration = remaining_duration
         
         avg_speed = (final_leg_distance / final_leg_duration) * 60 if final_leg_duration > 0 else 60
+        
+        # 🔧 DEBUG
+        logger.debug(
+            f"[FINAL LEG] dist={final_leg_distance:.1f}km, soc={current_soc:.1f}%→{final_soc:.1f}%, "
+            f"cons={final_leg_consumption:.2f}kWh"
+        )
         
         legs.append(DriveLeg(
             type="drive",
@@ -307,7 +317,7 @@ def _build_multi_legs(
             avg_speed_kmh=round(avg_speed, 1),
             consumption_kwh=round(max(0, final_leg_consumption), 2),
             start_soc_percent=round(current_soc, 1),
-            end_soc_percent=round(max(0, calculated_final_soc), 1)
+            end_soc_percent=round(max(0, final_soc), 1)
         ))
     
     logger.info(f"Multi-leg built: {len(legs)} legs (drive + charge)")
