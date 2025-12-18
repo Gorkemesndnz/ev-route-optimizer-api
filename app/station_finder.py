@@ -65,15 +65,28 @@ CORRIDOR_WIDTH_KM = 15.0
 MIN_DC_POWER_KW = 50.0
 MAX_STATIONS_PER_HOTSPOT = 5
 
-# Skorlama ağırlıkları
-WEIGHT_DEVIATION = 0.5
-WEIGHT_POWER = 0.3
-WEIGHT_RATING = 0.2
+# Skorlama ağırlıkları (V2.8: amenities dahil)
+WEIGHT_DEVIATION = 0.40
+WEIGHT_POWER = 0.25
+WEIGHT_RATING = 0.15
+WEIGHT_AMENITIES = 0.20  # 🔧 V2.8: Tesis olanakları
 
-# Greedy selection ağırlıkları (V1.5)
-GREEDY_WEIGHT_POWER = 0.45
-GREEDY_WEIGHT_DEVIATION = 0.35
-GREEDY_WEIGHT_RATING = 0.20
+# Greedy selection ağırlıkları (V2.8)
+GREEDY_WEIGHT_POWER = 0.35
+GREEDY_WEIGHT_DEVIATION = 0.30
+GREEDY_WEIGHT_RATING = 0.15
+GREEDY_WEIGHT_AMENITIES = 0.20  # 🔧 V2.8: Tesis olanakları
+
+# Weighted rating sabitleri (V2.8)
+RATING_CONFIDENCE_THRESHOLD = 50  # Bu kadar yorum varsa %100 güven
+RATING_PRIOR = 3.5  # Az yorumlu istasyonlar için varsayılan rating
+
+# Amenities bonus değerleri (V2.8) - toplam max 1.0
+AMENITY_BONUS_TOILET = 0.25
+AMENITY_BONUS_FOOD = 0.20
+AMENITY_BONUS_SHOPPING = 0.15
+AMENITY_BONUS_PARKING = 0.15
+AMENITY_BONUS_OPEN_NOW = 0.25  # Şu an açık olması önemli
 
 
 # =============================================================================
@@ -84,6 +97,7 @@ GREEDY_WEIGHT_RATING = 0.20
 class CorridorStation:
     """
     Koridor içinde bulunan istasyon.
+    🔧 V2.8: Amenities ve weighted rating desteği eklendi.
     """
     station_info: Dict[str, Any]
     distance_from_hotspot_km: float
@@ -92,7 +106,14 @@ class CorridorStation:
     is_dc: bool = False
     is_compatible: bool = True
     rating: float = 4.0
+    user_ratings_total: int = 0  # 🔧 V2.8: Weighted rating için
     score: float = 0.0
+    # 🔧 V2.8: Amenities alanları
+    has_toilet: bool = False
+    has_food: bool = False
+    has_shopping: bool = False
+    has_parking: bool = False
+    is_open_now: Optional[bool] = None
     
     @property
     def station_id(self) -> str:
@@ -176,20 +197,102 @@ def _get_max_power_kw(connections: List[dict]) -> float:
     return max_power
 
 
+def _calculate_weighted_rating(rating: float, user_ratings_total: int) -> float:
+    """
+    🔧 V2.8: Weighted rating hesapla.
+    
+    Az yorumlu istasyonlarda rating güvenilirliği düşük olduğundan,
+    yorum sayısına göre rating'i bir prior ile karıştırır.
+    
+    Formül: weighted = confidence * rating + (1 - confidence) * prior
+    
+    Args:
+        rating: Google/OCM rating (0-5)
+        user_ratings_total: Toplam yorum sayısı
+    
+    Returns:
+        Güven ayarlı rating (0-5)
+    """
+    if user_ratings_total <= 0:
+        return RATING_PRIOR
+    
+    # Güven katsayısı: 50+ yorum = %100 güven
+    confidence = min(1.0, user_ratings_total / RATING_CONFIDENCE_THRESHOLD)
+    
+    # Weighted rating
+    weighted = confidence * rating + (1 - confidence) * RATING_PRIOR
+    
+    return weighted
+
+
+def _calculate_amenities_score(
+    has_toilet: bool = False,
+    has_food: bool = False,
+    has_shopping: bool = False,
+    has_parking: bool = False,
+    is_open_now: Optional[bool] = None
+) -> float:
+    """
+    🔧 V2.8: Amenities (tesis olanakları) skoru hesapla.
+    
+    Kullanıcılar rota sapması benzer ise tuvalet, yemek, market
+    gibi olanakları olan istasyonları tercih eder.
+    
+    Returns:
+        0.0 - 1.0 arası amenities skoru
+    """
+    score = 0.0
+    
+    if has_toilet:
+        score += AMENITY_BONUS_TOILET
+    if has_food:
+        score += AMENITY_BONUS_FOOD
+    if has_shopping:
+        score += AMENITY_BONUS_SHOPPING
+    if has_parking:
+        score += AMENITY_BONUS_PARKING
+    if is_open_now is True:  # Explicitly True (None = bilinmiyor)
+        score += AMENITY_BONUS_OPEN_NOW
+    
+    # Normalize to 0-1 (max possible = 1.0)
+    return min(1.0, score)
+
+
 def _calculate_station_score(
     deviation_minutes: float,
     power_kw: float,
     max_power_kw: float,
-    rating: float
+    rating: float,
+    user_ratings_total: int = 0,
+    has_toilet: bool = False,
+    has_food: bool = False,
+    has_shopping: bool = False,
+    has_parking: bool = False,
+    is_open_now: Optional[bool] = None
 ) -> float:
     """
-    İstasyon için ağırlıklı skor hesapla.
+    🔧 V2.8: İstasyon için ağırlıklı skor hesapla.
+    
+    Artık weighted rating ve amenities dahil.
     """
     deviation_score = max(0, 1 - (deviation_minutes / MAX_DEVIATION_MINUTES))
     power_score = power_kw / max_power_kw if max_power_kw > 0 else 0
-    rating_score = rating / 5.0
     
-    return (WEIGHT_DEVIATION * deviation_score) + (WEIGHT_POWER * power_score) + (WEIGHT_RATING * rating_score)
+    # Weighted rating kullan
+    weighted_rating = _calculate_weighted_rating(rating, user_ratings_total)
+    rating_score = weighted_rating / 5.0
+    
+    # Amenities skoru
+    amenities_score = _calculate_amenities_score(
+        has_toilet, has_food, has_shopping, has_parking, is_open_now
+    )
+    
+    return (
+        WEIGHT_DEVIATION * deviation_score + 
+        WEIGHT_POWER * power_score + 
+        WEIGHT_RATING * rating_score +
+        WEIGHT_AMENITIES * amenities_score
+    )
 
 
 # =============================================================================
@@ -422,9 +525,37 @@ class CorridorSearcher:
                 rating = station.get("rating", 4.0)
                 user_ratings_total = station.get("user_ratings_total", 0)
                 
+                # 🔧 V2.8: Google Places types'tan amenities çıkar
+                place_types = station.get("types", [])
+                place_name = station.get("name", "").lower()
+                vicinity = station.get("vicinity", "").lower()
+                
+                # Amenities detection from types and name/vicinity
+                has_parking = any(t in place_types for t in ["parking", "car_park"])
+                has_food = any(t in place_types for t in ["restaurant", "food", "cafe", "meal_takeaway"])
+                has_shopping = any(t in place_types for t in ["shopping_mall", "store", "convenience_store", "supermarket"])
+                
+                # Name/vicinity'den ek ipuçları
+                has_toilet = any(kw in place_name or kw in vicinity for kw in ["wc", "tuvalet", "toilet", "restroom"])
+                if not has_food:
+                    has_food = any(kw in place_name or kw in vicinity for kw in ["restoran", "restaurant", "cafe", "kafe", "yemek"])
+                if not has_shopping:
+                    has_shopping = any(kw in place_name or kw in vicinity for kw in ["market", "avm", "mall", "shop"])
+                if not has_parking:
+                    has_parking = any(kw in place_name or kw in vicinity for kw in ["otopark", "parking", "park"])
+                
+                # Mola tesisi genelde her şeyi içerir
+                is_rest_area = any(kw in place_name or kw in vicinity for kw in ["mola", "dinlenme", "rest area", "service area"])
+                if is_rest_area:
+                    has_toilet = True
+                    has_food = True
+                    has_parking = True
+                
+                # is_open_now (Google Places opening_hours'dan)
+                opening_hours = station.get("opening_hours", {})
+                is_open_now = opening_hours.get("open_now") if opening_hours else None
+                
                 # Google Places EV charging station tipi varsayılan olarak DC kabul et
-                # (Google filtrelemesi zaten electric_vehicle_charging_station)
-                # Güç bilgisi Google'dan doğrudan gelmiyor, varsayılan değer kullan
                 estimated_power_kw = 50.0  # Varsayılan DC güç
                 
                 # Station info'yu Google formatında oluştur (OCM uyumlu dict)
@@ -444,7 +575,13 @@ class CorridorSearcher:
                     "_source": "google",
                     "_rating": rating,
                     "_user_ratings_total": user_ratings_total,
-                    "_place_id": station.get("place_id", "")
+                    "_place_id": station.get("place_id", ""),
+                    # 🔧 V2.8: Amenities bilgileri
+                    "_has_toilet": has_toilet,
+                    "_has_food": has_food,
+                    "_has_shopping": has_shopping,
+                    "_has_parking": has_parking,
+                    "_is_open_now": is_open_now
                 }
                 
                 corridor_station = CorridorStation(
@@ -453,8 +590,14 @@ class CorridorSearcher:
                     deviation_km=round(distance, 2),
                     power_kw=estimated_power_kw,
                     is_dc=True,  # Google EV charging genelde DC
-                    is_compatible=True,  # Tip kontrolü sonra yapılabilir
-                    rating=rating
+                    is_compatible=True,
+                    rating=rating,
+                    user_ratings_total=user_ratings_total,
+                    has_toilet=has_toilet,
+                    has_food=has_food,
+                    has_shopping=has_shopping,
+                    has_parking=has_parking,
+                    is_open_now=is_open_now
                 )
                 
                 filtered_stations.append(corridor_station)
@@ -463,7 +606,7 @@ class CorridorSearcher:
                 logger.warning(f"Failed to process Google station: {e}")
                 continue
         
-        # Skorlama
+        # 🔧 V2.8: Skorlama (weighted rating + amenities dahil)
         max_power = max((s.power_kw for s in filtered_stations), default=50.0)
         for station in filtered_stations:
             deviation_minutes = (station.deviation_km / 50.0) * 60.0
@@ -471,7 +614,13 @@ class CorridorSearcher:
                 deviation_minutes=deviation_minutes,
                 power_kw=station.power_kw,
                 max_power_kw=max_power,
-                rating=station.rating
+                rating=station.rating,
+                user_ratings_total=station.user_ratings_total,
+                has_toilet=station.has_toilet,
+                has_food=station.has_food,
+                has_shopping=station.has_shopping,
+                has_parking=station.has_parking,
+                is_open_now=station.is_open_now
             )
         
         logger.info(f"Filtered {len(filtered_stations)} Google stations (of {len(google_stations)} total)")
@@ -527,10 +676,31 @@ class CorridorSearcher:
             # Rating
             user_comments = station.get("UserComments", [])
             rating = 4.0
+            user_ratings_total = 0
             if user_comments:
                 ratings = [c.get("Rating", 4) for c in user_comments if c.get("Rating")]
                 if ratings:
                     rating = sum(ratings) / len(ratings)
+                    user_ratings_total = len(ratings)
+            
+            # 🔧 V2.8: OCM GeneralComments'ten amenities çıkar
+            general_comments = (station.get("GeneralComments") or "").lower()
+            station_name = address_info.get("Title", "").lower()
+            
+            has_toilet = any(kw in general_comments or kw in station_name for kw in ["wc", "tuvalet", "toilet", "restroom"])
+            has_food = any(kw in general_comments or kw in station_name for kw in ["restoran", "restaurant", "cafe", "kafe", "yemek", "food"])
+            has_shopping = any(kw in general_comments or kw in station_name for kw in ["market", "avm", "mall", "shop", "mağaza"])
+            has_parking = any(kw in general_comments or kw in station_name for kw in ["otopark", "parking", "park"])
+            
+            # Mola tesisi genelde her şeyi içerir
+            is_rest_area = any(kw in general_comments or kw in station_name for kw in ["mola", "dinlenme", "rest area", "service area"])
+            if is_rest_area:
+                has_toilet = True
+                has_food = True
+                has_parking = True
+            
+            # is_24_7 kontrolü
+            is_24_7 = any(kw in general_comments for kw in ["24/7", "24h", "24 hour", "24 saat"])
             
             corridor_station = CorridorStation(
                 station_info=station,
@@ -539,19 +709,31 @@ class CorridorSearcher:
                 power_kw=power_kw,
                 is_dc=power_kw >= DC_POWER_THRESHOLD_KW,
                 is_compatible=is_compatible,
-                rating=rating
+                rating=rating,
+                user_ratings_total=user_ratings_total,
+                has_toilet=has_toilet,
+                has_food=has_food,
+                has_shopping=has_shopping,
+                has_parking=has_parking,
+                is_open_now=True if is_24_7 else None  # 24/7 ise açık kabul et
             )
             
             filtered_stations.append(corridor_station)
         
-        # Skorlama
+        # 🔧 V2.8: Skorlama (weighted rating + amenities dahil)
         for station in filtered_stations:
             deviation_minutes = (station.deviation_km / 50.0) * 60.0
             station.score = _calculate_station_score(
                 deviation_minutes=deviation_minutes,
                 power_kw=station.power_kw,
                 max_power_kw=max_power_in_batch,
-                rating=station.rating
+                rating=station.rating,
+                user_ratings_total=station.user_ratings_total,
+                has_toilet=station.has_toilet,
+                has_food=station.has_food,
+                has_shopping=station.has_shopping,
+                has_parking=station.has_parking,
+                is_open_now=station.is_open_now
             )
         
         return filtered_stations
@@ -561,20 +743,26 @@ class CorridorSearcher:
         stations: List[CorridorStation],
         current_soc: float
     ) -> Optional[CorridorStation]:
-        """Greedy algoritma ile en iyi istasyonu seç."""
+        """
+        🔧 V2.8: Greedy algoritma ile en iyi istasyonu seç.
+        Artık weighted rating ve amenities dahil.
+        """
         if not stations:
             return None
         
         # SOC düşükse güce daha fazla ağırlık
         power_weight = GREEDY_WEIGHT_POWER
         deviation_weight = GREEDY_WEIGHT_DEVIATION
+        amenities_weight = GREEDY_WEIGHT_AMENITIES
         
         if current_soc < 20.0:
-            power_weight = 0.55
-            deviation_weight = 0.25
-        elif current_soc < 30.0:
             power_weight = 0.50
-            deviation_weight = 0.30
+            deviation_weight = 0.20
+            amenities_weight = 0.15  # Acil durumlarda amenities daha az önemli
+        elif current_soc < 30.0:
+            power_weight = 0.45
+            deviation_weight = 0.25
+            amenities_weight = 0.15
         
         best_station = None
         best_greedy_score = -1
@@ -582,12 +770,25 @@ class CorridorSearcher:
         for station in stations:
             power_score = station.power_kw / 350.0
             deviation_score = max(0, 1.0 - (station.deviation_km / self.corridor_length_km))
-            rating_score = station.rating / 5.0
+            
+            # Weighted rating kullan
+            weighted_rating = _calculate_weighted_rating(station.rating, station.user_ratings_total)
+            rating_score = weighted_rating / 5.0
+            
+            # Amenities skoru
+            amenities_score = _calculate_amenities_score(
+                station.has_toilet,
+                station.has_food,
+                station.has_shopping,
+                station.has_parking,
+                station.is_open_now
+            )
             
             greedy_score = (
                 power_weight * power_score +
                 deviation_weight * deviation_score +
-                GREEDY_WEIGHT_RATING * rating_score
+                GREEDY_WEIGHT_RATING * rating_score +
+                amenities_weight * amenities_score
             )
             
             if greedy_score > best_greedy_score:

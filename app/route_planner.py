@@ -23,6 +23,7 @@ from app.models import (
     ChargeLeg,
     GeoPoint,
     StationInfo,
+    StationAmenity,  # 🔧 V2.8
     ConnectorInfo,
     PlugType,
     ChargerType,
@@ -356,6 +357,15 @@ def _build_multi_legs(
         station_user_ratings = station.station_info.get("_user_ratings_total")
         station_vicinity = station.station_info.get("AddressInfo", {}).get("AddressLine1", "")
         
+        # 🔧 V2.8: Amenities bilgilerini CorridorStation'dan al
+        station_amenities = StationAmenity(
+            has_toilet=station.has_toilet,
+            has_food=station.has_food,
+            has_shopping=station.has_shopping,
+            has_parking=station.has_parking,
+            is_24_7=station.is_open_now is True  # None değilse ve True ise
+        )
+        
         station_info = StationInfo(
             id=station.station_id,
             name=station.station_name,
@@ -369,10 +379,12 @@ def _build_multi_legs(
                     power_kw=station.power_kw if station.power_kw > 0 else 50.0
                 )
             ],
+            amenities=station_amenities,  # 🔧 V2.8
             data_source=station_source,
             place_id=station_place_id,
             vicinity=station_vicinity,
-            distance_from_route_km=station.deviation_km
+            distance_from_route_km=station.deviation_km,
+            is_open_now=station.is_open_now  # 🔧 V2.8
         )
         
         # 🔧 V2.7: Forecast'ten ETA bazlı hava durumu çıkar

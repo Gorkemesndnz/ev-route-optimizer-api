@@ -55,11 +55,15 @@ class GeoPoint(BaseModel):
 
 
 class StationAmenity(BaseModel):
-    """İstasyonun sunduğu imkanlar."""
+    """
+    İstasyonun sunduğu imkanlar.
+    🔧 V2.8: has_parking eklendi.
+    """
     has_toilet: bool = False
     has_food: bool = False
     has_wifi: bool = False
     has_shopping: bool = False
+    has_parking: bool = False  # 🔧 V2.8
     is_24_7: bool = False
 
 

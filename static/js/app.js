@@ -501,6 +501,22 @@ function renderChargeLeg(leg, index) {
         ? `<span class="text-gray-500 text-xs">↗️ ${deviationKm.toFixed(1)} km sapma</span>`
         : '';
 
+    // 🔧 V2.8: Amenities (tesis olanakları)
+    const amenities = station.amenities || {};
+    const amenityTags = [];
+    if (amenities.has_toilet) amenityTags.push('🚻 WC');
+    if (amenities.has_food) amenityTags.push('🍽️ Yemek');
+    if (amenities.has_shopping) amenityTags.push('🛒 Market');
+    if (amenities.has_parking) amenityTags.push('🅿️ Otopark');
+    if (station.is_open_now === true) amenityTags.push('✅ Açık');
+    else if (station.is_open_now === false) amenityTags.push('❌ Kapalı');
+
+    const amenitiesHtml = amenityTags.length > 0 ? `
+        <div class="flex flex-wrap gap-1 mt-2">
+            ${amenityTags.map(tag => `<span class="bg-white/10 text-gray-300 text-xs px-1.5 py-0.5 rounded">${tag}</span>`).join('')}
+        </div>
+    ` : '';
+
     return `
         <div class="relative pl-10">
             <!-- Icon -->
@@ -549,6 +565,9 @@ function renderChargeLeg(leg, index) {
                         <p class="text-yellow-400 font-medium">+${leg.energy_added_kwh?.toFixed(1)} kWh</p>
                     </div>
                 </div>
+                
+                <!-- Amenities -->
+                ${amenitiesHtml}
                 
                 <!-- Weather -->
                 ${weatherHtml}
