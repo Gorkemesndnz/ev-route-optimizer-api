@@ -81,9 +81,30 @@ python -m venv .venv
 python -m pip install --upgrade pip
 ```
 
+Eğer PowerShell `Activate.ps1` engellenirse (ExecutionPolicy):
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\.venv\Scripts\Activate.ps1
+```
+
+### 2b) Alternatif: Windows CMD ile activate
+
+```bat
+python -m venv .venv
+.\.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+```
+
 ### 3) Bağımlılıkları kur
 
 ```powershell
+pip install -r requirements.txt
+```
+
+Windows CMD:
+
+```bat
 pip install -r requirements.txt
 ```
 
@@ -91,6 +112,13 @@ pip install -r requirements.txt
 
 ```powershell
 Copy-Item .env.example .env
+notepad .env
+```
+
+Windows CMD:
+
+```bat
+copy .env.example .env
 notepad .env
 ```
 
@@ -113,6 +141,12 @@ LOG_LEVEL=INFO
 ### 6) Çalıştır
 
 ```powershell
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Windows CMD:
+
+```bat
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
