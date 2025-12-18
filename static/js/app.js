@@ -148,7 +148,13 @@ async function handleFormSubmit(e) {
  */
 function showResults(data) {
     const resultsDiv = document.getElementById('routeResults');
-    const leg = data.legs[0] || {};
+    const firstLeg = data.legs?.[0] || {};
+
+    // 🔧 Fix: Batarya Durumu için rota geneli SOC değerlerini kullan
+    const firstDriveLeg = (data.legs || []).find(l => l.type === 'drive' && l.start_soc_percent != null) || firstLeg;
+    const lastDriveLeg = (data.legs || []).slice().reverse().find(l => l.type === 'drive' && l.end_soc_percent != null) || (data.legs || []).slice().reverse()[0] || firstLeg;
+    const routeStartSoc = firstDriveLeg.start_soc_percent;
+    const routeEndSoc = lastDriveLeg.end_soc_percent;
 
     // Süre hesaplama
     const hours = Math.floor(data.total_duration_minutes / 60);
@@ -164,7 +170,7 @@ function showResults(data) {
         ${renderStatsGrid(data, durationStr, consumption)}
         
         <!-- Battery Status -->
-        ${renderBatteryStatus(leg)}
+        ${renderBatteryStatus(routeStartSoc, routeEndSoc)}
         
         <!-- Charging Status Message -->
         ${data.message ? renderStatusMessage(data.message) : ''}
@@ -219,9 +225,9 @@ function renderStatsGrid(data, durationStr, consumption) {
 /**
  * Battery status render
  */
-function renderBatteryStatus(leg) {
-    const startSoc = leg.start_soc_percent?.toFixed(0) || 0;
-    const endSoc = leg.end_soc_percent?.toFixed(0) || 0;
+function renderBatteryStatus(startSocPercent, endSocPercent) {
+    const startSoc = (startSocPercent ?? 0).toFixed(0);
+    const endSoc = (endSocPercent ?? 0).toFixed(0);
 
     return `
         <div class="bg-white/5 rounded-xl p-5 mb-6">
@@ -231,7 +237,7 @@ function renderBatteryStatus(leg) {
             </div>
             <div class="relative h-6 bg-white/10 rounded-full overflow-hidden">
                 <div class="absolute left-0 top-0 h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all battery-fill" style="width: ${startSoc}%"></div>
-                <div class="absolute left-0 top-0 h-full bg-gradient-to-r from-yellow-500 to-orange-400 rounded-full transition-all battery-fill" style="width: ${endSoc}%"></div>
+                <div class="absolute left-0 top-0 h-full bg-gradient-to-r from-orange-500 to-red-500 rounded-full transition-all battery-fill" style="width: ${endSoc}%"></div>
             </div>
             <div class="flex justify-between mt-2 text-xs text-gray-500">
                 <span>Başlangıç: ${startSoc}%</span>
