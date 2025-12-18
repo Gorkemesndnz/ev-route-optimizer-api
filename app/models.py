@@ -80,6 +80,8 @@ class StationInfo(BaseModel):
     """
     Şarj istasyonu detayları.
     Station Finder, Route Selector ve Response tarafında ortak kullanılacak.
+    
+    V2.0: Google Places öncelikli + OCM fallback yapısı.
     """
     id: str
     name: str
@@ -94,6 +96,19 @@ class StationInfo(BaseModel):
     distance_from_route_km: float = Field(
         0.0,
         description="Ana rotadan sapma mesafesi (km) – 0 ise direkt rota üzerindedir."
+    )
+    # V2.0 Google Places alanları
+    data_source: Literal["google", "ocm", "unknown"] = Field(
+        "unknown", description="Veri kaynağı: google veya ocm"
+    )
+    place_id: Optional[str] = Field(
+        None, description="Google Place ID (enrichment için)"
+    )
+    vicinity: Optional[str] = Field(
+        None, description="Yakın çevre bilgisi (Google)"
+    )
+    is_open_now: Optional[bool] = Field(
+        None, description="Şu an açık mı (Google)"
     )
 
 

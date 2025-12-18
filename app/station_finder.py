@@ -1,11 +1,12 @@
 """
-Station Finder v1.5
+Station Finder v2.0
 ====================
 
-V1.5 Birleştirilmiş İstasyon Arama Modülü.
+V2.0 Google Places Öncelikli + OCM Fallback İstasyon Arama Modülü.
 
 Özellikler:
-- OCM API ile istasyon verisi çekme
+- Google Places API ile EV şarj istasyonu arama (birincil)
+- OCM API fallback (Google boş dönerse)
 - Connector uyumluluğu kontrolü
 - DC/AC istasyon ayrımı
 - Haversine mesafe filtreleme
@@ -15,11 +16,12 @@ V1.5 Birleştirilmiş İstasyon Arama Modülü.
 - Ağırlıklı skorlama sistemi
 
 Flow:
-1. OCM'den istasyonları al
-2. Operasyonel ve uyumlu olanları filtrele
-3. DC/AC ayrımı yap
-4. Haversine/Koridor mesafe filtreleme
-5. Ağırlıklı skorlama ile en iyiyi seç
+1. Google Places'tan EV istasyonlarını ara
+2. Google boş dönerse → OCM'ye fallback
+3. Operasyonel ve uyumlu olanları filtrele
+4. DC/AC ayrımı yap
+5. Haversine/Koridor mesafe filtreleme
+6. Ağırlıklı skorlama ile en iyiyi seç
 
 Kullanım:
     from app.station_finder import (
@@ -224,30 +226,38 @@ class CorridorSearcher:
         )
     
     async def search_for_hotspot(self, hotspot: ChargeHotspot) -> CorridorSearchResult:
-        """Bir hotspot için koridor araması yap."""
+        """
+        Bir hotspot için koridor araması yap.
+        
+        Strateji: Google Places öncelikli, OCM fallback.
+        """
         result = CorridorSearchResult(
             hotspot=hotspot,
             search_radius_km=self.corridor_length_km
         )
         
         logger.info(
-            "Corridor search started",
+            "Corridor search started (Google-first strategy)",
             hotspot_segment=hotspot.segment_index,
             location=f"({hotspot.location.lat:.4f}, {hotspot.location.lon:.4f})",
             soc=hotspot.soc_at_point
         )
         
         try:
-            # OCM'den istasyonları çek
-            raw_stations = await self._fetch_stations_from_ocm(hotspot)
+            # 1. Google Places'tan istasyonları çek (birincil)
+            raw_stations, source = await self._fetch_stations_google_first(hotspot)
             result.total_found = len(raw_stations)
             
             if not raw_stations:
-                logger.warning("No stations found in corridor")
+                logger.warning("No stations found from any source")
                 return result
             
-            # Filtrele ve skorla
-            corridor_stations = self._filter_and_score_stations(raw_stations, hotspot)
+            # 2. Kaynak bazlı filtreleme ve skorlama
+            if source == "google":
+                corridor_stations = self._filter_and_score_google_stations(raw_stations, hotspot)
+            else:
+                corridor_stations = self._filter_and_score_stations(raw_stations, hotspot)
+            
             result.dc_compatible = len(corridor_stations)
             
             if not corridor_stations:
@@ -263,6 +273,7 @@ class CorridorSearcher:
             
             logger.info(
                 "Corridor search completed",
+                source=source,
                 total_found=result.total_found,
                 dc_compatible=result.dc_compatible,
                 best_station=result.best_station.station_name if result.best_station else None
@@ -274,8 +285,53 @@ class CorridorSearcher:
             logger.exception("Corridor search failed", error=str(e))
             return result
     
+    async def _fetch_stations_google_first(self, hotspot: ChargeHotspot) -> Tuple[List[Dict[str, Any]], str]:
+        """
+        Google Places öncelikli istasyon arama.
+        Google boş dönerse OCM'ye fallback yapar.
+        
+        Returns:
+            (stations_list, source) - source: "google" veya "ocm"
+        """
+        search_radius_m = int(max(self.corridor_length_km, self.corridor_width_km) * 1000)
+        
+        # 1. Google Places'tan dene
+        try:
+            google_stations = await google_maps.search_ev_charging_stations(
+                lat=hotspot.location.lat,
+                lon=hotspot.location.lon,
+                radius_m=search_radius_m,
+                max_results=50
+            )
+            
+            if google_stations:
+                logger.info(f"Google Places returned {len(google_stations)} stations")
+                return google_stations, "google"
+            else:
+                logger.info("Google Places returned empty, falling back to OCM")
+                
+        except Exception as e:
+            logger.warning(f"Google Places search failed: {e}, falling back to OCM")
+        
+        # 2. OCM fallback
+        try:
+            ocm_stations = await ocm_service.get_nearby_stations_raw(
+                lat=hotspot.location.lat,
+                lon=hotspot.location.lon,
+                radius_km=max(self.corridor_length_km, self.corridor_width_km)
+            )
+            
+            if ocm_stations:
+                logger.info(f"OCM fallback returned {len(ocm_stations)} stations")
+                return ocm_stations, "ocm"
+                
+        except Exception as e:
+            logger.error(f"OCM API call also failed: {e}")
+        
+        return [], "none"
+
     async def _fetch_stations_from_ocm(self, hotspot: ChargeHotspot) -> List[Dict[str, Any]]:
-        """OCM API'den istasyonları çek."""
+        """OCM API'den istasyonları çek (legacy - backward compatibility)."""
         try:
             search_radius = max(self.corridor_length_km, self.corridor_width_km)
             
@@ -290,6 +346,111 @@ class CorridorSearcher:
         except Exception as e:
             logger.error("OCM API call failed", error=str(e))
             return []
+    
+    def _filter_and_score_google_stations(
+        self,
+        google_stations: List[Dict[str, Any]],
+        hotspot: ChargeHotspot
+    ) -> List[CorridorStation]:
+        """
+        Google Places verilerini filtrele ve skorla.
+        
+        Google Places formatı:
+        {
+            "place_id": "...",
+            "name": "...",
+            "geometry": {"location": {"lat": ..., "lng": ...}},
+            "rating": 4.5,
+            "user_ratings_total": 100,
+            "business_status": "OPERATIONAL",
+            "vicinity": "..."
+        }
+        """
+        filtered_stations = []
+        
+        for station in google_stations:
+            try:
+                # İşletme durumu kontrolü
+                business_status = station.get("business_status", "OPERATIONAL")
+                if business_status not in ("OPERATIONAL", None):
+                    continue
+                
+                # Konum al
+                geometry = station.get("geometry", {})
+                location = geometry.get("location", {})
+                station_lat = location.get("lat", 0)
+                station_lng = location.get("lng", 0)
+                
+                if not station_lat or not station_lng:
+                    continue
+                
+                # Mesafe hesapla
+                distance = haversine_km(
+                    hotspot.location.lat, hotspot.location.lon,
+                    station_lat, station_lng
+                )
+                
+                if distance > self.corridor_length_km:
+                    continue
+                
+                # Rating al (Google doğrudan sağlar)
+                rating = station.get("rating", 4.0)
+                user_ratings_total = station.get("user_ratings_total", 0)
+                
+                # Google Places EV charging station tipi varsayılan olarak DC kabul et
+                # (Google filtrelemesi zaten electric_vehicle_charging_station)
+                # Güç bilgisi Google'dan doğrudan gelmiyor, varsayılan değer kullan
+                estimated_power_kw = 50.0  # Varsayılan DC güç
+                
+                # Station info'yu Google formatında oluştur (OCM uyumlu dict)
+                station_info = {
+                    "ID": station.get("place_id", ""),
+                    "AddressInfo": {
+                        "Title": station.get("name", "Unknown Station"),
+                        "Latitude": station_lat,
+                        "Longitude": station_lng,
+                        "AddressLine1": station.get("vicinity", "")
+                    },
+                    "Connections": [{
+                        "PowerKW": estimated_power_kw,
+                        "ConnectionType": {"Title": "CCS"}
+                    }],
+                    "StatusType": {"IsOperational": True},
+                    "_source": "google",
+                    "_rating": rating,
+                    "_user_ratings_total": user_ratings_total,
+                    "_place_id": station.get("place_id", "")
+                }
+                
+                corridor_station = CorridorStation(
+                    station_info=station_info,
+                    distance_from_hotspot_km=round(distance, 2),
+                    deviation_km=round(distance, 2),
+                    power_kw=estimated_power_kw,
+                    is_dc=True,  # Google EV charging genelde DC
+                    is_compatible=True,  # Tip kontrolü sonra yapılabilir
+                    rating=rating
+                )
+                
+                filtered_stations.append(corridor_station)
+                
+            except Exception as e:
+                logger.warning(f"Failed to process Google station: {e}")
+                continue
+        
+        # Skorlama
+        max_power = max((s.power_kw for s in filtered_stations), default=50.0)
+        for station in filtered_stations:
+            deviation_minutes = (station.deviation_km / 50.0) * 60.0
+            station.score = _calculate_station_score(
+                deviation_minutes=deviation_minutes,
+                power_kw=station.power_kw,
+                max_power_kw=max_power,
+                rating=station.rating
+            )
+        
+        logger.info(f"Filtered {len(filtered_stations)} Google stations (of {len(google_stations)} total)")
+        return filtered_stations
     
     def _filter_and_score_stations(
         self,

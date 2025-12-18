@@ -208,7 +208,131 @@ class GoogleMapsService(BaseService):
         return data
 
     # ============================================================
-    # 5) GEOCODING API → Adres string'ini koordinata çevirir
+    # 5) PLACES NEARBY SEARCH → EV Şarj İstasyonları
+    # ============================================================
+    @cacheable(prefix="google_ev_stations", ttl_seconds=3600)
+    async def search_ev_charging_stations(
+        self,
+        lat: float,
+        lon: float,
+        radius_m: int = 50000,
+        max_results: int = 20
+    ) -> list:
+        """
+        Belirli bir konumun etrafındaki EV şarj istasyonlarını arar.
+        
+        Args:
+            lat: Merkez enlem
+            lon: Merkez boylam
+            radius_m: Arama yarıçapı (metre, max 50000)
+            max_results: Maksimum sonuç sayısı
+            
+        Returns:
+            Google Places sonuç listesi (dict) - sadece EV charging stations
+        """
+        params = {
+            "location": f"{lat},{lon}",
+            "radius": min(radius_m, 50000),
+            "keyword": "electric vehicle charging station",
+            "type": "electric_vehicle_charging_station",
+            "key": self.api_key
+        }
+
+        try:
+            data = await self.request(
+                method="GET",
+                endpoint="/place/nearbysearch/json",
+                params=params
+            )
+
+            status = data.get("status")
+            if status not in ("OK", "ZERO_RESULTS"):
+                logger.warning(f"Places Nearby Search status: {status}")
+                return []
+
+            raw_results = data.get("results", [])
+            
+            # Sadece gerçek EV charging station olanları filtrele
+            ev_stations = []
+            for place in raw_results:
+                place_types = place.get("types", [])
+                place_name = place.get("name", "").lower()
+                
+                # EV charging station tipinde olanları al
+                is_ev_station = "electric_vehicle_charging_station" in place_types
+                
+                # Veya isimde şarj ile ilgili kelime varsa
+                charging_keywords = ["şarj", "charge", "charging", "supercharger", "eşarj", "zes", "trugo", "voltrun", "astor"]
+                has_charging_keyword = any(kw in place_name for kw in charging_keywords)
+                
+                if is_ev_station or has_charging_keyword:
+                    ev_stations.append(place)
+            
+            results = ev_stations[:max_results]
+            
+            logger.info(
+                f"Google EV stations found: {len(results)} (filtered from {len(raw_results)}) near ({lat:.4f}, {lon:.4f})",
+                radius_m=radius_m
+            )
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Google Places search failed: {e}")
+            return []
+
+    # ============================================================
+    # 6) PLACE DETAILS (Enhanced) → Detaylı istasyon bilgisi
+    # ============================================================
+    @cacheable(prefix="google_station_details", ttl_seconds=86400)
+    async def get_station_details(self, place_id: str) -> dict:
+        """
+        Şarj istasyonu için detaylı bilgi al.
+        Rating, yorum sayısı, açık/kapalı durumu vb.
+        
+        Args:
+            place_id: Google Place ID
+            
+        Returns:
+            {name, rating, user_ratings_total, types, opening_hours, vicinity, geometry}
+        """
+        params = {
+            "place_id": place_id,
+            "fields": "name,rating,user_ratings_total,types,opening_hours,vicinity,geometry,formatted_address,business_status",
+            "key": self.api_key
+        }
+
+        try:
+            data = await self.request(
+                method="GET",
+                endpoint="/place/details/json",
+                params=params
+            )
+
+            if data.get("status") != "OK":
+                return {}
+
+            result = data.get("result", {})
+            
+            return {
+                "place_id": place_id,
+                "name": result.get("name", ""),
+                "rating": result.get("rating", 0.0),
+                "user_ratings_total": result.get("user_ratings_total", 0),
+                "types": result.get("types", []),
+                "is_open_now": result.get("opening_hours", {}).get("open_now"),
+                "vicinity": result.get("vicinity", ""),
+                "formatted_address": result.get("formatted_address", ""),
+                "business_status": result.get("business_status", ""),
+                "location": result.get("geometry", {}).get("location", {})
+            }
+            
+        except Exception as e:
+            logger.warning(f"Station details failed for {place_id}: {e}")
+            return {}
+
+    # ============================================================
+    # 7) GEOCODING API → Adres string'ini koordinata çevirir
     # ============================================================
     @cacheable(prefix="google_geocode", ttl_seconds=86400)  # 24 saat cache
     async def geocode(self, address: str) -> GeoPoint:

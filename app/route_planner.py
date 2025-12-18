@@ -264,17 +264,30 @@ def _build_multi_legs(
         charge_duration = charge_result.duration_minutes
         kwh_to_add = charge_result.energy_added_kwh
         
+        # V2.0: Google Places verilerini dahil et
+        station_source = station.station_info.get("_source", "ocm")
+        station_place_id = station.station_info.get("_place_id")
+        station_rating = station.station_info.get("_rating", station.rating)
+        station_user_ratings = station.station_info.get("_user_ratings_total")
+        station_vicinity = station.station_info.get("AddressInfo", {}).get("AddressLine1", "")
+        
         station_info = StationInfo(
             id=station.station_id,
             name=station.station_name,
             location=station_location,
+            rating=station_rating,
+            user_ratings_total=station_user_ratings,
             connectors=[
                 ConnectorInfo(
                     plug_type=PlugType.CCS2,
                     charger_type=ChargerType.DC,
                     power_kw=station.power_kw if station.power_kw > 0 else 50.0
                 )
-            ]
+            ],
+            data_source=station_source,
+            place_id=station_place_id,
+            vicinity=station_vicinity,
+            distance_from_route_km=station.deviation_km
         )
         
         legs.append(ChargeLeg(
