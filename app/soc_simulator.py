@@ -52,16 +52,16 @@ SHORT_INTERVAL_PENALTY_MINUTES = 15.0  # Kısa aralıklı durak penaltisi (dk)
 MIN_DRIVING_INTERVAL_MINUTES = 75.0  # 1.25 saatten kısa sürüş aralıkları penalize edilir
 
 # 🔧 DİNAMİK TARGET SOC: Statik liste KALDIRILDI
-# Artık %65-95 arası TÜM değerler deneniyor
+# Artık %65-100 arası TÜM değerler deneniyor
 TARGET_SOC_MIN = 65
-TARGET_SOC_MAX = 95
+TARGET_SOC_MAX = 100  # V2.6: %100'e kadar şarj seçeneği
 TARGET_SOC_STEP = 5  # %5 aralıklarla dene (hız için)
 
 # Hotspot üretim sınırları (agresif üretimi önle)
-# 🔧 V2.4: Daha düşük eşikler - %20-30'a kadar git, sonra şarj et
-MAX_MIN_REQUIRED_SOC = 50.0  # min_required_soc üst sınırı (70→50)
-HOTSPOT_SOC_BUFFER = 20.0  # SOC tampon marjı (15→20)
-# Sonuç: Hotspot eşiği = 50-20 = %30 civarı
+# 🔧 V2.6: İstasyona daha düşük SOC ile varabilme - %15 civarı
+MAX_MIN_REQUIRED_SOC = 50.0  # min_required_soc üst sınırı
+HOTSPOT_SOC_BUFFER = 35.0  # SOC tampon marjı (20→35)
+# Sonuç: Hotspot eşiği = 50-35 = %15 civarı
 
 # 🔧 V2.3: UZUN ROTA İÇİN DİNAMİK HEDEFLER
 # Birden fazla şarj durağı olan rotalarda daha düşük hedefler
