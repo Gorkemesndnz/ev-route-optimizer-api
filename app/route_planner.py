@@ -162,7 +162,8 @@ def _build_multi_legs(
     station_results: List,
     polyline: str,
     battery_capacity_kwh: float = 51.0,
-    temperature_c: Optional[float] = None
+    temperature_c: Optional[float] = None,
+    weather_info: Optional[WeatherInfo] = None
 ) -> List:
     """
     Multi-leg yapısı oluştur: DriveLeg + ChargeLeg + DriveLeg + ...
@@ -296,7 +297,8 @@ def _build_multi_legs(
             arrival_soc_percent=round(max(0, end_soc), 1),
             target_soc_percent=round(hotspot_target_soc, 1),
             energy_added_kwh=round(kwh_to_add, 2),
-            duration_minutes=round(max(10, charge_duration), 1)
+            duration_minutes=round(max(10, charge_duration), 1),
+            weather_context=weather_info  # 🔧 V2.6: İstasyon hava durumu
         ))
         
         # Güncellemeler
@@ -525,7 +527,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             station_results=station_results,
             polyline=polyline,
             battery_capacity_kwh=battery_kwh,
-            temperature_c=avg_weather.temp_c if avg_weather else None
+            temperature_c=avg_weather.temp_c if avg_weather else None,
+            weather_info=avg_weather  # 🔧 V2.6: Şarj istasyonları için hava durumu
         )
         
         end_soc = sim_result.final_soc

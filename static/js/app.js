@@ -420,6 +420,25 @@ function renderDriveLeg(leg, index) {
  * Charge Leg Render
  */
 function renderChargeLeg(leg, index) {
+    // Hava durumu bilgisi (varsa)
+    const weather = leg.weather_context;
+    const weatherHtml = weather ? `
+        <div class="mt-3 pt-3 border-t border-yellow-500/20">
+            <div class="flex items-center gap-2 text-xs">
+                <span class="text-gray-400">🌡️</span>
+                <span class="text-white">${weather.temp_c?.toFixed(1)}°C</span>
+                <span class="text-gray-500">|</span>
+                <span class="text-gray-400">${getWeatherEmoji(weather.condition)}</span>
+                <span class="text-white">${formatWeatherCondition(weather.condition)}</span>
+                ${weather.wind_speed_mps ? `
+                    <span class="text-gray-500">|</span>
+                    <span class="text-gray-400">💨</span>
+                    <span class="text-white">${weather.wind_speed_mps?.toFixed(1)} m/s</span>
+                ` : ''}
+            </div>
+        </div>
+    ` : '';
+
     return `
         <div class="relative pl-10">
             <!-- Icon -->
@@ -459,9 +478,48 @@ function renderChargeLeg(leg, index) {
                         <p class="text-yellow-400 font-medium">+${leg.energy_added_kwh?.toFixed(1)} kWh</p>
                     </div>
                 </div>
+                ${weatherHtml}
             </div>
         </div>
     `;
+}
+
+/**
+ * Hava durumu için emoji döndür
+ */
+function getWeatherEmoji(condition) {
+    const emojis = {
+        'clear': '☀️',
+        'sunny': '☀️',
+        'cloudy': '☁️',
+        'partly_cloudy': '⛅',
+        'rain': '🌧️',
+        'light_rain': '🌦️',
+        'heavy_rain': '⛈️',
+        'snow': '❄️',
+        'fog': '🌫️',
+        'wind': '💨'
+    };
+    return emojis[condition?.toLowerCase()] || '🌡️';
+}
+
+/**
+ * Hava durumu condition'ını Türkçe'ye çevir
+ */
+function formatWeatherCondition(condition) {
+    const translations = {
+        'clear': 'Açık',
+        'sunny': 'Güneşli',
+        'cloudy': 'Bulutlu',
+        'partly_cloudy': 'Parçalı Bulutlu',
+        'rain': 'Yağmurlu',
+        'light_rain': 'Hafif Yağmur',
+        'heavy_rain': 'Şiddetli Yağmur',
+        'snow': 'Karlı',
+        'fog': 'Sisli',
+        'wind': 'Rüzgarlı'
+    };
+    return translations[condition?.toLowerCase()] || condition || 'Bilinmiyor';
 }
 
 /**
