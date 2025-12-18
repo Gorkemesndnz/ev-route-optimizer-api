@@ -23,11 +23,12 @@ from app.models import (
     ChargeLeg,
     GeoPoint,
     StationInfo,
-    StationAmenity,  # 🔧 V2.8
+    StationAmenity,
     ConnectorInfo,
     PlugType,
     ChargerType,
-    WeatherInfo
+    WeatherInfo,
+    RouteStrategy  # 🔧 V3.0: Rota stratejisi
 )
 
 from app.route_segmenter import RouteSegmenter, RouteSegment
@@ -473,13 +474,15 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         
         battery_kwh = vehicle.battery_capacity_kwh
         
-        # STEP 2: En iyi rotayi sec
+        # STEP 2: En iyi rotayi sec (strateji ve trafik dahil)
         try:
             route_result = await find_best_route(
                 origin=request.start_location,
                 destination=request.end_location,
                 vehicle_model_id=request.vehicle_model_id,
-                extra_load_kg=request.extra_load_kg
+                extra_load_kg=request.extra_load_kg,
+                strategy=request.route_strategy,
+                departure_time_iso=request.departure_time_iso
             )
         except Exception as e:
             return _create_error_response("error_route_failed", str(e))
@@ -489,7 +492,15 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         route_leg = selected_route["legs"][0]
         
         route_distance_km = route_leg["distance"]["value"] / 1000
-        route_duration_min = route_leg["duration"]["value"] / 60
+        # 🔧 V3.0: Trafikli süre kullan (varsa)
+        duration_in_traffic = route_leg.get("duration_in_traffic", {}).get("value")
+        if duration_in_traffic:
+            route_duration_min = duration_in_traffic / 60
+            traffic_ratio = route_result.get("traffic_ratio", 1.0)
+            logger.info(f"Using traffic duration: {route_duration_min:.1f}min (ratio: {traffic_ratio:.2f})")
+        else:
+            route_duration_min = route_leg["duration"]["value"] / 60
+            traffic_ratio = 1.0
         start_coords = route_leg["start_location"]
         end_coords = route_leg["end_location"]
         
@@ -850,6 +861,9 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             "avg_wind_speed_mps": round(avg_weather.wind_speed_mps, 1) if avg_weather else 0.0
         })
         
+        # 🔧 V3.0: Trafiksiz süre hesapla
+        duration_without_traffic = route_leg["duration"]["value"] / 60
+        
         return MultiStopRouteResponse(
             status="success",
             total_distance_km=round(route_distance_km, 1),
@@ -859,6 +873,10 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             legs=legs,
             charge_stops=charge_stops,
             message=message,
+            # 🔧 V3.0: Trafik ve strateji bilgileri
+            route_strategy=request.route_strategy.value,
+            traffic_ratio=round(traffic_ratio, 2) if traffic_ratio else None,
+            duration_without_traffic_minutes=round(duration_without_traffic, 1),
             # 🔧 V2.7: Başlangıç ve varış hava durumu
             start_weather=start_weather,
             end_weather=end_weather

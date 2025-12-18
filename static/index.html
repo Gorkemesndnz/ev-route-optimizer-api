@@ -169,6 +169,40 @@
                                 </select>
                             </div>
 
+                            <!-- Route Strategy -->
+                            <div>
+                                <label class="block text-gray-400 text-sm mb-2">
+                                    <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8M11 17H3m0 0V9m0 8l8-8" />
+                                        </svg>
+                                        Rota Stratejisi
+                                    </span>
+                                </label>
+                                <select id="routeStrategy"
+                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all appearance-none cursor-pointer">
+                                    <option value="optimal" class="bg-slate-800">🎯 Optimal (Süre + Enerji)</option>
+                                    <option value="fastest" class="bg-slate-800">⚡ En Hızlı (Trafik Dahil)</option>
+                                    <option value="efficient" class="bg-slate-800">🔋 En Verimli (Enerji)</option>
+                                </select>
+                            </div>
+
+                            <!-- Departure Time (Optional) -->
+                            <div>
+                                <label class="block text-gray-400 text-sm mb-2">
+                                    <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        Çıkış Zamanı (Opsiyonel)
+                                    </span>
+                                </label>
+                                <input type="datetime-local" id="departureTime"
+                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 input-glow transition-all"
+                                    placeholder="Şimdi" />
+                                <p class="text-gray-600 text-xs mt-2">Boş bırakırsanız: Şimdi çıkış kabul edilir</p>
+                            </div>
+
                             <!-- Battery -->
                             <div>
                                 <label class="block text-gray-400 text-sm mb-2">

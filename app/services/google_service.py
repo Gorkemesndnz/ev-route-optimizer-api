@@ -1,5 +1,6 @@
 import urllib.parse
-from typing import List, Optional
+import time
+from typing import List, Optional, Literal
 from app.services.base_service import BaseService, ExternalAPIError
 from app.utils.config_manager import config
 from app.utils.cache_manager import cacheable
@@ -7,6 +8,9 @@ from app.utils.logger import get_logger
 from app.models import GeoPoint, DriveLeg, WeatherInfo
 
 logger = get_logger("GoogleMapsService")
+
+# Traffic model options for Google Directions API
+TrafficModel = Literal["best_guess", "pessimistic", "optimistic"]
 
 
 class GoogleMapsService(BaseService):
@@ -71,12 +75,13 @@ class GoogleMapsService(BaseService):
     # ============================================================
     # 1b) DIRECTIONS API → Ham JSON (route_selector için)
     # ============================================================
-    @cacheable(prefix="google_directions_raw", ttl_seconds=3600)
     async def get_route_alternatives(
         self, 
         start: GeoPoint, 
         end: GeoPoint,
-        alternatives: bool = True
+        alternatives: bool = True,
+        departure_time: Optional[int] = None,
+        traffic_model: Optional[TrafficModel] = "best_guess"
     ) -> dict:
         """
         Google Directions API'den ham JSON döndürür.
@@ -86,28 +91,85 @@ class GoogleMapsService(BaseService):
             start: Başlangıç noktası
             end: Bitiş noktası
             alternatives: True ise 3 alternatif rota alır
+            departure_time: Unix epoch (saniye). None ise 'now' kullanılır.
+            traffic_model: Trafik tahmin modeli (best_guess, pessimistic, optimistic)
         
         Returns:
             Ham Google Directions API response (dict)
+            - duration: Trafiksiz tahmini süre
+            - duration_in_traffic: Trafik dahil tahmini süre (departure_time varsa)
         """
         origin = f"{start.lat},{start.lon}"
         destination = f"{end.lat},{end.lon}"
+        
+        # departure_time: None ise "now" kullan
+        effective_departure_time = departure_time if departure_time else "now"
 
         params = {
             "origin": origin,
             "destination": destination,
             "units": "metric",
             "alternatives": "true" if alternatives else "false",
+            "departure_time": effective_departure_time,
             "key": self.api_key
         }
+        
+        # traffic_model sadece departure_time varsa anlamlı
+        if traffic_model:
+            params["traffic_model"] = traffic_model
+        
+        logger.info(
+            "Directions API request with traffic",
+            origin=origin,
+            destination=destination,
+            departure_time=effective_departure_time,
+            traffic_model=traffic_model
+        )
 
         data = await self.request(
             method="GET",
             endpoint="/directions/json",
             params=params
         )
+        
+        # Log traffic info if available
+        if data.get("status") == "OK" and data.get("routes"):
+            first_leg = data["routes"][0].get("legs", [{}])[0]
+            duration = first_leg.get("duration", {}).get("value", 0)
+            duration_in_traffic = first_leg.get("duration_in_traffic", {}).get("value")
+            if duration_in_traffic:
+                traffic_ratio = duration_in_traffic / duration if duration > 0 else 1.0
+                logger.info(
+                    "Traffic data received",
+                    duration_sec=duration,
+                    duration_in_traffic_sec=duration_in_traffic,
+                    traffic_ratio=f"{traffic_ratio:.2f}"
+                )
 
         return data
+    
+    # ============================================================
+    # 1c) DIRECTIONS API → Trafikli, cache'li versiyon
+    # ============================================================
+    @cacheable(prefix="google_directions_traffic", ttl_seconds=120)
+    async def get_route_alternatives_cached(
+        self, 
+        start: GeoPoint, 
+        end: GeoPoint,
+        alternatives: bool = True,
+        departure_time: Optional[int] = None,
+        traffic_model: Optional[TrafficModel] = "best_guess"
+    ) -> dict:
+        """
+        Cache'li versiyon - Kısa TTL (120s) ile trafikli istekler için.
+        """
+        return await self.get_route_alternatives(
+            start=start,
+            end=end,
+            alternatives=alternatives,
+            departure_time=departure_time,
+            traffic_model=traffic_model
+        )
 
     # ============================================================
     # 2) ELEVATION API → path + samples = rota boyunca tırmanış

@@ -40,6 +40,23 @@ class AmenityType(str, Enum):
     PARKING = "parking"
 
 
+class RouteStrategy(str, Enum):
+    """
+    Rota seçim stratejisi.
+    
+    - FASTEST: En kısa süreli rota (trafik dahil)
+    - EFFICIENT: En az enerji tüketen rota
+    - OPTIMAL: Süre + enerji dengesi (varsayılan)
+    - CHEAPEST: En düşük şarj maliyetli rota (fiyat verisi gerektirir)
+    - RENEWABLE: Yenilenebilir enerji istasyonları öncelikli (veri gerektirir)
+    """
+    FASTEST = "fastest"
+    EFFICIENT = "efficient"
+    OPTIMAL = "optimal"
+    CHEAPEST = "cheapest"
+    RENEWABLE = "renewable"
+
+
 # ======================================================
 # 2. TEMEL VERİ YAPILARI (Shared Objects)
 # ======================================================
@@ -214,7 +231,11 @@ class RouteRequest(BaseModel):
     extra_load_kg: Optional[float] = Field(None, ge=0.0, description="Bagaj yükü (kg). None ise 0")
     departure_time_iso: Optional[str] = Field(
         None,
-        description="ISO 8601 formatında çıkış zamanı. (örn: 2025-11-25T12:30:00Z)"
+        description="ISO 8601 formatında çıkış zamanı. (örn: 2025-11-25T12:30:00Z). None ise 'şimdi' kabul edilir."
+    )
+    route_strategy: RouteStrategy = Field(
+        RouteStrategy.OPTIMAL,
+        description="Rota seçim stratejisi: fastest, efficient, optimal, cheapest, renewable"
     )
     preferences: RoutePreferences = Field(default_factory=RoutePreferences)
 
@@ -320,7 +341,7 @@ class RouteResponse(BaseModel):
 
 class MultiStopRouteResponse(BaseModel):
     """
-    V1.3 Çok duraklı rota planı response modeli.
+    V3.0 Çok duraklı rota planı response modeli.
     Route planner tarafından döndürülür.
     """
     status: str = Field(
@@ -328,12 +349,16 @@ class MultiStopRouteResponse(BaseModel):
         description="Sonuç durumu: success, error_vehicle_not_found, error_api_failed, vb."
     )
     total_distance_km: float = Field(0.0, description="Toplam mesafe (km)")
-    total_duration_minutes: float = Field(0.0, description="Toplam süre (dakika)")
+    total_duration_minutes: float = Field(0.0, description="Toplam süre (dakika) - trafik dahil")
     total_co2_savings_kg: float = Field(0.0, description="CO2 tasarrufu (kg)")
     consumption_kwh: float = Field(0.0, description="Toplam tüketim (kWh)")
     legs: List[Union[DriveLeg, ChargeLeg]] = Field(default_factory=list, description="Sürüş ve şarj bacakları")
     message: Optional[str] = Field(None, description="Ek bilgi veya hata mesajı")
     charge_stops: int = Field(0, description="Şarj durağı sayısı")
+    # 🔧 V3.0: Trafik ve strateji bilgileri
+    route_strategy: Optional[str] = Field(None, description="Kullanılan rota stratejisi (fastest, efficient, optimal, cheapest, renewable)")
+    traffic_ratio: Optional[float] = Field(None, description="Trafik oranı (1.0 = normal, >1 = trafik var)")
+    duration_without_traffic_minutes: Optional[float] = Field(None, description="Trafiksiz süre (dakika)")
     # 🔧 V2.7: Başlangıç ve varış hava durumu
     start_weather: Optional[WeatherInfo] = Field(None, description="Başlangıç noktası hava durumu (current)")
     end_weather: Optional[WeatherInfo] = Field(None, description="Varış noktası hava durumu (forecast)")

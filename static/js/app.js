@@ -30,6 +30,50 @@ function toggleAiMode() {
 }
 
 /**
+ * Strategy & traffic info render
+ */
+function renderStrategyTrafficInfo(data) {
+    const strategy = data.route_strategy;
+    const trafficRatio = data.traffic_ratio;
+    const durationNoTraffic = data.duration_without_traffic_minutes;
+
+    if (!strategy && trafficRatio == null && durationNoTraffic == null) return '';
+
+    const labels = {
+        fastest: 'En Hızlı',
+        efficient: 'En Verimli',
+        optimal: 'Optimal',
+        cheapest: 'En Ucuz',
+        renewable: 'Yenilenebilir'
+    };
+    const strategyLabel = strategy ? (labels[strategy] || strategy) : '-';
+
+    const totalMin = data.total_duration_minutes;
+    const delayMin = (durationNoTraffic != null && totalMin != null)
+        ? Math.max(0, totalMin - durationNoTraffic)
+        : null;
+
+    return `
+        <div class="bg-white/5 rounded-xl p-5 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-white/5 rounded-lg p-3">
+                    <p class="text-gray-500 text-xs mb-1">Strateji</p>
+                    <p class="text-white font-medium">${strategyLabel}</p>
+                </div>
+                <div class="bg-white/5 rounded-lg p-3">
+                    <p class="text-gray-500 text-xs mb-1">Trafik Oranı</p>
+                    <p class="text-white font-medium">${(trafficRatio != null) ? trafficRatio.toFixed(2) : '-'}</p>
+                </div>
+                <div class="bg-white/5 rounded-lg p-3">
+                    <p class="text-gray-500 text-xs mb-1">Trafik Gecikmesi</p>
+                    <p class="text-white font-medium">${(delayMin != null) ? `${delayMin.toFixed(0)} dk` : '-'}</p>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
  * Batarya/Şarj inputlarını temizle (AI modu için)
  */
 function clearBatteryInputs() {
@@ -91,6 +135,21 @@ async function handleFormSubmit(e) {
             vehicle_model_id: document.getElementById('vehicleModel').value,
             current_soc_percent: parseInt(document.getElementById('initialSoc').value)
         };
+
+        // Rota stratejisi (varsayılan: optimal)
+        const routeStrategyEl = document.getElementById('routeStrategy');
+        if (routeStrategyEl && routeStrategyEl.value) {
+            formData.route_strategy = routeStrategyEl.value;
+        }
+
+        // Çıkış zamanı (opsiyonel) -> ISO 8601 UTC (Z)
+        const departureTimeEl = document.getElementById('departureTime');
+        if (departureTimeEl && departureTimeEl.value) {
+            const dt = new Date(departureTimeEl.value);
+            if (!isNaN(dt.getTime())) {
+                formData.departure_time_iso = dt.toISOString();
+            }
+        }
 
         // Yolcu/Yük ayarları her zaman gönderilir (AI modu fark etmez)
         const passengerCount = getOptionalValue('passengerCount');
@@ -168,6 +227,9 @@ function showResults(data) {
     let html = `
         <!-- Stats Grid -->
         ${renderStatsGrid(data, durationStr, consumption)}
+
+        <!-- Strategy & Traffic Info -->
+        ${renderStrategyTrafficInfo(data)}
         
         <!-- Battery Status -->
         ${renderBatteryStatus(routeStartSoc, routeEndSoc)}

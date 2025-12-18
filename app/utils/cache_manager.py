@@ -82,6 +82,9 @@ _cache = MemoryCache()
 def _get_ttl(prefix: str) -> int:
     """Prefix'e göre TTL belirle."""
     prefix_lower = prefix.lower()
+    # Trafikli istekler için kısa TTL (trafik hızla değişir)
+    if "traffic" in prefix_lower:
+        return 120  # 2 dakika
     if "direction" in prefix_lower:
         return config.get_cache_ttl_google_directions()
     if "place" in prefix_lower:
