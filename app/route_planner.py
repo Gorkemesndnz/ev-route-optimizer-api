@@ -469,14 +469,15 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         avg_speed_kmh = (route_distance_km / route_duration_min) * 60 if route_duration_min > 0 else 80.0
         
         if user_target_soc_override is not None:
-            # Kullanıcı override → eski yöntem (sabit target_soc)
+            # Kullanıcı override → sabit target_soc, dinamik hesaplama ATLA
             charge_target_soc = user_target_soc_override
             simulator = SOCSimulator(
                 battery_capacity_kwh=battery_kwh,
                 start_soc=request.current_soc_percent,
                 target_arrival_soc=arrival_soc,
                 charge_min_soc=charge_min_soc,
-                charge_target_soc=charge_target_soc
+                charge_target_soc=charge_target_soc,
+                user_override_target=True  # 🔧 V2.6: Dinamik hedef hesaplamasını atla
             )
             sim_result = simulator.simulate(segments_with_consumption, route_distance_km)
             logger.info(f"User override target_soc={charge_target_soc}%, stops={len(sim_result.hotspots)}")

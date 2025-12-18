@@ -174,7 +174,8 @@ class SOCSimulator:
         start_soc: float = 100.0,
         target_arrival_soc: float = 20.0,
         charge_min_soc: float = 20.0,
-        charge_target_soc: float = 80.0
+        charge_target_soc: float = 80.0,
+        user_override_target: bool = False
     ):
         """
         Args:
@@ -183,12 +184,14 @@ class SOCSimulator:
             target_arrival_soc: Varışta hedef batarya yüzdesi
             charge_min_soc: Şarj eşiği - bu %'e düşünce şarj et
             charge_target_soc: Şarj hedefi - bu %'e kadar şarj et
+            user_override_target: Kullanıcı target_soc'u manuel belirledi mi?
         """
         self.battery_capacity_kwh = battery_capacity_kwh
         self.start_soc = start_soc
         self.target_arrival_soc = target_arrival_soc
         self.charge_min_soc = charge_min_soc
         self.charge_target_soc = min(100.0, charge_target_soc)
+        self.user_override_target = user_override_target
         
         logger.info(
             "SOCSimulator initialized",
@@ -348,12 +351,15 @@ class SOCSimulator:
         )
         
         # Her hotspot için bağımsız şarj hedefi hesapla
-        if hotspots:
+        # 🔧 V2.6: Kullanıcı override verdiyse dinamik hesaplamayı atla
+        if hotspots and not self.user_override_target:
             self._calculate_smart_charge_targets(
                 hotspots, 
                 total_distance_km, 
                 avg_consumption_per_km
             )
+        elif hotspots and self.user_override_target:
+            logger.info(f"User override target_soc={self.charge_target_soc}% - skipping dynamic calculation")
         
         return result
     
