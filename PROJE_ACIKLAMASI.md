@@ -21,7 +21,7 @@ V2.7 / V2.8 ile gelen başlıca iyileştirmeler:
 
 ```powershell
 git clone <repository-url>
-cd Ev-Route-Optimizer-Api
+cd C:\Ev-Route-Optimizer-Api
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -38,7 +38,7 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 ```bat
 git clone <repository-url>
-cd Ev-Route-Optimizer-Api
+cd C:\Ev-Route-Optimizer-Api
 
 python -m venv .venv
 .\.venv\Scripts\activate.bat
