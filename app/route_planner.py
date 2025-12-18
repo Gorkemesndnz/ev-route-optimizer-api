@@ -45,6 +45,7 @@ from app.services.weather_service import WeatherService
 from app.services.google_service import google_maps
 from app.sustainability_calculator import calculate_co2_savings
 from app.utils.logger import get_logger
+from app.utils.data_logger import log_route_decision, log_consumption
 
 logger = get_logger("route_planner")
 weather_service = WeatherService()
@@ -546,6 +547,44 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             message = f"Dikkat! Varış SOC: %{round(end_soc)}"
         
         logger.info(f"Route planning completed: {message}")
+        
+        # STEP 13: Training data logging (route decision + consumption)
+        log_route_decision({
+            "start_lat": request.start_location.lat,
+            "start_lon": request.start_location.lon,
+            "end_lat": request.end_location.lat,
+            "end_lon": request.end_location.lon,
+            "vehicle_model": request.vehicle_model_id,
+            "battery_kwh": battery_kwh,
+            "initial_soc_percent": request.current_soc_percent,
+            "distance_km": round(route_distance_km, 3),
+            "duration_min": round(route_duration_min, 1),
+            "elevation_gain_m": round(elevation_gain_m, 1),
+            "elevation_loss_m": round(elevation_loss_m, 1),
+            "consumption_kwh": round(total_consumption, 3),
+            "arrival_soc_percent": round(end_soc, 1),
+            "selection_reason": route_result.get("selection_reason"),
+            "charge_stops": charge_stops,
+            "co2_savings_kg": round(co2_savings, 2)
+        })
+        
+        log_consumption({
+            "vehicle_model": request.vehicle_model_id,
+            "battery_kwh": battery_kwh,
+            "total_segments": len(segments_with_consumption),
+            "total_consumption_kwh": round(total_consumption, 3),
+            "simulated_consumption_kwh": round(sim_result.total_consumption_kwh, 3),
+            "start_soc_percent": request.current_soc_percent,
+            "final_soc_percent": round(end_soc, 1),
+            "charge_min_soc_percent": charge_min_soc,
+            "target_soc_percent": charge_target_soc,
+            "arrival_soc_target_percent": arrival_soc,
+            "passenger_count": passenger_count,
+            "child_count": child_count,
+            "extra_load_kg": extra_load_kg,
+            "avg_temp_c": round(avg_weather.temp_c, 1) if avg_weather else DEFAULT_TEMPERATURE_C,
+            "avg_wind_speed_mps": round(avg_weather.wind_speed_mps, 1) if avg_weather else 0.0
+        })
         
         return MultiStopRouteResponse(
             status="success",
