@@ -497,14 +497,30 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                 logger.warning(f"Elevation API failed: {e}")
         
         # STEP 4: Hava durumu al
+        # 🔧 V2.7: Başlangıç için current, varış için forecast (ETA bazlı)
         avg_weather = None
+        start_weather = None
+        end_weather = None
         try:
+            # Başlangıç: Current weather (şimdi çıkıyorsun)
             start_weather = await weather_service.get_weather_at_point(
                 request.start_location.lat, request.start_location.lon
             )
-            end_weather = await weather_service.get_weather_at_point(
+            
+            # Varış: Forecast (ETA sonra varıyorsun)
+            end_forecast = await weather_service.get_forecast_for_point(
                 request.end_location.lat, request.end_location.lon
             )
+            end_weather = _extract_weather_from_forecast(end_forecast, eta_minutes=route_duration_min)
+            
+            # Forecast başarısız olursa current'a fallback
+            if not end_weather:
+                end_weather = await weather_service.get_weather_at_point(
+                    request.end_location.lat, request.end_location.lon
+                )
+                logger.debug("End weather: fallback to current (forecast failed)")
+            else:
+                logger.debug(f"End weather: forecast for ETA={route_duration_min:.0f}min")
             
             if start_weather and end_weather:
                 avg_temp = (start_weather.temp_c + end_weather.temp_c) / 2
@@ -516,7 +532,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                     wind_direction_deg=0,
                     precipitation_prob=0.0
                 )
-                logger.info(f"Weather: {round(avg_temp, 1)}C, {start_weather.condition.value}")
+                logger.info(f"Weather: start={start_weather.temp_c:.1f}C, end(forecast)={end_weather.temp_c:.1f}C, avg={avg_temp:.1f}C")
         except Exception as e:
             logger.warning(f"Weather API failed: {e}")
         
