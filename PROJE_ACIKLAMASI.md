@@ -1,5 +1,56 @@
 # EV Route Optimizer – Mimari ve Hesaplama Özeti
 
+## 0. Sürüm Notu (V2.8)
+
+Bu doküman, projenin mimarisini ve hesaplama katmanlarını açıklar.
+
+V2.7 / V2.8 ile gelen başlıca iyileştirmeler:
+
+- **2-Pass weather refinement**: Pass 1 ile duraklar bulunur, Pass 2’de durak noktalarının hava durumu ile tüketim yeniden hesaplanır (eşik kaldırıldı → refined weather varsa her zaman çalışır).
+- **ETA bazlı forecast weather**:
+  - **Başlangıç**: current weather
+  - **Varış**: ETA’ya göre forecast weather
+  - **Şarj durakları**: ETA’ya göre forecast weather (ChargeLeg.weather_context)
+- **İstasyon seçimi (V2.8)**: Sapma + güç + **weighted rating** + **amenities** (WC/yemek/market/otopark/açık) birlikte skora girer.
+
+---
+
+## 0.1 Windows’ta Kurulum & Çalıştırma (PowerShell / CMD)
+
+### PowerShell
+
+```powershell
+git clone <repository-url>
+cd Ev-Route-Optimizer-Api
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+Copy-Item .env.example .env
+notepad .env
+
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### CMD
+
+```bat
+git clone <repository-url>
+cd Ev-Route-Optimizer-Api
+
+python -m venv .venv
+.\.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+copy .env.example .env
+notepad .env
+
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
 ## 1. Genel Akış: main → route_planner → alt modüller
 
 - **`app/main.py`**
@@ -184,10 +235,16 @@ Gerçekçi bir şarj eğrisi ve planner penaltı modeli.
 
 1. **Route Selector** – En iyi Google rotasını seç.
 2. **Google Elevation** – Rakım verisi çek.
-3. **Route Segmenter** – Polyline’ı sabit uzunluklu segmentlere böl.
-4. **Main Calculator** – Her segment için tüketim.
-5. **SOC Simulator** – SOC simülasyonu + Hotspot tespiti.
-6. **Station Finder** – Hotspot’lar için uygun istasyonları bul.
+3. **Weather Context (V2.7+)**
+   - Başlangıç: current weather
+   - Varış: ETA’ya göre forecast weather
+4. **Route Segmenter** – Polyline’ı sabit uzunluklu segmentlere böl.
+5. **Main Calculator** – Her segment için tüketim.
+6. **SOC Simulator / Optimizer** – SOC simülasyonu + Hotspot tespiti.
+7. **Station Finder** – Hotspot’lar için uygun istasyonları bul.
+8. **2-Pass Planning (V2.7+)**
+   - Pass 1: Start(current)+End(forecast) ile tüketim + ilk duraklar
+   - Pass 2: Durak lokasyonlarının forecast hava durumu ile tüketim yeniden hesaplanır (eşik yok)
 
 ### 4.2. Kullanılan bileşenler
 
@@ -434,15 +491,31 @@ Bu yapı sayesinde mevcut kural tabanlı skor fonksiyonu, ileride **veriyle besl
   - Koridor bazlı arama:
     - **CorridorSearcher**: rota koridoru boyunca, belirli genişlikte istasyonları tarıyor.
 
-- **Skorlama:**
+- **Skorlama (V2.8):**
   - Değişkenler:
     - Yol sapma süresi (deviation).
     - Güç (kW).
-    - Rating (kullanıcı puanları).
-  - Ağırlıklar:
-    - `WEIGHT_DEVIATION`, `WEIGHT_POWER`, `WEIGHT_RATING`.
-    - Greedy seçim için: `GREEDY_WEIGHT_POWER`, `GREEDY_WEIGHT_DEVIATION`, `GREEDY_WEIGHT_RATING`.
-  - Skor fonksiyonu, yüksek güç + düşük sapma + iyi rating kombinasyonunu ödüllendiriyor.
+    - **Weighted rating** (yorum sayısı azsa puan güveni düşürülür).
+    - **Amenities** (WC/yemek/market/otopark/açık).
+  - Ağırlıklar (özet):
+    - `WEIGHT_DEVIATION=0.40`, `WEIGHT_POWER=0.25`, `WEIGHT_RATING=0.15`, `WEIGHT_AMENITIES=0.20`
+  - Skor fonksiyonu; yüksek güç + düşük sapma + güvenilir rating + iyi tesis olanakları kombinasyonunu ödüllendirir.
+
+#### Weighted Rating (özet)
+
+- Amaç: `user_ratings_total` düşükse `rating` tek başına yanıltıcı olmasın.
+- Basit güven karışımı:
+
+```
+confidence = min(1, user_ratings_total / 50)
+weighted = confidence * rating + (1 - confidence) * 3.5
+```
+
+#### Amenities (özet)
+
+- Google tarafında `types`, `opening_hours.open_now`, `name/vicinity` ipuçları ile;
+- OCM tarafında `GeneralComments` metin analizi ile çıkarılır.
+- Skora “bonus” olarak girer.
 
 - **`find_stations_for_hotspots(hotspots, ...)`**
   - Her hotspot için, koridor araması yapıyor.
@@ -481,8 +554,9 @@ Bu yapı sayesinde mevcut kural tabanlı skor fonksiyonu, ileride **veriyle besl
 ### 9.3. Weather Service (`app/services/weather_service.py`)
 
 - **OpenWeatherMap**:
-  - `get_current_weather(lat, lon) -> WeatherInfo`
-  - `get_forecast_for_point(lat, lon) -> dict` (ileride ML için veri seti üretimi).
+  - `get_weather_at_point(lat, lon) -> WeatherInfo` (current)
+  - `get_forecast_for_point(lat, lon) -> dict` (3 saatlik / 5 günlük forecast)
+  - Planner tarafında forecast, **ETA’ya en yakın dilim** seçilerek kullanılır.
 - **CONDITION_MAP**:
   - OWM condition ID → `WeatherCondition` (RAIN, SNOW, FOG, WINDY, CLEAR, CLOUDY).
 - Basit **yağış olasılığı heuristiği**:
@@ -642,10 +716,15 @@ function plan_route(request):
         elevation_gain_m = 0
         elevation_loss_m = 0
 
-    # 4) Hava durumunu al (başlangıç ve bitiş → ortalama)
-    start_weather  = weather_service.get_weather_at_point(start.lat, start.lon)
-    end_weather    = weather_service.get_weather_at_point(end.lat, end.lon)
-    avg_weather    = average(start_weather, end_weather)
+    # 4) Hava durumunu al (V2.7+)
+    # - Başlangıç: current
+    # - Varış: ETA’ya göre forecast (forecast başarısızsa current fallback)
+    start_weather = weather_service.get_weather_at_point(start.lat, start.lon)
+    end_forecast = weather_service.get_forecast_for_point(end.lat, end.lon)
+    end_weather = extract_weather_from_forecast(end_forecast, eta_minutes=route_duration_min)
+    if end_weather is None:
+        end_weather = weather_service.get_weather_at_point(end.lat, end.lon)
+    avg_weather = average(start_weather, end_weather)
 
     # 5) Varsayılan yolcu/yük değerlerini çöz
     passenger_count, child_count, extra_load_kg = _resolve_defaults(request)
@@ -708,6 +787,9 @@ function plan_route(request):
         station_results = find_stations_for_hotspots(hotspots, request.vehicle_model_id)
     else:
         station_results = []
+
+    # 10b) Pass 2 (V2.7+): Durak lokasyonlarının forecast hava durumu ile tüketimi refine et
+    # (Refined weather varsa her zaman yeniden hesaplanır)
 
     # 11) Drive + Charge bacaklarını oluştur
     legs = _build_multi_legs(
