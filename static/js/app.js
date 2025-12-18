@@ -169,8 +169,8 @@ function showResults(data) {
         <!-- Charging Status Message -->
         ${data.message ? renderStatusMessage(data.message) : ''}
         
-        <!-- Weather Information -->
-        ${leg.weather_context ? renderWeatherInfo(leg.weather_context) : ''}
+        <!-- Weather Information (Başlangıç + Varış) -->
+        ${(data.start_weather || data.end_weather) ? renderWeatherInfo(data.start_weather, data.end_weather, data.total_duration_minutes) : ''}
         
         <!-- Multi-Leg Timeline (Rota Planı) -->
         ${data.legs && data.legs.length > 0 ? renderMultiLegs(data.legs) : ''}
@@ -269,23 +269,26 @@ function renderStatusMessage(message) {
 }
 
 /**
- * Weather info render
+ * Weather info render - Başlangıç ve Varış hava durumu
+ * 🔧 V2.7: Başlangıç current, Varış forecast (ETA bazlı)
  */
-function renderWeatherInfo(weatherContext) {
-    const startWeather = weatherContext.start_weather;
-    const endWeather = weatherContext.end_weather;
+function renderWeatherInfo(startWeather, endWeather, totalDurationMin) {
+    // ETA hesapla
+    const etaHours = Math.floor(totalDurationMin / 60);
+    const etaMins = Math.round(totalDurationMin % 60);
+    const etaStr = etaHours > 0 ? `~${etaHours}s ${etaMins}dk sonra` : `~${etaMins}dk sonra`;
 
     return `
         <div class="bg-white/5 rounded-xl p-5 mb-6">
             <h4 class="text-white font-medium mb-4 flex items-center gap-2">
                 <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/>
                 </svg>
                 Hava Durumu
             </h4>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                ${renderWeatherCard('Başlangıç', document.getElementById('startLocation').value, startWeather, 'green')}
-                ${renderWeatherCard('Varış', document.getElementById('endLocation').value, endWeather, 'red')}
+                ${renderWeatherCard('Başlangıç', document.getElementById('startLocation').value, startWeather, 'green', 'Şu an')}
+                ${renderWeatherCard('Varış', document.getElementById('endLocation').value, endWeather, 'red', etaStr + ' (forecast)')}
             </div>
         </div>
     `;
@@ -293,26 +296,31 @@ function renderWeatherInfo(weatherContext) {
 
 /**
  * Weather card render
+ * 🔧 V2.7: timeLabel parametresi eklendi (current/forecast gösterimi)
  */
-function renderWeatherCard(title, location, weather, color) {
-    const weatherContent = weather.temp_c !== null
-        ? `
-            <div class="space-y-2">
-                <div class="flex justify-between text-sm">
-                    <span class="text-gray-400">Sıcaklık:</span>
-                    <span class="text-white">${weather.temp_c}°C</span>
+function renderWeatherCard(title, location, weather, color, timeLabel = '') {
+    if (!weather) {
+        return `
+            <div class="bg-white/5 rounded-lg p-4">
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="w-8 h-8 bg-${color}-500/20 rounded-full flex items-center justify-center">
+                        <svg class="w-4 h-4 text-${color}-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <p class="text-white text-sm font-medium">${title}</p>
+                        <p class="text-gray-500 text-xs">${location}</p>
+                    </div>
                 </div>
-                <div class="flex justify-between text-sm">
-                    <span class="text-gray-400">Durum:</span>
-                    <span class="text-white">${weather.condition}</span>
-                </div>
-                <div class="flex justify-between text-sm">
-                    <span class="text-gray-400">Rüzgar:</span>
-                    <span class="text-white">${weather.wind_speed_mps} m/s</span>
-                </div>
+                <p class="text-gray-500 text-sm">Hava durumu bilgisi alınamadı</p>
             </div>
-        `
-        : '<p class="text-gray-500 text-sm">Hava durumu bilgisi alınamadı</p>';
+        `;
+    }
+
+    const weatherEmoji = getWeatherEmoji(weather.condition);
+    const weatherCondition = formatWeatherCondition(weather.condition);
 
     return `
         <div class="bg-white/5 rounded-lg p-4">
@@ -326,9 +334,23 @@ function renderWeatherCard(title, location, weather, color) {
                 <div>
                     <p class="text-white text-sm font-medium">${title}</p>
                     <p class="text-gray-500 text-xs">${location}</p>
+                    ${timeLabel ? `<p class="text-blue-400 text-xs">${timeLabel}</p>` : ''}
                 </div>
             </div>
-            ${weatherContent}
+            <div class="space-y-2">
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-400">🌡️ Sıcaklık:</span>
+                    <span class="text-white font-medium">${weather.temp_c?.toFixed(1)}°C</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-400">${weatherEmoji} Durum:</span>
+                    <span class="text-white">${weatherCondition}</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-400">💨 Rüzgar:</span>
+                    <span class="text-white">${weather.wind_speed_mps?.toFixed(1)} m/s</span>
+                </div>
+            </div>
         </div>
     `;
 }

@@ -330,6 +330,9 @@ class MultiStopRouteResponse(BaseModel):
     legs: List[Union[DriveLeg, ChargeLeg]] = Field(default_factory=list, description="Sürüş ve şarj bacakları")
     message: Optional[str] = Field(None, description="Ek bilgi veya hata mesajı")
     charge_stops: int = Field(0, description="Şarj durağı sayısı")
+    # 🔧 V2.7: Başlangıç ve varış hava durumu
+    start_weather: Optional[WeatherInfo] = Field(None, description="Başlangıç noktası hava durumu (current)")
+    end_weather: Optional[WeatherInfo] = Field(None, description="Varış noktası hava durumu (forecast)")
     debug_info: Optional[dict] = Field(
         default=None, 
         description="Debug bilgileri (sadece development modunda)"

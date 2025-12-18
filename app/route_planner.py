@@ -846,7 +846,10 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             consumption_kwh=round(total_consumption, 1),
             legs=legs,
             charge_stops=charge_stops,
-            message=message
+            message=message,
+            # 🔧 V2.7: Başlangıç ve varış hava durumu
+            start_weather=start_weather,
+            end_weather=end_weather
         )
         
     except Exception as e:
