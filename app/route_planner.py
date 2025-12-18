@@ -510,9 +510,137 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0
         
         logger.info(
-            f"SOC simulation + stations: {len(hotspots)} hotspots, "
+            f"Pass 1 complete: {len(hotspots)} hotspots, "
             f"{charge_stops} stations, final_soc={sim_result.final_soc}%"
         )
+        
+        # =================================================================
+        # 🔧 STEP 10.5: 2-PASS PLANLAMA - Durak hava durumları ile refine
+        # =================================================================
+        # Pass 1: Start+End ortalaması ile ilk plan (yukarıda tamamlandı)
+        # Pass 2: Hotspot lokasyonlarının hava durumu → daha doğru tüketim
+        # =================================================================
+        
+        if hotspots and station_results:
+            try:
+                # Hotspot/istasyon lokasyonlarından hava durumu al
+                weather_points = []
+                weather_weights = []  # Mesafe bazlı ağırlıklar
+                
+                # Start noktası
+                if start_weather:
+                    weather_points.append(start_weather)
+                    weather_weights.append(hotspots[0].distance_from_start_km if hotspots else route_distance_km / 2)
+                
+                # Her hotspot için hava durumu
+                prev_km = 0.0
+                for i, (hotspot, station_result) in enumerate(zip(hotspots, station_results)):
+                    if station_result.best_station:
+                        station = station_result.best_station
+                        hotspot_weather = await weather_service.get_weather_at_point(
+                            station.lat, station.lon
+                        )
+                        if hotspot_weather:
+                            weather_points.append(hotspot_weather)
+                            # Bu bacağın mesafesi (ağırlık)
+                            leg_distance = hotspot.distance_from_start_km - prev_km
+                            weather_weights.append(leg_distance)
+                            prev_km = hotspot.distance_from_start_km
+                            logger.debug(f"Hotspot {i+1} weather: {hotspot_weather.temp_c}°C at {station.name}")
+                
+                # End noktası
+                if end_weather:
+                    weather_points.append(end_weather)
+                    remaining_distance = route_distance_km - prev_km
+                    weather_weights.append(remaining_distance)
+                
+                # Ağırlıklı ortalama hesapla (en az 2 nokta varsa)
+                if len(weather_points) >= 2 and sum(weather_weights) > 0:
+                    total_weight = sum(weather_weights)
+                    refined_temp = sum(w.temp_c * wt for w, wt in zip(weather_points, weather_weights)) / total_weight
+                    refined_wind = sum(w.wind_speed_mps * wt for w, wt in zip(weather_points, weather_weights)) / total_weight
+                    
+                    # Yeni ağırlıklı ortalama hava durumu
+                    refined_weather = WeatherInfo(
+                        temp_c=refined_temp,
+                        condition=weather_points[0].condition,  # İlk noktanın durumu
+                        wind_speed_mps=refined_wind,
+                        wind_direction_deg=0,
+                        precipitation_prob=0.0
+                    )
+                    
+                    old_temp = avg_weather.temp_c if avg_weather else DEFAULT_TEMPERATURE_C
+                    temp_diff = abs(refined_temp - old_temp)
+                    
+                    logger.info(
+                        f"Pass 2 weather: {len(weather_points)} points, "
+                        f"refined_temp={refined_temp:.1f}°C (was {old_temp:.1f}°C, diff={temp_diff:.1f}°C)"
+                    )
+                    
+                    # Eğer sıcaklık farkı önemliyse (>2°C), tüketimi yeniden hesapla
+                    if temp_diff > 2.0:
+                        logger.info("Pass 2: Re-calculating consumption with refined weather...")
+                        
+                        # Tüketimi yeniden hesapla
+                        segments_with_consumption = calculate_route_consumption(
+                            vehicle=vehicle,
+                            segments=segments,
+                            temperature_celsius=refined_temp,
+                            wind_speed_mps=refined_wind,
+                            weather_condition=refined_weather.condition.value,
+                            extra_load_kg=extra_load_kg,
+                            passenger_count=passenger_count,
+                            child_count=child_count
+                        )
+                        
+                        new_total = sum(s.consumption_kwh for s in segments_with_consumption)
+                        old_total = total_consumption
+                        total_consumption = new_total
+                        
+                        logger.info(f"Pass 2 consumption: {old_total:.2f} → {new_total:.2f} kWh (diff={new_total-old_total:.2f})")
+                        
+                        # SOC simülasyonunu yeniden çalıştır (durak sayısı değişebilir)
+                        if user_target_soc_override is not None:
+                            simulator = SOCSimulator(
+                                battery_capacity_kwh=battery_kwh,
+                                start_soc=request.current_soc_percent,
+                                target_arrival_soc=arrival_soc,
+                                charge_min_soc=charge_min_soc,
+                                charge_target_soc=charge_target_soc,
+                                user_override_target=True
+                            )
+                            sim_result = simulator.simulate(segments_with_consumption, route_distance_km)
+                        else:
+                            optimizer = ChargePlanOptimizer(battery_capacity_kwh=battery_kwh)
+                            charge_target_soc, sim_result = optimizer.find_optimal_plan(
+                                segments_with_consumption=segments_with_consumption,
+                                total_distance_km=route_distance_km,
+                                battery_capacity_kwh=battery_kwh,
+                                start_soc=request.current_soc_percent,
+                                target_arrival_soc=arrival_soc,
+                                charge_min_soc=charge_min_soc,
+                                avg_speed_kmh=avg_speed_kmh
+                            )
+                        
+                        # Hotspot sayısı değiştiyse istasyonları yeniden bul
+                        if len(sim_result.hotspots) != len(hotspots):
+                            logger.info(f"Pass 2: Hotspot count changed {len(hotspots)} → {len(sim_result.hotspots)}, re-finding stations...")
+                            hotspots = sim_result.hotspots
+                            if hotspots:
+                                station_results = await find_stations_for_hotspots(hotspots, request.vehicle_model_id)
+                            else:
+                                station_results = []
+                            charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0
+                        
+                        # Refined weather'ı kullan
+                        avg_weather = refined_weather
+                        
+                        logger.info(f"Pass 2 complete: {len(hotspots)} hotspots, final_soc={sim_result.final_soc}%")
+                    else:
+                        logger.debug(f"Pass 2 skipped: temp diff {temp_diff:.1f}°C < 2°C threshold")
+                        
+            except Exception as e:
+                logger.warning(f"Pass 2 weather refinement failed: {e}")
         
         # STEP 11: Multi-Leg Builder (SEGMENT BAZLI TÜKETİM)
         legs = _build_multi_legs(
