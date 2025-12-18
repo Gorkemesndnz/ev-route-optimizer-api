@@ -70,7 +70,13 @@ V2.8 ile:
 
 ```powershell
 git clone <repository-url>
-cd Ev-Route-Optimizer-Api
+cd C:\Ev-Route-Optimizer-Api
+```
+
+Not: Eğer repoyu farklı bir klasöre clone ettiysen `cd` satırını kendi path’ine göre güncelle:
+
+```powershell
+cd <clone_ettigin_klasor>\Ev-Route-Optimizer-Api
 ```
 
 ### 2) Virtualenv oluştur ve aktive et
@@ -94,6 +100,12 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 python -m venv .venv
 .\.venv\Scripts\activate.bat
 python -m pip install --upgrade pip
+```
+
+Repo klasörüne girmek için (CMD):
+
+```bat
+cd C:\Ev-Route-Optimizer-Api
 ```
 
 ### 3) Bağımlılıkları kur
