@@ -65,6 +65,90 @@ TARGET_SOC_RANGE = (75.0, 95.0)   # Şarj hedefi
 ARRIVAL_SOC_RANGE = (10.0, 25.0)  # Varış hedefi
 
 
+def _extract_weather_from_forecast(
+    forecast_data: Optional[Dict[str, Any]],
+    eta_minutes: float = 0.0
+) -> Optional[WeatherInfo]:
+    """
+    🔧 V2.7: Forecast verisinden ETA'ya en yakın hava durumunu çıkar.
+    
+    OpenWeatherMap forecast 3 saatlik dilimler verir.
+    ETA'ya en yakın dilimi seçerek gerçek varış anı havasını döndürür.
+    
+    Args:
+        forecast_data: OpenWeatherMap forecast API yanıtı
+        eta_minutes: Tahmini varış süresi (dakika)
+    
+    Returns:
+        WeatherInfo veya None
+    """
+    if not forecast_data or not isinstance(forecast_data, dict):
+        return None
+    
+    forecast_list = forecast_data.get("list", [])
+    if not forecast_list:
+        return None
+    
+    import time
+    
+    # ETA timestamp hesapla
+    current_time = time.time()
+    eta_timestamp = current_time + (eta_minutes * 60)
+    
+    # En yakın forecast dilimini bul
+    closest_forecast = None
+    min_diff = float('inf')
+    
+    for item in forecast_list:
+        dt = item.get("dt", 0)
+        diff = abs(dt - eta_timestamp)
+        if diff < min_diff:
+            min_diff = diff
+            closest_forecast = item
+    
+    if not closest_forecast:
+        return None
+    
+    # WeatherInfo oluştur
+    try:
+        main = closest_forecast.get("main", {})
+        wind = closest_forecast.get("wind", {})
+        weather_list = closest_forecast.get("weather", [])
+        
+        temp_c = float(main.get("temp", 20.0))
+        wind_mps = float(wind.get("speed", 0.0))
+        wind_deg = int(wind.get("deg", 0))
+        pop = float(closest_forecast.get("pop", 0.0))  # Yağış olasılığı
+        
+        # Condition mapping
+        from app.models import WeatherCondition
+        condition = WeatherCondition.CLOUDY
+        if weather_list:
+            condition_id = weather_list[0].get("id", 800)
+            # Basit mapping
+            if condition_id == 800:
+                condition = WeatherCondition.CLEAR
+            elif 801 <= condition_id <= 804:
+                condition = WeatherCondition.CLOUDY
+            elif 500 <= condition_id < 600:
+                condition = WeatherCondition.RAIN
+            elif 600 <= condition_id < 700:
+                condition = WeatherCondition.SNOW
+            elif 700 <= condition_id < 800:
+                condition = WeatherCondition.FOG
+        
+        return WeatherInfo(
+            temp_c=temp_c,
+            condition=condition,
+            wind_speed_mps=wind_mps,
+            wind_direction_deg=wind_deg,
+            precipitation_prob=pop
+        )
+    except Exception as e:
+        logger.warning(f"Failed to parse forecast: {e}")
+        return None
+
+
 def _resolve_defaults(request: RouteRequest) -> tuple:
     """
     Yolcu ve yük için varsayılanları çöz.
@@ -291,6 +375,16 @@ def _build_multi_legs(
             distance_from_route_km=station.deviation_km
         )
         
+        # 🔧 V2.7: Forecast'ten ETA bazlı hava durumu çıkar
+        # Toplam geçen süre = başlangıçtan bu durağa kadar
+        elapsed_duration = total_duration_min - remaining_duration + leg_duration
+        station_weather = _extract_weather_from_forecast(
+            station_result.weather_forecast,
+            eta_minutes=elapsed_duration
+        )
+        # Forecast yoksa fallback olarak genel weather_info kullan
+        charge_weather = station_weather if station_weather else weather_info
+        
         legs.append(ChargeLeg(
             type="charge",
             station=station_info,
@@ -298,7 +392,7 @@ def _build_multi_legs(
             target_soc_percent=round(hotspot_target_soc, 1),
             energy_added_kwh=round(kwh_to_add, 2),
             duration_minutes=round(max(10, charge_duration), 1),
-            weather_context=weather_info  # 🔧 V2.6: İstasyon hava durumu
+            weather_context=charge_weather  # 🔧 V2.7: ETA bazlı forecast hava durumu
         ))
         
         # Güncellemeler
@@ -577,67 +671,64 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                         f"refined_temp={refined_temp:.1f}°C (was {old_temp:.1f}°C, diff={temp_diff:.1f}°C)"
                     )
                     
-                    # Eğer sıcaklık farkı önemliyse (>2°C), tüketimi yeniden hesapla
-                    if temp_diff > 2.0:
-                        logger.info("Pass 2: Re-calculating consumption with refined weather...")
-                        
-                        # Tüketimi yeniden hesapla
-                        segments_with_consumption = calculate_route_consumption(
-                            vehicle=vehicle,
-                            segments=segments,
-                            temperature_celsius=refined_temp,
-                            wind_speed_mps=refined_wind,
-                            weather_condition=refined_weather.condition.value,
-                            extra_load_kg=extra_load_kg,
-                            passenger_count=passenger_count,
-                            child_count=child_count
+                    # 🔧 V2.7: Her zaman refined weather ile tüketimi yeniden hesapla (2°C eşiği kaldırıldı)
+                    logger.info("Pass 2: Re-calculating consumption with refined weather...")
+                    
+                    # Tüketimi yeniden hesapla
+                    segments_with_consumption = calculate_route_consumption(
+                        vehicle=vehicle,
+                        segments=segments,
+                        temperature_celsius=refined_temp,
+                        wind_speed_mps=refined_wind,
+                        weather_condition=refined_weather.condition.value,
+                        extra_load_kg=extra_load_kg,
+                        passenger_count=passenger_count,
+                        child_count=child_count
+                    )
+                    
+                    new_total = sum(s.consumption_kwh for s in segments_with_consumption)
+                    old_total = total_consumption
+                    total_consumption = new_total
+                    
+                    logger.info(f"Pass 2 consumption: {old_total:.2f} → {new_total:.2f} kWh (diff={new_total-old_total:.2f})")
+                    
+                    # SOC simülasyonunu yeniden çalıştır (durak sayısı değişebilir)
+                    if user_target_soc_override is not None:
+                        simulator = SOCSimulator(
+                            battery_capacity_kwh=battery_kwh,
+                            start_soc=request.current_soc_percent,
+                            target_arrival_soc=arrival_soc,
+                            charge_min_soc=charge_min_soc,
+                            charge_target_soc=charge_target_soc,
+                            user_override_target=True
                         )
-                        
-                        new_total = sum(s.consumption_kwh for s in segments_with_consumption)
-                        old_total = total_consumption
-                        total_consumption = new_total
-                        
-                        logger.info(f"Pass 2 consumption: {old_total:.2f} → {new_total:.2f} kWh (diff={new_total-old_total:.2f})")
-                        
-                        # SOC simülasyonunu yeniden çalıştır (durak sayısı değişebilir)
-                        if user_target_soc_override is not None:
-                            simulator = SOCSimulator(
-                                battery_capacity_kwh=battery_kwh,
-                                start_soc=request.current_soc_percent,
-                                target_arrival_soc=arrival_soc,
-                                charge_min_soc=charge_min_soc,
-                                charge_target_soc=charge_target_soc,
-                                user_override_target=True
-                            )
-                            sim_result = simulator.simulate(segments_with_consumption, route_distance_km)
-                        else:
-                            optimizer = ChargePlanOptimizer(battery_capacity_kwh=battery_kwh)
-                            charge_target_soc, sim_result = optimizer.find_optimal_plan(
-                                segments_with_consumption=segments_with_consumption,
-                                total_distance_km=route_distance_km,
-                                battery_capacity_kwh=battery_kwh,
-                                start_soc=request.current_soc_percent,
-                                target_arrival_soc=arrival_soc,
-                                charge_min_soc=charge_min_soc,
-                                avg_speed_kmh=avg_speed_kmh
-                            )
-                        
-                        # Hotspot sayısı değiştiyse istasyonları yeniden bul
-                        if len(sim_result.hotspots) != len(hotspots):
-                            logger.info(f"Pass 2: Hotspot count changed {len(hotspots)} → {len(sim_result.hotspots)}, re-finding stations...")
-                            hotspots = sim_result.hotspots
-                            if hotspots:
-                                station_results = await find_stations_for_hotspots(hotspots, request.vehicle_model_id)
-                            else:
-                                station_results = []
-                            charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0
-                        
-                        # Refined weather'ı kullan
-                        avg_weather = refined_weather
-                        
-                        logger.info(f"Pass 2 complete: {len(hotspots)} hotspots, final_soc={sim_result.final_soc}%")
+                        sim_result = simulator.simulate(segments_with_consumption, route_distance_km)
                     else:
-                        logger.debug(f"Pass 2 skipped: temp diff {temp_diff:.1f}°C < 2°C threshold")
+                        optimizer = ChargePlanOptimizer(battery_capacity_kwh=battery_kwh)
+                        charge_target_soc, sim_result = optimizer.find_optimal_plan(
+                            segments_with_consumption=segments_with_consumption,
+                            total_distance_km=route_distance_km,
+                            battery_capacity_kwh=battery_kwh,
+                            start_soc=request.current_soc_percent,
+                            target_arrival_soc=arrival_soc,
+                            charge_min_soc=charge_min_soc,
+                            avg_speed_kmh=avg_speed_kmh
+                        )
+                    
+                    # Hotspot sayısı değiştiyse istasyonları yeniden bul
+                    if len(sim_result.hotspots) != len(hotspots):
+                        logger.info(f"Pass 2: Hotspot count changed {len(hotspots)} → {len(sim_result.hotspots)}, re-finding stations...")
+                        hotspots = sim_result.hotspots
+                        if hotspots:
+                            station_results = await find_stations_for_hotspots(hotspots, request.vehicle_model_id)
+                        else:
+                            station_results = []
+                        charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0
+                    
+                    # Refined weather'ı kullan
+                    avg_weather = refined_weather
+                    
+                    logger.info(f"Pass 2 complete: {len(hotspots)} hotspots, final_soc={sim_result.final_soc}%")
                         
             except Exception as e:
                 logger.warning(f"Pass 2 weather refinement failed: {e}")

@@ -123,6 +123,7 @@ class CorridorSearchResult:
     search_radius_km: float = CORRIDOR_LENGTH_KM
     total_found: int = 0
     dc_compatible: int = 0
+    weather_forecast: Optional[Dict[str, Any]] = None  # 🔧 V2.7: İstasyon için forecast
 
 
 # =============================================================================
@@ -230,6 +231,7 @@ class CorridorSearcher:
         Bir hotspot için koridor araması yap.
         
         Strateji: Google Places öncelikli, OCM fallback.
+        🔧 V2.7: Forecast da paralel olarak alınır.
         """
         result = CorridorSearchResult(
             hotspot=hotspot,
@@ -244,8 +246,31 @@ class CorridorSearcher:
         )
         
         try:
-            # 1. Google Places'tan istasyonları çek (birincil)
-            raw_stations, source = await self._fetch_stations_google_first(hotspot)
+            # 🔧 V2.7: İstasyon araması ve forecast paralel olarak al
+            stations_task = self._fetch_stations_google_first(hotspot)
+            forecast_task = weather_service.get_forecast_for_point(
+                lat=hotspot.location.lat,
+                lon=hotspot.location.lon
+            )
+            
+            (raw_stations, source), forecast_data = await asyncio.gather(
+                stations_task,
+                forecast_task,
+                return_exceptions=True
+            )
+            
+            # Forecast sonucunu işle
+            if isinstance(forecast_data, Exception):
+                logger.warning(f"Forecast fetch failed for hotspot: {forecast_data}")
+                forecast_data = None
+            result.weather_forecast = forecast_data
+            
+            # İstasyon sonucunu işle
+            if isinstance(raw_stations, Exception):
+                logger.error(f"Station fetch failed: {raw_stations}")
+                raw_stations = []
+                source = "none"
+            
             result.total_found = len(raw_stations)
             
             if not raw_stations:
