@@ -187,13 +187,11 @@ class ConfigManager:
     def dump_config() -> Dict[str, Any]:
         """
         Debug amaçlı tüm kritik config değerlerini döner.
-        Production'da hassas dataları maskeler.
+        Hassas dataları (API key'ler) her ortamda maskeler.
         """
-        safe_google = "***HIDDEN***" if ConfigManager.is_production() else ConfigManager.google_api_key()
-
         return {
             "environment": ConfigManager.environment(),
-            "google_api_key": safe_google,
+            "google_api_key": "***HIDDEN***",
             "ocm_api_key": "***HIDDEN***",
             "weather_api_key": "***HIDDEN***",
             "cache_ttl": {

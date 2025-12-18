@@ -22,24 +22,46 @@ from app.utils.config_manager import config
 # =============================================================================
 
 class MemoryCache:
-    """Basit in-memory cache with TTL."""
+    """Basit in-memory cache with TTL and max size limit."""
+    
+    MAX_SIZE = 1000  # Maksimum cache entry sayısı
+    CLEANUP_RATIO = 0.2  # Temizlik oranı (%20 en eski entry silinir)
     
     def __init__(self):
-        self._store: Dict[str, Tuple[Any, float]] = {}
+        self._store: Dict[str, Tuple[Any, float, float]] = {}  # value, expiration, last_access
     
     def get(self, key: str) -> Optional[Any]:
         """Cache'den değer al."""
         if key not in self._store:
             return None
-        value, expiration = self._store[key]
+        value, expiration, _ = self._store[key]
         if expiration < time.time():
             del self._store[key]
             return None
+        # Last access zamanını güncelle (LRU için)
+        self._store[key] = (value, expiration, time.time())
         return value
     
     def set(self, key: str, value: Any, ttl: int) -> None:
-        """Cache'e değer yaz."""
-        self._store[key] = (value, time.time() + ttl)
+        """Cache'e değer yaz. Max size aşılırsa eski entry'leri temizle."""
+        if len(self._store) >= self.MAX_SIZE:
+            self._evict_old_entries()
+        self._store[key] = (value, time.time() + ttl, time.time())
+    
+    def _evict_old_entries(self) -> None:
+        """En eski erişilen entry'lerin %20'sini sil (LRU-benzeri)."""
+        # Önce expired olanları temizle
+        now = time.time()
+        expired_keys = [k for k, (_, exp, _) in self._store.items() if exp < now]
+        for k in expired_keys:
+            del self._store[k]
+        
+        # Hala doluysa, en eski erişilenleri sil
+        if len(self._store) >= self.MAX_SIZE:
+            entries_to_remove = int(self.MAX_SIZE * self.CLEANUP_RATIO)
+            sorted_by_access = sorted(self._store.items(), key=lambda x: x[1][2])
+            for k, _ in sorted_by_access[:entries_to_remove]:
+                del self._store[k]
     
     def clear(self) -> None:
         """Cache'i temizle."""

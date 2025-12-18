@@ -12,7 +12,8 @@ V1.3 Enterprise FastAPI Application
 - Structured logging with request tracking
 
 Endpoints:
-- GET  /           - API info & redirection
+- GET  /           - Web arayüzü (index.html)
+- GET  /api/info   - API bilgisi (JSON)
 - GET  /health     - Health check
 - POST /optimize_route - Main route optimization
 - GET  /test       - Development test endpoint
@@ -34,7 +35,7 @@ from app.models import (
     GeoPoint
 )
 from app.route_planner import plan_route
-from app.services.base_service import ExternalAPIError
+from app.services.base_service import ExternalAPIError, close_global_client
 from app.services.google_service import google_maps
 from app.utils.logger import get_logger
 from app.utils.config_manager import config
@@ -67,7 +68,9 @@ async def lifespan(app: FastAPI):
     
     yield
     
+    # Shutdown: HTTP client'ı kapat (kaynak sızıntısını önle)
     logger.info("EV Route Optimizer API shutting down")
+    await close_global_client()
 
 
 # =============================================================================
@@ -83,13 +86,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS for development
+# CORS - Environment'a göre dinamik yapılandırma
+_cors_origins = ["*"] if config.is_debug() else [
+    "https://ev-route-optimizer.com",  # Production domain (gerektiğinde güncelle)
+    "https://www.ev-route-optimizer.com",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Production'da kısıtla
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"] if not config.is_debug() else ["*"],
+    allow_headers=["Content-Type", "Authorization"] if not config.is_debug() else ["*"],
 )
 
 # Static files
@@ -150,18 +158,19 @@ def _extract_request_details(request: RouteRequest) -> Dict[str, Any]:
 # MAIN ENDPOINTS
 # =============================================================================
 
-@app.get("/", tags=["Info"])
-async def root():
-    """API ana sayfası - Bilgi ve yönlendirme"""
+@app.get("/api/info", tags=["Info"])
+async def api_info():
+    """API bilgi endpoint'i - JSON formatında API detayları"""
     return {
         "message": "Akıllı EV Rota Asistanı API'ye Hoş Geldiniz!",
         "version": "v1.3.0",
         "environment": config.get_environment(),
-        "web_interface": "/static/index.html",
+        "web_interface": "/",
         "documentation": "/docs",
         "redoc": "/redoc",
         "health_check": "/health",
         "endpoints": {
+            "api_info": "GET /api/info",
             "optimize_route": "POST /optimize_route",
             "test": "GET /test",
             "debug": "GET /debug"
@@ -334,7 +343,10 @@ async def optimize_route(request: RouteRequest) -> MultiStopRouteResponse:
 
 @app.get("/test", tags=["Development"])
 async def test_endpoint():
-    """Development test endpoint - sistem durumu hakkında detaylı bilgi"""
+    """Development test endpoint - sistem durumu hakkında detaylı bilgi (sadece development)"""
+    if not config.is_debug():
+        raise HTTPException(status_code=404, detail="Test endpoint not available in production")
+    
     try:
         # Test route planning with sample data
         sample_request = RouteRequest(
@@ -373,7 +385,7 @@ async def test_endpoint():
 @app.get("/debug", tags=["Development"])
 async def debug_info():
     """Debug bilgileri - sadece development modunda"""
-    if not config.is_debug_mode():
+    if not config.is_debug():
         raise HTTPException(status_code=404, detail="Debug mode not enabled")
     
     return {
@@ -386,7 +398,8 @@ async def debug_info():
             },
             "vehicle_database": VEHICLE_DB,
             "api_endpoints": [
-                {"method": "GET", "path": "/", "description": "API info"},
+                {"method": "GET", "path": "/", "description": "Web interface (index.html)"},
+                {"method": "GET", "path": "/api/info", "description": "API info (JSON)"},
                 {"method": "GET", "path": "/health", "description": "Health check"},
                 {"method": "POST", "path": "/optimize_route", "description": "Route optimization"},
                 {"method": "GET", "path": "/test", "description": "Development test"},
@@ -398,7 +411,10 @@ async def debug_info():
 
 @app.get("/validate/{vehicle_id}", tags=["Development"])
 async def validate_vehicle(vehicle_id: str):
-    """Vehicle model validation endpoint"""
+    """Vehicle model validation endpoint (sadece development)"""
+    if not config.is_debug():
+        raise HTTPException(status_code=404, detail="Validate endpoint not available in production")
+    
     try:
         vehicle = get_vehicle_model(vehicle_id)
         return {
@@ -459,11 +475,11 @@ async def geocode_address(address: str):
 if __name__ == "__main__":
     import uvicorn
     
-    logger.info("Starting development server")
+    logger.info("Starting server", environment=config.get_environment())
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
-        log_level="info"
+        reload=config.is_debug(),  # Sadece development'ta reload aktif
+        log_level="debug" if config.is_debug() else "info"
     )

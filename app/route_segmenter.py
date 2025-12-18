@@ -264,7 +264,7 @@ class RouteSegmenter:
     
     def get_coordinates_at_distance(self, distance_km: float) -> GeoPoint | None:
         """
-        Belirli bir mesafedeki koordinatı döndürür (interpolasyon).
+        Belirli bir mesafedeki koordinatı döndürür (lineer interpolasyon).
         
         Args:
             distance_km: Başlangıçtan itibaren mesafe
@@ -273,11 +273,24 @@ class RouteSegmenter:
             O mesafedeki GeoPoint veya None
         """
         segment = self.get_segment_at_distance(distance_km)
-        if segment:
-            # Basit: Segment sonunu döndür
-            # TODO: Segment içinde interpolasyon
-            return segment.end_point
-        return None
+        if not segment:
+            return None
+        
+        # Segment başlangıç mesafesi
+        segment_start_km = segment.cumulative_distance_km - segment.distance_km
+        
+        # Segment içindeki pozisyon oranı (0.0 - 1.0)
+        if segment.distance_km > 0:
+            ratio = (distance_km - segment_start_km) / segment.distance_km
+            ratio = max(0.0, min(1.0, ratio))  # Clamp [0, 1]
+        else:
+            ratio = 0.0
+        
+        # Lineer interpolasyon
+        interpolated_lat = segment.start_point.lat + ratio * (segment.end_point.lat - segment.start_point.lat)
+        interpolated_lon = segment.start_point.lon + ratio * (segment.end_point.lon - segment.start_point.lon)
+        
+        return GeoPoint(lat=interpolated_lat, lon=interpolated_lon)
 
 
 # =============================================================================

@@ -17,6 +17,18 @@ GLOBAL_CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(8.0))
 API_LIMIT = asyncio.Semaphore(10)
 
 
+async def close_global_client():
+    """
+    Global HTTP client'ı güvenli şekilde kapatır.
+    Uygulama shutdown'ında çağrılmalıdır.
+    """
+    global GLOBAL_CLIENT
+    if GLOBAL_CLIENT is not None:
+        await GLOBAL_CLIENT.aclose()
+        logger.info("Global HTTP client closed successfully")
+        GLOBAL_CLIENT = None
+
+
 # ==========================================
 # ÖZEL HATA SINIFI
 # ==========================================
