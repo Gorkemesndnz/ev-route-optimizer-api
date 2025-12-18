@@ -4,13 +4,29 @@ Akıllı Elektrikli Araç Rota Optimizasyonu Servisi
 
 Enterprise V1.3 mimarisi ile geliştirilmiş, çok duraklı rota planlaması, şarj istasyonu optimizasyonu ve CO2 tasarrufu hesaplaması sunan REST API.
 
+## 📌 Durum / Versiyon
+
+- **API**: FastAPI
+- **Web UI**: `GET /` (static UI)
+- **Son büyük güncelleme**: **V2.8**
+
+V2.8 ile:
+
+- **2-pass weather refinement** (Pass 2 her zaman çalışır)
+- **ETA bazlı forecast** (varış + şarj durakları)
+- **İstasyon seçimi için weighted rating + amenities skoru**
+- **UI’da istasyon rating/yorum sayısı, kaynak (Google/OCM), vicinity ve amenities gösterimi**
+
 ## ✨ Özellikler
 
 - **🗺️ Multi-Stop Route Optimization** - Birden fazla durak destekli rota planlaması
 - **⚡ Smart Charging Planning** - OCM ve Google Maps entegrasyonlu şarj istasyonu bulma
 - **📊 Real-time Consumption** - Elevation, hava durumu ve araç özelliklerine göre tüketim hesabı
+- **🌦️ 2-Pass Weather Consumption** - Şarj duraklarındaki hava durumu ile tüketimi refine eden 2-pass planlama
+- **🕒 ETA-based Forecast Weather** - Varış ve şarj durakları için varış zamanına göre forecast seçimi
 - **🌱 CO2 Savings** - Benzinli araçlara karşı çevresel tasarruf analizi
 - **🔍 Station Funnel Algorithm** - 6 adımlı istasyon seçim ve skorlama algoritması
+- **⭐ Weighted Rating + Amenities Scoring (V2.8)** - Az yorumlu rating’leri yumuşatan puanlama + WC/Yemek/Market/Otopark/Açık bonusları
 - **📝 Structured Logging** - Detaylı hata takibi ve debug bilgisi
 - **🚀 Enterprise Ready** - CORS, rate limiting, caching ve error handling
 
@@ -24,6 +40,69 @@ Enterprise V1.3 mimarisi ile geliştirilmiş, çok duraklı rota planlaması, ş
 - **Server**: Uvicorn
 
 ## 🚀 Kurulum
+
+## ✅ Hızlı Başlangıç (Windows PowerShell)
+
+### 0) Gereksinimler
+
+- **Git**
+- **Python 3.10+** (3.8+ çalışır ama önerilen 3.10+)
+
+### 1) Repo indir
+
+```powershell
+git clone <repository-url>
+cd Ev-Route-Optimizer-Api
+```
+
+### 2) Virtualenv oluştur ve aktive et
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+### 3) Bağımlılıkları kur
+
+```powershell
+pip install -r requirements.txt
+```
+
+### 4) .env oluştur
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+### 5) API Key’leri gir
+
+- **Google API Key**: Directions + Distance Matrix + Places
+- **OpenWeatherMap API Key**: Current + Forecast
+- **OCM API Key**: Opsiyonel (Google Places boş dönerse fallback)
+
+`.env` örneği:
+
+```bash
+GOOGLE_API_KEY=your_google_api_key
+OPENWEATHER_API_KEY=your_openweather_api_key
+OCM_API_KEY=your_ocm_api_key
+ENVIRONMENT=development
+LOG_LEVEL=INFO
+```
+
+### 6) Çalıştır
+
+```powershell
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### 7) Aç
+
+- **Web UI**: `http://127.0.0.1:8000/`
+- **Swagger**: `http://127.0.0.1:8000/docs`
+- **Health**: `http://127.0.0.1:8000/health`
 
 ### 1. Repository Clone
 ```bash
@@ -62,10 +141,10 @@ POST /optimize_route
 Content-Type: application/json
 
 {
-  "start_location": "Istanbul, Turkey",
-  "end_location": "Ankara, Turkey",
+  "start_location": {"lat": 41.0082, "lon": 28.9784},
+  "end_location": {"lat": 39.9334, "lon": 32.8597},
   "vehicle_model_id": "mg4_51kwh",
-  "initial_soc_percent": 85,
+  "current_soc_percent": 85,
   "extra_load_kg": 150
 }
 ```
@@ -99,10 +178,10 @@ GET /validate/{vehicle_id}  # Araç validasyonu
 ### Request
 ```json
 {
-  "start_location": "Istanbul, Turkey",
-  "end_location": "Ankara, Turkey",
+  "start_location": {"lat": 41.0082, "lon": 28.9784},
+  "end_location": {"lat": 39.9334, "lon": 32.8597},
   "vehicle_model_id": "mg4_51kwh",
-  "initial_soc_percent": 85,
+  "current_soc_percent": 85,
   "extra_load_kg": 150
 }
 ```
@@ -115,11 +194,11 @@ GET /validate/{vehicle_id}  # Araç validasyonu
   "total_duration_minutes": 300.0,
   "total_co2_savings_kg": 35.2,
   "charge_stops": 0,
+  "start_weather": {"temp_c": 6.1, "condition": "cloudy", "wind_speed_mps": 2.3},
+  "end_weather": {"temp_c": 3.0, "condition": "cloudy", "wind_speed_mps": 1.2},
   "legs": [
     {
       "type": "drive",
-      "start_location": "Istanbul, Turkey",
-      "end_location": "Ankara, Turkey",
       "distance_km": 452.0,
       "duration_minutes": 300.0,
       "consumption_kwh": 71.9
@@ -127,6 +206,68 @@ GET /validate/{vehicle_id}  # Araç validasyonu
   ],
   "message": "Rota başarıyla planlandı"
 }
+```
+
+## 🌦️ Hava Durumu Mantığı (V2.7+)
+
+- **Başlangıç**: `current weather`
+- **Varış**: `forecast weather` (ETA bazlı)
+- **Şarj istasyonları**: `forecast weather` (ETA bazlı) → `ChargeLeg.weather_context`
+
+### 2-Pass Planning
+
+- **Pass 1**: Start (current) + End (forecast) ile ortalama weather → ilk tüketim ve durak adayları
+- **Pass 2**: Durak lokasyonlarının hava durumu ile tüketimi yeniden hesaplar
+
+Not: **Pass 2 için 2°C eşiği kaldırıldı** → refined weather varsa Pass 2 her zaman çalışır.
+
+## ⭐ İstasyon Seçimi (Google-first) + Weighted Rating + Amenities (V2.8)
+
+### Veri Kaynakları
+
+- **Google Places (öncelikli)**
+- **Open Charge Map (fallback)**: Google boş dönerse devreye girer
+
+### Weighted Rating
+
+Az yorumlu rating’lerin güveni düşük olduğundan, rating bir prior ile karıştırılır:
+
+```
+weighted = confidence * rating + (1 - confidence) * prior
+confidence = min(1, user_ratings_total / 50)
+prior = 3.5
+```
+
+### Amenities Skoru
+
+WC / yemek / market / otopark / açık olma bilgileri istasyon skoruna eklenir.
+
+### Skor Ağırlıkları (özet)
+
+- **Sapma (deviation)**: 0.40
+- **Güç (power)**: 0.25
+- **Rating (weighted)**: 0.15
+- **Amenities**: 0.20
+
+## 🧪 Test (PowerShell)
+
+### Health check
+
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -Method Get
+```
+
+### Route request örneği
+
+```powershell
+$body = @{
+  start_location = @{ lat = 41.0082; lon = 28.9784 }
+  end_location   = @{ lat = 39.9334; lon = 32.8597 }
+  vehicle_model_id = "tesla_model_3_long_range"
+  current_soc_percent = 80
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/optimize_route" -Method Post -ContentType "application/json" -Body $body
 ```
 
 ## 🏃‍♂️ Çalıştırma
@@ -180,7 +321,7 @@ ENABLE_DATA_LOGGING=true
 3. **DC/AC Separation**: DC hızlı şarj öncelikli
 4. **Distance Filter**: Haversine ile 50km filtreleme
 5. **Real-time Check**: Google Distance Matrix ile 15 dakika kontrolü
-6. **Scoring**: Ağırlıklı skorlama (deviation + power + rating)
+6. **Scoring**: Ağırlıklı skorlama (deviation + power + weighted rating + amenities)
 
 ### Consumption Calculation
 - Elevation verisi (Google Elevation API)
@@ -257,8 +398,8 @@ Bu proje MIT lisansı altında dağıtılmaktadır.
 
 ---
 
-**Version**: v1.3 Enterprise  
-**Last Updated**: 2025-11-27  
+**Version**: v2.8  
+**Last Updated**: 2025-12-18  
 **Status**: Production Ready 🚀
 
 
