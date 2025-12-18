@@ -219,14 +219,24 @@ class SOCSimulator:
         total_consumption = 0.0
         last_hotspot_km = 0.0
         
-        # MainCalculator'dan gelen GERÇEK ortalama tüketimi hesapla
+        # MainCalculator'dan gelen GERÇEK toplam tüketimi hesapla
         route_total_consumption = sum(s.consumption_kwh for s in segments_with_consumption)
         avg_consumption_per_km = route_total_consumption / total_distance_km if total_distance_km > 0 else 0.20
         
+        # 🔧 V2.5 FIX: Kalan segment tüketimlerini önceden hesapla (suffix-sum)
+        # Her segment için "bu segmentten sonraki toplam tüketim (kWh)"
+        # remaining_consumption_suffix[i] = segment[i+1] + segment[i+2] + ... + segment[n-1]
+        num_segments = len(segments_with_consumption)
+        remaining_consumption_suffix = [0.0] * (num_segments + 1)  # +1 for boundary
+        for i in range(num_segments - 1, -1, -1):
+            remaining_consumption_suffix[i] = (
+                segments_with_consumption[i].consumption_kwh + remaining_consumption_suffix[i + 1]
+            )
+        
         logger.info(
-            f"SOC simulation started: {len(segments_with_consumption)} segments, "
+            f"SOC simulation started: {num_segments} segments, "
             f"start_soc={self.start_soc}%, "
-            f"avg_consumption={avg_consumption_per_km:.3f} kWh/km (MainCalculator)"
+            f"total_consumption={route_total_consumption:.2f}kWh (MainCalculator segment-sum)"
         )
         
         for seg_with_cons in segments_with_consumption:
@@ -258,13 +268,17 @@ class SOCSimulator:
             # Kalan mesafe (segment sonunda)
             remaining_distance = total_distance_km - segment.cumulative_distance_km
             
-            # Minimum gerekli SOC hesapla
-            min_required_soc = self._calculate_min_required_soc(remaining_distance, avg_consumption_per_km)
+            # 🔧 V2.5 FIX: Kalan segment tüketimi (MainCalculator'dan GERÇEK değer)
+            # segment.index sonrasındaki tüm segmentlerin toplam tüketimi
+            remaining_consumption_kwh = remaining_consumption_suffix[segment.index + 1]
+            
+            # Minimum gerekli SOC hesapla (artık GERÇEK kalan tüketimle)
+            min_required_soc = self._calculate_min_required_soc(remaining_consumption_kwh)
             
             # 🔧 DEBUG: Hotspot karar verme
             logger.debug(
-                f"[REQ] remaining={remaining_distance:.1f}km, min_req={min_required_soc:.1f}%, "
-                f"projected_soc={projected_soc_after:.1f}%, charge_min={self.charge_min_soc}%"
+                f"[REQ] remaining={remaining_distance:.1f}km, remaining_kwh={remaining_consumption_kwh:.2f}, "
+                f"min_req={min_required_soc:.1f}%, projected_soc={projected_soc_after:.1f}%"
             )
             
             # 🔧 ERKEN HOTSPOT TESPİTİ: Segment SONRASI SOC çok düşecekse, ÖNCE şarj et
@@ -463,35 +477,31 @@ class SOCSimulator:
                 f"({'SON DURAK' if is_last_stop else f'ARA DURAK - sonraki {distance_to_next:.0f}km'})"
             )
     
-    def _calculate_min_required_soc(self, remaining_distance_km: float, avg_consumption_per_km: float) -> float:
+    def _calculate_min_required_soc(self, remaining_consumption_kwh: float) -> float:
         """
-        Kalan mesafe için gereken minimum SOC hesapla.
+        🔧 V2.5: Kalan yol için gereken minimum SOC hesapla.
         
         Args:
-            remaining_distance_km: Kalan mesafe (km)
-            avg_consumption_per_km: MainCalculator'dan gelen GERÇEK ortalama tüketim (kWh/km)
+            remaining_consumption_kwh: Kalan segmentlerin TOPLAM tüketimi (MainCalculator'dan)
         
         Mantık:
-        - Varışa yetecek kadar SOC var mı kontrol et
-        - Yoksa şarj gerekli
+        - MainCalculator'ın segment bazlı gerçek tüketimlerini kullan
+        - Ortalama tüketim × mesafe yaklaşımı KALDIRILDI
         """
-        # Kalan mesafe için gereken enerji (GERÇEK tüketim değeriyle)
-        required_kwh = avg_consumption_per_km * remaining_distance_km
-        required_percent = (required_kwh / self.battery_capacity_kwh) * 100
+        # Kalan yol için gereken SOC yüzdesi (GERÇEK segment tüketimleriyle)
+        required_percent = (remaining_consumption_kwh / self.battery_capacity_kwh) * 100
         
         # Varışa ulaşmak için gereken minimum SOC
-        # = kalan mesafe tüketimi + varış hedefi + güvenlik
+        # = kalan yol tüketimi + varış hedefi + güvenlik
         min_required = self.target_arrival_soc + required_percent + SAFETY_BUFFER_PERCENT
         
-        # 🔧 FIX: Eğer 100%'ü aşıyorsa, ara şarj kaçınılmaz
-        # ESKİ HATALI: return charge_min_soc + 10 = 30% (çok düşük!)
-        # YENİ: Kalan mesafeye göre akıllı eşik döndür
+        # Eğer 100%'ü aşıyorsa, ara şarj kaçınılmaz
         if min_required > 100.0:
-            # Bir şarjla ne kadar gidilebilir? (80% kullanılabilir enerji varsayımı)
-            max_range_km = (0.80 * self.battery_capacity_kwh) / avg_consumption_per_km if avg_consumption_per_km > 0 else 200
+            # Bir şarjla ne kadar gidilebilir? (80% kullanılabilir enerji)
+            max_single_charge_kwh = 0.80 * self.battery_capacity_kwh
             
-            # Kalan mesafe bir şarjdan fazlaysa, en az %50 SOC'ta şarj et
-            if remaining_distance_km > max_range_km:
+            # Kalan tüketim bir şarjdan fazlaysa, en az %50 SOC'ta şarj et
+            if remaining_consumption_kwh > max_single_charge_kwh:
                 return max(50.0, self.charge_min_soc + 30)  # En az %50
             else:
                 # Tek şarjla bitirilecek - standart eşik
