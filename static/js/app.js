@@ -440,8 +440,12 @@ function renderDriveLeg(leg, index) {
 
 /**
  * Charge Leg Render
+ * 🔧 V2.7: Google Places bilgileri (rating, vicinity) ve detaylı connector bilgileri eklendi
  */
 function renderChargeLeg(leg, index) {
+    const station = leg.station || {};
+    const connector = station.connectors?.[0] || {};
+
     // Hava durumu bilgisi (varsa)
     const weather = leg.weather_context;
     const weatherHtml = weather ? `
@@ -461,6 +465,42 @@ function renderChargeLeg(leg, index) {
         </div>
     ` : '';
 
+    // Google Places rating (varsa)
+    const rating = station.rating;
+    const userRatings = station.user_ratings_total;
+    const ratingHtml = (rating && rating > 0) ? `
+        <div class="flex items-center gap-1 mt-1">
+            <span class="text-yellow-400">⭐</span>
+            <span class="text-white text-xs font-medium">${rating.toFixed(1)}</span>
+            ${userRatings ? `<span class="text-gray-500 text-xs">(${userRatings})</span>` : ''}
+        </div>
+    ` : '';
+
+    // Konum/adres bilgisi (vicinity)
+    const vicinity = station.vicinity;
+    const vicinityHtml = vicinity ? `
+        <p class="text-gray-400 text-xs mt-1 truncate" title="${vicinity}">📍 ${vicinity}</p>
+    ` : '';
+
+    // Veri kaynağı badge
+    const dataSource = station.data_source || 'unknown';
+    const sourceBadge = dataSource === 'google'
+        ? '<span class="bg-blue-500/20 text-blue-400 text-xs px-1.5 py-0.5 rounded">Google</span>'
+        : dataSource === 'ocm'
+            ? '<span class="bg-green-500/20 text-green-400 text-xs px-1.5 py-0.5 rounded">OCM</span>'
+            : '';
+
+    // Connector detayları
+    const powerKw = connector.power_kw || 50;
+    const plugType = connector.plug_type || 'CCS2';
+    const chargerType = connector.charger_type || 'DC';
+
+    // Rotadan sapma mesafesi
+    const deviationKm = station.distance_from_route_km;
+    const deviationHtml = (deviationKm && deviationKm > 0)
+        ? `<span class="text-gray-500 text-xs">↗️ ${deviationKm.toFixed(1)} km sapma</span>`
+        : '';
+
     return `
         <div class="relative pl-10">
             <!-- Icon -->
@@ -472,16 +512,25 @@ function renderChargeLeg(leg, index) {
             
             <!-- Content -->
             <div class="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 rounded-lg p-4 border border-yellow-500/20">
-                <div class="flex items-center justify-between mb-2">
-                    <div>
-                        <span class="text-yellow-400 font-medium text-sm">⚡ Şarj Durağı</span>
-                        <p class="text-white font-medium text-sm mt-1">${leg.station?.name || 'Şarj İstasyonu'}</p>
+                <!-- Header: İstasyon adı + Güç -->
+                <div class="flex items-start justify-between mb-3">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="text-yellow-400 font-medium text-sm">⚡ Şarj Durağı</span>
+                            ${sourceBadge}
+                        </div>
+                        <p class="text-white font-medium text-sm mt-1">${station.name || 'Şarj İstasyonu'}</p>
+                        ${ratingHtml}
+                        ${vicinityHtml}
+                        ${deviationHtml}
                     </div>
-                    <div class="text-right">
-                        <p class="text-white font-bold">${leg.station?.connectors?.[0]?.power_kw || 50} kW</p>
-                        <p class="text-gray-500 text-xs">${leg.station?.connectors?.[0]?.plug_type || 'CCS2'}</p>
+                    <div class="text-right ml-3">
+                        <p class="text-white font-bold text-lg">${powerKw} kW</p>
+                        <p class="text-gray-400 text-xs">${plugType} • ${chargerType}</p>
                     </div>
                 </div>
+                
+                <!-- Stats Grid -->
                 <div class="grid grid-cols-4 gap-2 text-center text-xs">
                     <div class="bg-white/5 rounded p-2">
                         <p class="text-gray-500">Varış</p>
@@ -500,6 +549,8 @@ function renderChargeLeg(leg, index) {
                         <p class="text-yellow-400 font-medium">+${leg.energy_added_kwh?.toFixed(1)} kWh</p>
                     </div>
                 </div>
+                
+                <!-- Weather -->
                 ${weatherHtml}
             </div>
         </div>
