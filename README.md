@@ -2,7 +2,25 @@
 
 Akıllı Elektrikli Araç Rota Optimizasyonu Servisi
 
-Enterprise V1.3 mimarisi ile geliştirilmiş, çok duraklı rota planlaması, şarj istasyonu optimizasyonu ve CO2 tasarrufu hesaplaması sunan REST API.
+Bu proje, elektrikli araçlar için **rota + şarj planı + tüketim tahmini** üreten bir FastAPI servisidir.
+
+Temel hedef:
+
+- **En gerçekçi tüketim hesabı** (eğim + hava durumu + yük) ile SOC simülasyonu
+- **Şarj duraklarını akıllı seçip** (sapma, güç, rating/yorum güveni ve tesis olanakları) kullanıcıya uygulanabilir bir plan vermek
+- **Varış zamanı (ETA)** faktörünü hem hava durumu hem de durak bağlamında kullanarak daha doğru sonuç üretmek
+
+Servis;
+
+- `POST /optimize_route` ile rota, bacaklar (drive/charge), tüketim ve hedef SOC değerlerini döner
+- `GET /` altında basit bir **Web UI** sunar (rota sonucu + durak detayları)
+
+Son sürümlerde eklenen en önemli iyileştirmeler:
+
+- **2-Pass planlama**: Durak seçimi ile tüketim arasındaki döngüyü kırmak için önce kaba plan, sonra durak hava durumu ile refine tüketim
+- **ETA bazlı forecast weather**: Varış noktası ve şarj durakları için “şu an” yerine **varış anına en yakın forecast**
+- **Weighted rating + amenities skoru (V2.8)**: Az yorumlu rating’leri yumuşatan puanlama + WC/Yemek/Market/Otopark/Açık bonusları
+- **UI iyileştirmeleri**: İstasyon kaynağı (Google/OCM), rating/yorum sayısı, vicinity ve amenities etiketleri
 
 ## 📌 Durum / Versiyon
 
