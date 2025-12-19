@@ -269,10 +269,13 @@ class MainCalculator:
         # 4️⃣ ELEVATİON ENERJİSİ (sıcaklığa bağlı regen ile)
         # ---------------------------------------------------
         
+        # 🔧 V2.9: Araç bazlı regen verimliliği kullan (varsa)
+        base_regen_eff = getattr(vehicle, 'regen_efficiency', ElevationEffectCalculator.REGEN_EFFICIENCY)
+        
         # Sıcaklığa göre regen verimliliği hesapla
         temp_adjusted_regen_eff = MainCalculator._calculate_temperature_adjusted_regen_efficiency(
             temp_c=weather.temp_c,
-            base_efficiency=ElevationEffectCalculator.REGEN_EFFICIENCY
+            base_efficiency=base_regen_eff
         )
         result.regen_efficiency_applied = temp_adjusted_regen_eff
 

@@ -189,6 +189,10 @@ class FileVehicleCatalog:
                     charging_voltage=int(v.get("charging_voltage", 400)),
                     curb_weight_kg=int(v.get("curb_weight_kg", 1700)),
                     auxiliary_power_kw=float(v.get("auxiliary_power_kw", 1.2)),
+                    # 🔧 V2.9: Rejeneratif frenleme alanları
+                    regen_efficiency=float(v.get("regen_efficiency", 0.65)),
+                    regen_max_power_kw=float(v.get("regen_max_power_kw", 70.0)),
+                    battery_chemistry=str(v.get("battery_chemistry", "NMC")),
                     has_real_curve=bool(v.get("has_real_curve", False)),
                     vehicle_type=vehicle_type,
                 )

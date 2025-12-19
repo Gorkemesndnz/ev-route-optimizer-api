@@ -104,6 +104,7 @@ class ChargeHotspot:
         remaining_distance_km: Varışa kalan mesafe
         min_required_soc: Devam için gereken minimum batarya
         recommended_charge_to: Önerilen şarj hedefi (%)
+        route_bearing: Rota yönü (derece, 0-360) - V2.9: Otoyol filtresi için
     """
     segment_index: int
     location: GeoPoint
@@ -112,6 +113,7 @@ class ChargeHotspot:
     remaining_distance_km: float
     min_required_soc: float
     recommended_charge_to: float = 80.0
+    route_bearing: float = 0.0  # 🔧 V2.9: İstasyon yön filtresi için
 
 
 @dataclass
@@ -295,6 +297,18 @@ class SOCSimulator:
             if should_create_hotspot:
                 # Hotspot'u segment ÖNCESİNDE oluştur (SOC henüz yüksek)
                 prev_cumulative_km = segment.cumulative_distance_km - segment.distance_km
+                
+                # 🔧 V2.9: Rota yönünü hesapla (istasyon yön filtresi için)
+                route_bearing = 0.0
+                if segment.start_point and segment.end_point:
+                    import math
+                    lat1 = math.radians(segment.start_point.lat)
+                    lat2 = math.radians(segment.end_point.lat)
+                    dlon = math.radians(segment.end_point.lon - segment.start_point.lon)
+                    y = math.sin(dlon) * math.cos(lat2)
+                    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+                    route_bearing = (math.degrees(math.atan2(y, x)) + 360) % 360
+                
                 hotspot = ChargeHotspot(
                     segment_index=max(0, segment.index - 1),  # Önceki segment
                     location=segment.end_point,  # Yaklaşık konum
@@ -302,7 +316,8 @@ class SOCSimulator:
                     distance_from_start_km=max(0, prev_cumulative_km),
                     remaining_distance_km=round(remaining_distance + segment.distance_km, 1),
                     min_required_soc=round(min_required_soc, 1),
-                    recommended_charge_to=self.charge_target_soc
+                    recommended_charge_to=self.charge_target_soc,
+                    route_bearing=route_bearing  # 🔧 V2.9
                 )
                 hotspots.append(hotspot)
                 last_hotspot_km = prev_cumulative_km

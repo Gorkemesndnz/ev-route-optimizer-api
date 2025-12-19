@@ -34,10 +34,12 @@ def _get_catalog():
 @dataclass
 class VehicleModel:
     """
-    V2.0 - MainCalculator ile %100 uyumlu araç veri yapısı
+    V2.9 - MainCalculator ile %100 uyumlu araç veri yapısı
     
     Bu dataclass hem legacy VEHICLE_DB hem de yeni FileVehicleCatalog
     ile uyumlu çalışır.
+    
+    V2.9: Rejeneratif frenleme alanları eklendi.
     """
     model_name: str
 
@@ -55,6 +57,11 @@ class VehicleModel:
 
     # Yardımcı sistemler (HVAC, farlar, elektronik)
     auxiliary_power_kw: float = 1.2
+    
+    # 🔧 V2.9: Rejeneratif frenleme özellikleri
+    regen_efficiency: float = 0.65    # Nominal regen verimliliği (0-1)
+    regen_max_power_kw: float = 70.0  # Maksimum regen gücü (kW)
+    battery_chemistry: str = "NMC"    # NMC, LFP, NCA - soğuk hava davranışı için
 
 
 # =============================================================================
@@ -119,6 +126,10 @@ def _convert_spec_to_model(spec) -> VehicleModel:
         avg_dc_charge_rate_kw=spec.dc_max_kw,
         avg_ac_charge_rate_kw=spec.ac_max_kw,
         auxiliary_power_kw=spec.auxiliary_power_kw,
+        # 🔧 V2.9: Rejeneratif frenleme alanları
+        regen_efficiency=getattr(spec, 'regen_efficiency', 0.65),
+        regen_max_power_kw=getattr(spec, 'regen_max_power_kw', 70.0),
+        battery_chemistry=getattr(spec, 'battery_chemistry', 'NMC'),
     )
 
 

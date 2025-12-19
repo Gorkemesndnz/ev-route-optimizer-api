@@ -66,21 +66,28 @@ CORRIDOR_WIDTH_KM = 15.0
 MIN_DC_POWER_KW = 50.0
 MAX_STATIONS_PER_HOTSPOT = 5
 
-# Skorlama ağırlıkları (V2.8: amenities dahil)
-WEIGHT_DEVIATION = 0.40
-WEIGHT_POWER = 0.25
-WEIGHT_RATING = 0.15
-WEIGHT_AMENITIES = 0.20  # 🔧 V2.8: Tesis olanakları
+# Skorlama ağırlıkları (V2.9: Rating ağırlığı artırıldı)
+# 🔧 V2.9: Rating %15 → %25, Deviation %40 → %30 (popüler istasyonlar tercih edilsin)
+WEIGHT_DEVIATION = 0.30
+WEIGHT_POWER = 0.20
+WEIGHT_RATING = 0.25  # 🔧 V2.9: Artırıldı - Highway gibi popüler yerler öncelik alsın
+WEIGHT_AMENITIES = 0.15
+WEIGHT_POPULARITY = 0.10  # 🔧 V2.9: Yüksek yorum sayısı bonusu
 
-# Greedy selection ağırlıkları (V2.8)
-GREEDY_WEIGHT_POWER = 0.35
-GREEDY_WEIGHT_DEVIATION = 0.30
-GREEDY_WEIGHT_RATING = 0.15
-GREEDY_WEIGHT_AMENITIES = 0.20  # 🔧 V2.8: Tesis olanakları
+# Greedy selection ağırlıkları (V2.9: Rating artırıldı)
+GREEDY_WEIGHT_POWER = 0.30
+GREEDY_WEIGHT_DEVIATION = 0.25
+GREEDY_WEIGHT_RATING = 0.25  # 🔧 V2.9: Artırıldı
+GREEDY_WEIGHT_AMENITIES = 0.10
+GREEDY_WEIGHT_POPULARITY = 0.10  # 🔧 V2.9: Yüksek yorum sayısı bonusu
 
-# Weighted rating sabitleri (V2.8)
-RATING_CONFIDENCE_THRESHOLD = 50  # Bu kadar yorum varsa %100 güven
-RATING_PRIOR = 3.5  # Az yorumlu istasyonlar için varsayılan rating
+# Weighted rating sabitleri (V2.9: Threshold artırıldı)
+RATING_CONFIDENCE_THRESHOLD = 100  # 🔧 V2.9: 50 → 100 (daha fazla yorum = daha güvenilir)
+RATING_PRIOR = 3.0  # 🔧 V2.9: 3.5 → 3.0 (az yorumlu istasyonlar dezavantajlı olsun)
+
+# Popülerlik sabitleri (V2.9: Yüksek yorum sayısına bonus)
+POPULARITY_HIGH_THRESHOLD = 200  # 200+ yorum = popüler istasyon
+POPULARITY_VERY_HIGH_THRESHOLD = 500  # 500+ yorum = çok popüler (Highway gibi)
 
 # Amenities bonus değerleri (V2.8) - toplam max 1.0
 AMENITY_BONUS_TOILET = 0.25
@@ -172,6 +179,76 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
+def _calculate_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    İki nokta arasındaki pusula yönünü (bearing) hesaplar.
+    
+    Returns:
+        0-360 derece arası bearing (0=Kuzey, 90=Doğu, 180=Güney, 270=Batı)
+    """
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    dlon = math.radians(lon2 - lon1)
+    
+    y = math.sin(dlon) * math.cos(lat2_rad)
+    x = math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(dlon)
+    
+    bearing = (math.degrees(math.atan2(y, x)) + 360) % 360
+    return bearing
+
+
+def _is_station_on_route_side(
+    route_bearing: float,
+    hotspot_lat: float,
+    hotspot_lon: float,
+    station_lat: float,
+    station_lon: float,
+    max_perpendicular_distance_km: float = 1.0
+) -> Tuple[bool, float]:
+    """
+    🔧 V2.9: İstasyonun rotanın doğru tarafında olup olmadığını kontrol et.
+    
+    Otoyolda karşı yöndeki istasyonları filtrelemek için:
+    - Rota yönüne dik mesafeyi hesapla
+    - Çok uzakta olan istasyonları (yolun karşısı) filtrele
+    
+    Args:
+        route_bearing: Rotanın gittiği yön (derece)
+        hotspot_lat/lon: Şarj gerekli nokta
+        station_lat/lon: İstasyon konumu
+        max_perpendicular_distance_km: Rotaya dik maksimum mesafe (km)
+    
+    Returns:
+        (is_valid, perpendicular_distance_km)
+    """
+    # İstasyona olan bearing
+    station_bearing = _calculate_bearing(hotspot_lat, hotspot_lon, station_lat, station_lon)
+    
+    # Rota ile istasyon arasındaki açı farkı
+    angle_diff = abs(station_bearing - route_bearing)
+    if angle_diff > 180:
+        angle_diff = 360 - angle_diff
+    
+    # İstasyona olan toplam mesafe
+    total_distance = haversine_km(hotspot_lat, hotspot_lon, station_lat, station_lon)
+    
+    # Rotaya dik mesafe (perpendicular) = toplam mesafe × sin(açı farkı)
+    perpendicular_distance = total_distance * math.sin(math.radians(angle_diff))
+    
+    # İleri yönde mesafe (along-route) = toplam mesafe × cos(açı farkı)
+    along_route_distance = total_distance * math.cos(math.radians(angle_diff))
+    
+    # Kriterler:
+    # 1. İstasyon ileri yönde olmalı (arkada değil) - along_route >= -2 km tolerans
+    # 2. Rotaya dik mesafe max_perpendicular_distance_km'den küçük olmalı
+    is_forward = along_route_distance >= -2.0  # 2km geriye tolerans
+    is_close_to_route = perpendicular_distance <= max_perpendicular_distance_km
+    
+    is_valid = is_forward and is_close_to_route
+    
+    return is_valid, perpendicular_distance
+
+
 def _is_connector_compatible(connections: List[dict], vehicle_connector: str) -> bool:
     """İstasyonun bağlayıcı tipinin araçla uyumlu olup olmadığını kontrol et."""
     vehicle_connector_lower = vehicle_connector.lower()
@@ -259,6 +336,27 @@ def _calculate_amenities_score(
     return min(1.0, score)
 
 
+def _calculate_popularity_score(user_ratings_total: int) -> float:
+    """
+    🔧 V2.9: Popülerlik skoru hesapla.
+    
+    Yüksek yorum sayısına sahip istasyonlar (Highway gibi) bonus alır.
+    
+    Returns:
+        0.0 - 1.0 arası popülerlik skoru
+    """
+    if user_ratings_total >= POPULARITY_VERY_HIGH_THRESHOLD:
+        return 1.0  # 500+ yorum = maksimum bonus
+    elif user_ratings_total >= POPULARITY_HIGH_THRESHOLD:
+        return 0.7  # 200-500 yorum = yüksek bonus
+    elif user_ratings_total >= 50:
+        return 0.4  # 50-200 yorum = orta bonus
+    elif user_ratings_total >= 10:
+        return 0.2  # 10-50 yorum = düşük bonus
+    else:
+        return 0.0  # 10'dan az yorum = bonus yok
+
+
 def _calculate_station_score(
     deviation_minutes: float,
     power_kw: float,
@@ -272,9 +370,12 @@ def _calculate_station_score(
     is_open_now: Optional[bool] = None
 ) -> float:
     """
-    🔧 V2.8: İstasyon için ağırlıklı skor hesapla.
+    🔧 V2.9: İstasyon için ağırlıklı skor hesapla.
     
-    Artık weighted rating ve amenities dahil.
+    V2.9 Güncellemeleri:
+    - Rating ağırlığı artırıldı (%15 → %25)
+    - Popülerlik skoru eklendi (yüksek yorum sayısı = bonus)
+    - Highway gibi popüler istasyonlar artık daha fazla tercih edilecek
     """
     deviation_score = max(0, 1 - (deviation_minutes / MAX_DEVIATION_MINUTES))
     power_score = power_kw / max_power_kw if max_power_kw > 0 else 0
@@ -288,11 +389,15 @@ def _calculate_station_score(
         has_toilet, has_food, has_shopping, has_parking, is_open_now
     )
     
+    # 🔧 V2.9: Popülerlik skoru (yüksek yorum sayısı = güvenilir istasyon)
+    popularity_score = _calculate_popularity_score(user_ratings_total)
+    
     return (
         WEIGHT_DEVIATION * deviation_score + 
         WEIGHT_POWER * power_score + 
         WEIGHT_RATING * rating_score +
-        WEIGHT_AMENITIES * amenities_score
+        WEIGHT_AMENITIES * amenities_score +
+        WEIGHT_POPULARITY * popularity_score
     )
 
 
@@ -601,6 +706,22 @@ class CorridorSearcher:
                 if distance > self.corridor_length_km:
                     continue
                 
+                # 🔧 V2.9: Otoyol yön filtresi - yolun karşı tarafındaki istasyonları filtrele
+                # Sadece rota yönü bilgisi varsa ve mesafe 5 km'den küçükse uygula
+                # (uzak istasyonlar zaten farklı lokasyonlarda olabilir)
+                if hotspot.route_bearing > 0 and distance <= 5.0:
+                    is_valid, perp_dist = _is_station_on_route_side(
+                        route_bearing=hotspot.route_bearing,
+                        hotspot_lat=hotspot.location.lat,
+                        hotspot_lon=hotspot.location.lon,
+                        station_lat=station_lat,
+                        station_lon=station_lng,
+                        max_perpendicular_distance_km=1.5  # Otoyolda 1.5 km tolerans
+                    )
+                    if not is_valid:
+                        logger.debug(f"Station filtered (wrong side): {station.get('name')} - perp_dist={perp_dist:.2f}km")
+                        continue
+                
                 # Rating al (Google doğrudan sağlar)
                 rating = station.get("rating", 4.0)
                 user_ratings_total = station.get("user_ratings_total", 0)
@@ -755,6 +876,20 @@ class CorridorSearcher:
             if distance > self.corridor_length_km:
                 continue
             
+            # 🔧 V2.9: Otoyol yön filtresi - yolun karşı tarafındaki istasyonları filtrele
+            if hotspot.route_bearing > 0 and distance <= 5.0:
+                is_valid, perp_dist = _is_station_on_route_side(
+                    route_bearing=hotspot.route_bearing,
+                    hotspot_lat=hotspot.location.lat,
+                    hotspot_lon=hotspot.location.lon,
+                    station_lat=station_lat,
+                    station_lon=station_lon,
+                    max_perpendicular_distance_km=1.5
+                )
+                if not is_valid:
+                    logger.debug(f"OCM station filtered (wrong side): {address_info.get('Title')} - perp_dist={perp_dist:.2f}km")
+                    continue
+            
             # Rating
             user_comments = station.get("UserComments", [])
             rating = 4.0
@@ -826,8 +961,11 @@ class CorridorSearcher:
         current_soc: float
     ) -> Optional[CorridorStation]:
         """
-        🔧 V2.8: Greedy algoritma ile en iyi istasyonu seç.
-        Artık weighted rating ve amenities dahil.
+        🔧 V2.9: Greedy algoritma ile en iyi istasyonu seç.
+        
+        V2.9 Güncellemeleri:
+        - Rating ağırlığı artırıldı
+        - Popülerlik skoru eklendi (Highway gibi popüler yerler tercih edilsin)
         """
         if not stations:
             return None
@@ -836,15 +974,22 @@ class CorridorSearcher:
         power_weight = GREEDY_WEIGHT_POWER
         deviation_weight = GREEDY_WEIGHT_DEVIATION
         amenities_weight = GREEDY_WEIGHT_AMENITIES
+        rating_weight = GREEDY_WEIGHT_RATING
+        popularity_weight = GREEDY_WEIGHT_POPULARITY
         
         if current_soc < 20.0:
-            power_weight = 0.50
-            deviation_weight = 0.20
-            amenities_weight = 0.15  # Acil durumlarda amenities daha az önemli
-        elif current_soc < 30.0:
+            # Acil durum: güç en önemli, popülerlik hala önemli
             power_weight = 0.45
-            deviation_weight = 0.25
-            amenities_weight = 0.15
+            deviation_weight = 0.15
+            amenities_weight = 0.05
+            rating_weight = 0.20
+            popularity_weight = 0.15  # Popüler yerlerde şarjcı boş olma ihtimali düşük
+        elif current_soc < 30.0:
+            power_weight = 0.40
+            deviation_weight = 0.20
+            amenities_weight = 0.05
+            rating_weight = 0.20
+            popularity_weight = 0.15
         
         best_station = None
         best_greedy_score = -1
@@ -866,11 +1011,15 @@ class CorridorSearcher:
                 station.is_open_now
             )
             
+            # 🔧 V2.9: Popülerlik skoru
+            popularity_score = _calculate_popularity_score(station.user_ratings_total)
+            
             greedy_score = (
                 power_weight * power_score +
                 deviation_weight * deviation_score +
-                GREEDY_WEIGHT_RATING * rating_score +
-                amenities_weight * amenities_score
+                rating_weight * rating_score +
+                amenities_weight * amenities_score +
+                popularity_weight * popularity_score
             )
             
             if greedy_score > best_greedy_score:

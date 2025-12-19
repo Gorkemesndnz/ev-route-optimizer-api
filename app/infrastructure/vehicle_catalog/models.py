@@ -134,6 +134,11 @@ class VehicleSpec:
     curb_weight_kg: int = 1700
     auxiliary_power_kw: float = 1.2
     
+    # 🔧 V2.9: Rejeneratif frenleme özellikleri
+    regen_efficiency: float = 0.65  # Nominal regen verimliliği (0-1)
+    regen_max_power_kw: float = 70.0  # Maksimum regen gücü (kW)
+    battery_chemistry: str = "NMC"  # NMC, LFP, NCA - soğuk hava davranışı için
+    
     # Metadata
     has_real_curve: bool = False
     vehicle_type: VehicleType = VehicleType.CAR
@@ -160,6 +165,9 @@ class VehicleSpec:
             "charging_voltage": self.charging_voltage,
             "curb_weight_kg": self.curb_weight_kg,
             "auxiliary_power_kw": self.auxiliary_power_kw,
+            "regen_efficiency": self.regen_efficiency,
+            "regen_max_power_kw": self.regen_max_power_kw,
+            "battery_chemistry": self.battery_chemistry,
             "has_real_curve": self.has_real_curve,
             "vehicle_type": self.vehicle_type.value,
         }
