@@ -416,14 +416,16 @@ class CorridorSearcher:
     async def _fetch_stations_google_first(self, hotspot: ChargeHotspot) -> Tuple[List[Dict[str, Any]], str]:
         """
         Google Places öncelikli istasyon arama.
-        Google boş dönerse OCM'ye fallback yapar.
+        🔧 V3.2: Hibrit sistem - Google'da kW yoksa OCM'den cross-reference.
         
         Returns:
             (stations_list, source) - source: "google" veya "ocm"
         """
         search_radius_m = int(max(self.corridor_length_km, self.corridor_width_km) * 1000)
+        search_radius_km = max(self.corridor_length_km, self.corridor_width_km)
         
         # 1. Google Places API (New) - evChargeOptions ile gerçek güç bilgisi
+        google_stations = []
         try:
             google_stations = await google_maps.search_ev_charging_stations_new(
                 lat=hotspot.location.lat,
@@ -433,20 +435,61 @@ class CorridorSearcher:
             )
             
             if google_stations:
-                logger.info(f"Google Places (New) returned {len(google_stations)} stations with power info")
-                return google_stations, "google"
+                logger.info(f"Google Places (New) returned {len(google_stations)} stations")
             else:
                 logger.info("Google Places (New) returned empty, falling back to OCM")
                 
         except Exception as e:
-            logger.warning(f"Google Places search failed: {e}, falling back to OCM")
+            logger.warning(f"Google Places search failed: {e}")
         
-        # 2. OCM fallback
+        # 2. 🔧 Hibrit: Google'da kW=0 olan istasyonlar var mı? OCM'den cross-reference yap
+        stations_without_power = [s for s in google_stations if s.get("max_power_kw", 0) == 0]
+        
+        if google_stations and stations_without_power:
+            logger.info(f"Hybrid mode: {len(stations_without_power)} stations need OCM power lookup")
+            
+            try:
+                # OCM'den de istasyonları al
+                ocm_stations = await ocm_service.get_nearby_stations_raw(
+                    lat=hotspot.location.lat,
+                    lon=hotspot.location.lon,
+                    radius_km=search_radius_km
+                )
+                
+                if ocm_stations:
+                    # OCM istasyonlarından güç değerlerini çıkar (konum -> güç map)
+                    ocm_power_map = self._build_ocm_power_map(ocm_stations)
+                    
+                    # Google istasyonlarını OCM ile zenginleştir
+                    enriched_count = 0
+                    for station in google_stations:
+                        if station.get("max_power_kw", 0) == 0:
+                            # Bu istasyonun konumuna yakın OCM istasyonu var mı?
+                            lat = station.get("geometry", {}).get("location", {}).get("lat", 0)
+                            lng = station.get("geometry", {}).get("location", {}).get("lng", 0)
+                            
+                            ocm_power = self._find_ocm_power_nearby(lat, lng, ocm_power_map)
+                            if ocm_power > 0:
+                                station["max_power_kw"] = ocm_power
+                                station["_power_source"] = "ocm_crossref"
+                                enriched_count += 1
+                    
+                    if enriched_count > 0:
+                        logger.info(f"Hybrid: enriched {enriched_count} stations with OCM power data")
+                        
+            except Exception as e:
+                logger.warning(f"OCM cross-reference failed: {e}")
+        
+        # 3. Google sonuçları varsa döndür
+        if google_stations:
+            return google_stations, "google"
+        
+        # 4. Google boşsa OCM fallback
         try:
             ocm_stations = await ocm_service.get_nearby_stations_raw(
                 lat=hotspot.location.lat,
                 lon=hotspot.location.lon,
-                radius_km=max(self.corridor_length_km, self.corridor_width_km)
+                radius_km=search_radius_km
             )
             
             if ocm_stations:
@@ -457,6 +500,42 @@ class CorridorSearcher:
             logger.error(f"OCM API call also failed: {e}")
         
         return [], "none"
+    
+    def _build_ocm_power_map(self, ocm_stations: List[Dict[str, Any]]) -> List[Tuple[float, float, float]]:
+        """
+        OCM istasyonlarından (lat, lon, power_kw) listesi oluştur.
+        """
+        power_map = []
+        for station in ocm_stations:
+            address = station.get("AddressInfo", {})
+            lat = address.get("Latitude", 0)
+            lon = address.get("Longitude", 0)
+            
+            if not lat or not lon:
+                continue
+            
+            # Max gücü bul
+            connections = station.get("Connections", [])
+            max_power = 0.0
+            for conn in connections:
+                power = conn.get("PowerKW") or 0
+                if power > max_power:
+                    max_power = float(power)
+            
+            if max_power > 0:
+                power_map.append((lat, lon, max_power))
+        
+        return power_map
+    
+    def _find_ocm_power_nearby(self, lat: float, lng: float, ocm_power_map: List[Tuple[float, float, float]], threshold_km: float = 0.2) -> float:
+        """
+        Verilen konuma yakın (200m içinde) OCM istasyonunun gücünü bul.
+        """
+        for ocm_lat, ocm_lon, power in ocm_power_map:
+            distance = haversine_km(lat, lng, ocm_lat, ocm_lon)
+            if distance <= threshold_km:
+                return power
+        return 0.0
 
     async def _fetch_stations_from_ocm(self, hotspot: ChargeHotspot) -> List[Dict[str, Any]]:
         """OCM API'den istasyonları çek (legacy - backward compatibility)."""
