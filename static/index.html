@@ -158,23 +158,37 @@
                                         Araç Modeli
                                     </span>
                                 </label>
-                                <select id="vehicleModel"
-                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all appearance-none cursor-pointer"
-                                    required>
-                                    <option value="mg4_51kwh" class="bg-slate-800">🚗 MG4 Electric 51 kWh</option>
-                                    <option value="tesla_model_3_long_range" class="bg-slate-800">⚡ Tesla Model 3 Long
-                                        Range</option>
-                                    <option value="opel_frontera_44" class="bg-slate-800">🚙 Opel Frontera 44 kWh
-                                    </option>
-                                </select>
+                                <div class="space-y-3">
+                                    <select id="vehicleBrand"
+                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all appearance-none cursor-pointer">
+                                        <option value="" class="bg-slate-800">Marka yükleniyor...</option>
+                                    </select>
+
+                                    <div class="relative">
+                                        <input type="text" id="vehicleSearch"
+                                            class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 input-glow transition-all"
+                                            placeholder="Ara (örn: Tesla Model 3)" autocomplete="off">
+                                        <div id="vehicleSearchResults"
+                                            class="hidden absolute left-0 right-0 mt-2 max-h-60 overflow-auto bg-slate-900/95 border border-white/10 rounded-xl shadow-xl z-50">
+                                        </div>
+                                    </div>
+
+                                    <select id="vehicleModel"
+                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all appearance-none cursor-pointer"
+                                        required>
+                                        <option value="" class="bg-slate-800">Önce marka seçin</option>
+                                    </select>
+                                </div>
                             </div>
 
                             <!-- Route Strategy -->
                             <div>
                                 <label class="block text-gray-400 text-sm mb-2">
                                     <span class="flex items-center gap-2">
-                                        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8M11 17H3m0 0V9m0 8l8-8" />
+                                        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M13 7h8m0 0v8m0-8l-8 8M11 17H3m0 0V9m0 8l8-8" />
                                         </svg>
                                         Rota Stratejisi
                                     </span>
@@ -191,8 +205,10 @@
                             <div>
                                 <label class="block text-gray-400 text-sm mb-2">
                                     <span class="flex items-center gap-2">
-                                        <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                                         </svg>
                                         Çıkış Zamanı (Opsiyonel)
                                     </span>

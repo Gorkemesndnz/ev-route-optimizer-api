@@ -25,7 +25,7 @@ import traceback
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -40,6 +40,7 @@ from app.services.google_service import google_maps
 from app.utils.logger import get_logger
 from app.utils.config_manager import config
 from app.consumption_engine.vehicle_models import get_vehicle_model, VEHICLE_DB
+from app.infrastructure.vehicle_catalog import FileVehicleCatalog
 
 
 # =============================================================================
@@ -47,6 +48,8 @@ from app.consumption_engine.vehicle_models import get_vehicle_model, VEHICLE_DB
 # =============================================================================
 
 logger = get_logger("main_api")
+
+vehicle_catalog = FileVehicleCatalog()
 
 
 @asynccontextmanager
@@ -470,6 +473,64 @@ async def geocode_address(address: str):
             status_code=500,
             detail="Geocoding hatası"
         )
+
+
+# =============================================================================
+# VEHICLE CATALOG ENDPOINTS (UI Support)
+# =============================================================================
+
+
+@app.get("/vehicles/brands", tags=["Vehicles"])
+async def list_vehicle_brands():
+    return {
+        "status": "success",
+        "brands": vehicle_catalog.get_all_brands(),
+    }
+
+
+@app.get("/vehicles/by_brand", tags=["Vehicles"])
+async def list_vehicles_by_brand(
+    brand: str = Query(..., min_length=1),
+    limit: int = Query(500, ge=1, le=5000),
+):
+    vehicles = vehicle_catalog.search(brand=brand, limit=limit)
+    return {
+        "status": "success",
+        "brand": brand,
+        "vehicles": [
+            {
+                "id": v.id,
+                "display_name": v.display_name,
+                "year": v.year,
+                "battery_kwh": v.battery_capacity_kwh,
+                "dc_max_kw": v.dc_max_kw,
+            }
+            for v in vehicles
+        ],
+    }
+
+
+@app.get("/vehicles/search", tags=["Vehicles"])
+async def search_vehicles(
+    query: str = Query("", min_length=0),
+    limit: int = Query(50, ge=1, le=500),
+):
+    vehicles = vehicle_catalog.search(query=query, limit=limit)
+    return {
+        "status": "success",
+        "query": query,
+        "vehicles": [
+            {
+                "id": v.id,
+                "display_name": v.display_name,
+                "brand": v.brand,
+                "model": v.model,
+                "variant": v.variant,
+                "year": v.year,
+            }
+            for v in vehicles
+        ],
+    }
 
 
 if __name__ == "__main__":

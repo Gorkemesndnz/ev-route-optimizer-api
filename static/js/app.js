@@ -105,7 +105,168 @@ document.addEventListener('DOMContentLoaded', function () {
     if (routeForm) {
         routeForm.addEventListener('submit', handleFormSubmit);
     }
+
+    initVehicleCatalogUI();
 });
+
+async function initVehicleCatalogUI() {
+    const brandEl = document.getElementById('vehicleBrand');
+    const modelEl = document.getElementById('vehicleModel');
+    const searchEl = document.getElementById('vehicleSearch');
+    const resultsEl = document.getElementById('vehicleSearchResults');
+
+    if (!brandEl || !modelEl) return;
+
+    const setBrandOptions = (brands) => {
+        brandEl.innerHTML = '';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Marka seçin';
+        placeholder.className = 'bg-slate-800';
+        brandEl.appendChild(placeholder);
+
+        for (const b of brands) {
+            const opt = document.createElement('option');
+            opt.value = b;
+            opt.textContent = b;
+            opt.className = 'bg-slate-800';
+            brandEl.appendChild(opt);
+        }
+    };
+
+    const setModelOptions = (vehicles, placeholderText = 'Model seçin') => {
+        modelEl.innerHTML = '';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = placeholderText;
+        placeholder.className = 'bg-slate-800';
+        modelEl.appendChild(placeholder);
+
+        for (const v of vehicles) {
+            const opt = document.createElement('option');
+            opt.value = v.id;
+            opt.textContent = v.display_name;
+            opt.className = 'bg-slate-800';
+            modelEl.appendChild(opt);
+        }
+    };
+
+    const hideResults = () => {
+        if (!resultsEl) return;
+        resultsEl.classList.add('hidden');
+        resultsEl.innerHTML = '';
+    };
+
+    const showResults = (items) => {
+        if (!resultsEl) return;
+        resultsEl.innerHTML = '';
+        resultsEl.classList.remove('hidden');
+
+        if (!items || items.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'px-4 py-3 text-sm text-gray-400';
+            empty.textContent = 'Sonuç bulunamadı';
+            resultsEl.appendChild(empty);
+            return;
+        }
+
+        for (const item of items) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'w-full text-left px-4 py-3 text-sm text-white hover:bg-white/10 transition-colors';
+            btn.textContent = item.display_name;
+            btn.addEventListener('click', async () => {
+                hideResults();
+                if (searchEl) searchEl.value = item.display_name;
+                if (brandEl && item.brand) {
+                    brandEl.value = item.brand;
+                    try {
+                        const brandResp = await fetch(`/vehicles/by_brand?brand=${encodeURIComponent(item.brand)}&limit=5000`);
+                        const brandData = await brandResp.json();
+                        const vehicles = Array.isArray(brandData.vehicles) ? brandData.vehicles : [];
+                        setModelOptions(vehicles, 'Model seçin');
+                        modelEl.value = item.id;
+                    } catch (e) {
+                        setModelOptions([{ id: item.id, display_name: item.display_name }], 'Model seçin');
+                        modelEl.value = item.id;
+                    }
+                } else {
+                    setModelOptions([{ id: item.id, display_name: item.display_name }], 'Model seçin');
+                    modelEl.value = item.id;
+                }
+            });
+            resultsEl.appendChild(btn);
+        }
+    };
+
+    try {
+        const resp = await fetch('/vehicles/brands');
+        const data = await resp.json();
+        const brands = Array.isArray(data.brands) ? data.brands : [];
+        setBrandOptions(brands);
+    } catch (e) {
+        brandEl.innerHTML = '<option value="" class="bg-slate-800">Markalar yüklenemedi</option>';
+    }
+
+    brandEl.addEventListener('change', async () => {
+        hideResults();
+        const brand = brandEl.value;
+        if (!brand) {
+            setModelOptions([], 'Önce marka seçin');
+            return;
+        }
+        try {
+            modelEl.disabled = true;
+            setModelOptions([], 'Modeller yükleniyor...');
+            const resp = await fetch(`/vehicles/by_brand?brand=${encodeURIComponent(brand)}&limit=5000`);
+            const data = await resp.json();
+            const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
+            setModelOptions(vehicles, vehicles.length ? 'Model seçin' : 'Model bulunamadı');
+        } catch (e) {
+            setModelOptions([], 'Model yüklenemedi');
+        } finally {
+            modelEl.disabled = false;
+        }
+    });
+
+    if (searchEl && resultsEl) {
+        let debounceTimer = null;
+
+        const runSearch = async () => {
+            const q = (searchEl.value || '').trim();
+            if (q.length < 2) {
+                hideResults();
+                return;
+            }
+            try {
+                const resp = await fetch(`/vehicles/search?query=${encodeURIComponent(q)}&limit=20`);
+                const data = await resp.json();
+                const vehicles = Array.isArray(data.vehicles) ? data.vehicles : [];
+                showResults(vehicles);
+            } catch (e) {
+                hideResults();
+            }
+        };
+
+        searchEl.addEventListener('input', () => {
+            if (debounceTimer) window.clearTimeout(debounceTimer);
+            debounceTimer = window.setTimeout(runSearch, 200);
+        });
+
+        document.addEventListener('click', (evt) => {
+            const target = evt.target;
+            if (!target) return;
+            if (target === searchEl || resultsEl.contains(target)) return;
+            hideResults();
+        });
+
+        searchEl.addEventListener('keydown', (evt) => {
+            if (evt.key === 'Escape') {
+                hideResults();
+            }
+        });
+    }
+}
 
 /**
  * Form submit handler

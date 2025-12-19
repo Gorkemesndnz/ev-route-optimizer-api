@@ -183,3 +183,5 @@ cython_debug/
 # Raw data files (large, downloaded externally)
 data/raw/*.json
 data/raw/*.csv
+
+notebooks/future_training_data/*.jsonl
