@@ -3324,23 +3324,23 @@
       "points": [
         {
           "soc": 0,
-          "power_kw": 101.7
+          "power_kw": 195
         },
         {
           "soc": 30,
-          "power_kw": 101.7
+          "power_kw": 190
         },
         {
           "soc": 60,
-          "power_kw": 71.19
+          "power_kw": 140
         },
         {
           "soc": 80,
-          "power_kw": 40.68
+          "power_kw": 80
         },
         {
           "soc": 100,
-          "power_kw": 11
+          "power_kw": 20
         }
       ]
     },

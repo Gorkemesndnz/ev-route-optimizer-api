@@ -44,6 +44,7 @@ from app.services.weather_service import weather_service
 from app.consumption_engine.vehicle_models import get_vehicle_model, VehicleModel
 from app.utils.config_manager import config
 from app.utils.logger import get_logger
+from app.utils.charging_estimator import estimate_dc_charging_power
 
 
 # =============================================================================
@@ -634,9 +635,10 @@ class CorridorSearcher:
                 opening_hours = station.get("opening_hours", {})
                 is_open_now = opening_hours.get("open_now") if opening_hours else None
                 
-                # 🔧 V3.1: Google Places API (New) - evChargeOptions'dan gerçek güç bilgisi
+                # 🔧 V3.3: Google Places API (New) - evChargeOptions'dan gerçek güç bilgisi
+                # Akıllı fallback: 50 kW sabit değer yerine tipik DC şarj gücü (120 kW)
                 real_power_kw = station.get("max_power_kw", 0)
-                estimated_power_kw = real_power_kw if real_power_kw > 0 else 50.0  # Fallback 50 kW
+                estimated_power_kw = real_power_kw if real_power_kw > 0 else 120.0  # Akıllı fallback
                 
                 # Station info'yu Google formatında oluştur (OCM uyumlu dict)
                 station_info = {

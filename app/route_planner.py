@@ -50,6 +50,7 @@ from app.services.google_service import google_maps
 from app.sustainability_calculator import calculate_co2_savings
 from app.utils.logger import get_logger
 from app.utils.data_logger import log_route_decision, log_consumption
+from app.utils.charging_estimator import get_smart_dc_max, is_curve_suspicious
 
 logger = get_logger("route_planner")
 weather_service = WeatherService()
@@ -352,27 +353,37 @@ def _build_multi_legs(
         
         # 2. ChargeLeg: Şarj süresi hesapla (Hybrid: eğri varsa kullan, yoksa fallback)
         hotspot_target_soc = hotspot.recommended_charge_to
-        charge_power_kw = station.power_kw if station.power_kw > 0 else 50.0
+        charge_power_kw = station.power_kw if station.power_kw > 0 else 120.0  # Akıllı fallback
         
-        # 🔧 V3.0: Araç şarj eğrisi varsa ChargingTimeCalculator kullan
+        # 🔧 V3.3: Akıllı şarj süresi hesaplama (yanlış veri tespiti dahil)
         catalog = _get_vehicle_catalog()
         vehicle_curve = catalog.get_charge_curve(vehicle_model_id) if vehicle_model_id else None
+        vehicle_spec = catalog.get_by_id(vehicle_model_id) if vehicle_model_id else None
         
+        # Eğri ve spec değerlerini al
+        curve_peak_kw = 0.0
         if vehicle_curve and vehicle_curve.points:
-            # Gerçek araç eğrisi var → daha doğru hesaplama
-            vehicle_spec = catalog.get_by_id(vehicle_model_id)
             curve_peak_kw = max((p.power_kw for p in vehicle_curve.points), default=0.0)
-
-            # dc_max seçimi:
-            # - spec.dc_max_kw bazen dataset eksikliğinden 50kW default kalabiliyor
-            # - eğri absolute kW ise (peak > 1.0), eğrinin tepe değerini de dikkate al
-            # - multiplier eğri ise (peak <= 1.0), dc_max için spec/station fallback devam eder
-            spec_dc_max = vehicle_spec.dc_max_kw if vehicle_spec else 0.0
-            if curve_peak_kw > 1.0:
-                dc_max = max(spec_dc_max, curve_peak_kw, charge_power_kw)
-            else:
-                dc_max = spec_dc_max if spec_dc_max > 0 else charge_power_kw
-
+        
+        spec_dc_max = vehicle_spec.dc_max_kw if vehicle_spec else 0.0
+        
+        # 🔧 Akıllı DC max: yanlış veri tespiti ve otomatik düzeltme
+        dc_max, dc_source = get_smart_dc_max(
+            spec_dc_max_kw=spec_dc_max,
+            battery_capacity_kwh=battery_capacity_kwh,
+            curve_peak_kw=curve_peak_kw,
+            station_power_kw=charge_power_kw
+        )
+        
+        # Eğri varsa ve güvenilirse kullan
+        curve_is_valid = (
+            vehicle_curve and 
+            vehicle_curve.points and 
+            curve_peak_kw > 1.0 and 
+            not is_curve_suspicious(curve_peak_kw, battery_capacity_kwh)
+        )
+        
+        if curve_is_valid:
             calculator = ChargingTimeCalculator(vehicle_curve, dc_max)
             charge_duration, _ = calculator.calculate_charge_time(
                 battery_kwh=battery_capacity_kwh,
@@ -382,21 +393,25 @@ def _build_multi_legs(
             )
             kwh_to_add = (hotspot_target_soc - max(0, end_soc)) / 100.0 * battery_capacity_kwh
             logger.debug(
-                f"[CHARGE] Using real curve for {vehicle_model_id}: {charge_duration:.1f} min "
-                f"(station={charge_power_kw:.0f}kW, dc_max={dc_max:.0f}kW, curve_peak={curve_peak_kw:.0f}kW)"
+                f"[CHARGE] Curve mode for {vehicle_model_id}: {charge_duration:.1f} min "
+                f"(station={charge_power_kw:.0f}kW, dc_max={dc_max:.0f}kW [{dc_source}])"
             )
         else:
-            # Eğri yok → mevcut genel modele fallback
+            # Eğri yok veya güvenilir değil → akıllı fallback
+            smart_power = min(dc_max, charge_power_kw)
             charge_result = calculate_charge_time(
                 start_soc=max(0, end_soc),
                 target_soc=hotspot_target_soc,
                 battery_capacity_kwh=battery_capacity_kwh,
-                peak_power_kw=charge_power_kw,
+                peak_power_kw=smart_power,
                 temperature_c=temperature_c
             )
             charge_duration = charge_result.duration_minutes
             kwh_to_add = charge_result.energy_added_kwh
-            logger.debug(f"[CHARGE] Using fallback model for {vehicle_model_id}: {charge_duration:.1f} min")
+            logger.debug(
+                f"[CHARGE] Fallback mode for {vehicle_model_id}: {charge_duration:.1f} min "
+                f"(smart_power={smart_power:.0f}kW [{dc_source}])"
+            )
         
         # V2.0: Google Places verilerini dahil et
         station_source = station.station_info.get("_source", "ocm")
@@ -424,7 +439,7 @@ def _build_multi_legs(
                 ConnectorInfo(
                     plug_type=PlugType.CCS2,
                     charger_type=ChargerType.DC,
-                    power_kw=station.power_kw if station.power_kw > 0 else 50.0
+                    power_kw=station.power_kw if station.power_kw > 0 else 120.0
                 )
             ],
             amenities=station_amenities,  # 🔧 V2.8
