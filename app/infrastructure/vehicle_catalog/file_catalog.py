@@ -42,6 +42,7 @@ class FileVehicleCatalog:
             data_dir = Path(__file__).parents[3] / "data" / "processed"
         
         self._data_dir = data_dir
+        self._overrides_dir = data_dir.parents[0] / "overrides"
         self._vehicles: Dict[str, VehicleSpec] = {}
         self._curves: Dict[str, ChargeCurve] = {}
         self._brands: List[str] = []
@@ -52,7 +53,102 @@ class FileVehicleCatalog:
         """Load data from JSON files"""
         self._load_vehicles()
         self._load_curves()
+        self._apply_overrides()
         self._brands = sorted(set(v.brand for v in self._vehicles.values()))
+
+    def _apply_overrides(self) -> None:
+        vehicle_overrides_path = self._overrides_dir / "vehicle_overrides.json"
+        curve_overrides_path = self._overrides_dir / "curve_overrides.json"
+
+        if vehicle_overrides_path.exists():
+            try:
+                with open(vehicle_overrides_path, "r", encoding="utf-8") as f:
+                    vehicle_overrides = json.load(f)
+                for vehicle_id, patch in (vehicle_overrides.get("vehicles") or {}).items():
+                    spec = self._vehicles.get(vehicle_id)
+                    if not spec:
+                        required = [
+                            "brand",
+                            "model",
+                            "year",
+                            "battery_capacity_kwh",
+                            "base_consumption_wh_km",
+                        ]
+                        if all(k in patch for k in required):
+                            connector_str = patch.get("connector_type", "CCS")
+                            connector_type = ConnectorType.from_string(connector_str)
+
+                            vtype_str = patch.get("vehicle_type", "car")
+                            try:
+                                vehicle_type = VehicleType(vtype_str.lower())
+                            except ValueError:
+                                vehicle_type = VehicleType.CAR
+
+                            spec = VehicleSpec(
+                                id=vehicle_id,
+                                source_id=patch.get("source_id", ""),
+                                brand=str(patch["brand"]),
+                                model=str(patch["model"]),
+                                variant=str(patch.get("variant", "")),
+                                year=int(patch["year"]),
+                                display_name=patch.get(
+                                    "display_name",
+                                    f"{patch['brand']} {patch['model']} ({patch['year']})",
+                                ),
+                                battery_capacity_kwh=float(patch["battery_capacity_kwh"]),
+                                base_consumption_wh_km=float(patch["base_consumption_wh_km"]),
+                                connector_type=connector_type,
+                                ac_max_kw=float(patch.get("ac_max_kw", 11.0)),
+                                dc_max_kw=float(patch.get("dc_max_kw", 50.0)),
+                                charging_voltage=int(patch.get("charging_voltage", 400)),
+                                curb_weight_kg=int(patch.get("curb_weight_kg", 1700)),
+                                auxiliary_power_kw=float(patch.get("auxiliary_power_kw", 1.2)),
+                                has_real_curve=bool(patch.get("has_real_curve", False)),
+                                vehicle_type=vehicle_type,
+                            )
+                            self._vehicles[spec.id] = spec
+                        else:
+                            continue
+                    if "battery_capacity_kwh" in patch:
+                        spec.battery_capacity_kwh = float(patch["battery_capacity_kwh"])
+                    if "base_consumption_wh_km" in patch:
+                        spec.base_consumption_wh_km = float(patch["base_consumption_wh_km"])
+                    if "ac_max_kw" in patch:
+                        spec.ac_max_kw = float(patch["ac_max_kw"])
+                    if "dc_max_kw" in patch:
+                        spec.dc_max_kw = float(patch["dc_max_kw"])
+            except Exception:
+                pass
+
+        if curve_overrides_path.exists():
+            try:
+                with open(curve_overrides_path, "r", encoding="utf-8") as f:
+                    curve_overrides = json.load(f)
+                for vehicle_id, curve_data in (curve_overrides.get("curves") or {}).items():
+                    points = []
+                    for p in curve_data.get("points", []):
+                        points.append(
+                            ChargeCurvePoint(
+                                soc_percent=float(p["soc"]),
+                                power_kw=float(p["power_kw"]),
+                            )
+                        )
+                    if not points:
+                        continue
+
+                    is_measured = curve_data.get("source") == "measured"
+                    curve = ChargeCurve(
+                        vehicle_id=vehicle_id,
+                        is_measured=is_measured,
+                        points=points,
+                    )
+                    self._curves[vehicle_id] = curve
+
+                    spec = self._vehicles.get(vehicle_id)
+                    if spec is not None:
+                        spec.has_real_curve = True
+            except Exception:
+                pass
     
     def _load_vehicles(self) -> None:
         """Load vehicles from vehicles_master.json"""

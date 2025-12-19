@@ -1,0 +1,8 @@
+{
+    "meta": {
+        "version": "1.0",
+        "description": "Manual charging curve overrides",
+        "updated_at": ""
+    },
+    "curves": {}
+}

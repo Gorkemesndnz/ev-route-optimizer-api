@@ -1,0 +1,8 @@
+{
+    "meta": {
+        "version": "1.0",
+        "description": "Manual vehicle spec overrides (dc_max_kw, ac_max_kw, battery_capacity_kwh, etc.)",
+        "updated_at": ""
+    },
+    "vehicles": {}
+}
