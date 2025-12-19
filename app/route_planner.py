@@ -361,7 +361,18 @@ def _build_multi_legs(
         if vehicle_curve and vehicle_curve.points:
             # Gerçek araç eğrisi var → daha doğru hesaplama
             vehicle_spec = catalog.get_by_id(vehicle_model_id)
-            dc_max = vehicle_spec.dc_max_kw if vehicle_spec else charge_power_kw
+            curve_peak_kw = max((p.power_kw for p in vehicle_curve.points), default=0.0)
+
+            # dc_max seçimi:
+            # - spec.dc_max_kw bazen dataset eksikliğinden 50kW default kalabiliyor
+            # - eğri absolute kW ise (peak > 1.0), eğrinin tepe değerini de dikkate al
+            # - multiplier eğri ise (peak <= 1.0), dc_max için spec/station fallback devam eder
+            spec_dc_max = vehicle_spec.dc_max_kw if vehicle_spec else 0.0
+            if curve_peak_kw > 1.0:
+                dc_max = max(spec_dc_max, curve_peak_kw, charge_power_kw)
+            else:
+                dc_max = spec_dc_max if spec_dc_max > 0 else charge_power_kw
+
             calculator = ChargingTimeCalculator(vehicle_curve, dc_max)
             charge_duration, _ = calculator.calculate_charge_time(
                 battery_kwh=battery_capacity_kwh,
@@ -370,7 +381,10 @@ def _build_multi_legs(
                 station_max_kw=charge_power_kw
             )
             kwh_to_add = (hotspot_target_soc - max(0, end_soc)) / 100.0 * battery_capacity_kwh
-            logger.debug(f"[CHARGE] Using real curve for {vehicle_model_id}: {charge_duration:.1f} min")
+            logger.debug(
+                f"[CHARGE] Using real curve for {vehicle_model_id}: {charge_duration:.1f} min "
+                f"(station={charge_power_kw:.0f}kW, dc_max={dc_max:.0f}kW, curve_peak={curve_peak_kw:.0f}kW)"
+            )
         else:
             # Eğri yok → mevcut genel modele fallback
             charge_result = calculate_charge_time(
