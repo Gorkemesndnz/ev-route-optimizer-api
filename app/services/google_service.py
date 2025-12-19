@@ -270,7 +270,113 @@ class GoogleMapsService(BaseService):
         return data
 
     # ============================================================
-    # 5) PLACES NEARBY SEARCH → EV Şarj İstasyonları
+    # 5) PLACES API (NEW) → EV Şarj İstasyonları with evChargeOptions
+    # ============================================================
+    @cacheable(prefix="google_ev_stations_new", ttl_seconds=3600)
+    async def search_ev_charging_stations_new(
+        self,
+        lat: float,
+        lon: float,
+        radius_m: int = 50000,
+        max_results: int = 20
+    ) -> list:
+        """
+        Google Places API (New) ile EV şarj istasyonlarını arar.
+        evChargeOptions field'ı ile şarj gücü (kW) bilgisi alır.
+        
+        Args:
+            lat: Merkez enlem
+            lon: Merkez boylam
+            radius_m: Arama yarıçapı (metre, max 50000)
+            max_results: Maksimum sonuç sayısı
+            
+        Returns:
+            EV istasyon listesi (evChargeOptions dahil)
+        """
+        url = "https://places.googleapis.com/v1/places:searchNearby"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": self.api_key,
+            "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.rating,places.userRatingCount,places.evChargeOptions,places.formattedAddress,places.types,places.businessStatus"
+        }
+        
+        body = {
+            "includedTypes": ["electric_vehicle_charging_station"],
+            "maxResultCount": min(max_results, 20),  # API max 20
+            "locationRestriction": {
+                "circle": {
+                    "center": {
+                        "latitude": lat,
+                        "longitude": lon
+                    },
+                    "radius": float(min(radius_m, 50000))
+                }
+            }
+        }
+        
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                response = await client.post(url, json=body, headers=headers)
+                if response.status_code != 200:
+                    logger.warning(f"Places API (New) error: {response.status_code} - {response.text[:200]}")
+                    return []
+                
+                data = response.json()
+            
+            places = data.get("places", [])
+            
+            # Legacy format'a dönüştür (station_finder uyumluluğu için)
+            results = []
+            for place in places:
+                ev_options = place.get("evChargeOptions", {})
+                connectors = ev_options.get("connectorAggregation", [])
+                
+                # Max power'ı bul
+                max_power_kw = 0.0
+                for conn in connectors:
+                    power = conn.get("maxChargeRateKw", 0)
+                    if power > max_power_kw:
+                        max_power_kw = power
+                
+                location = place.get("location", {})
+                display_name = place.get("displayName", {})
+                
+                legacy_place = {
+                    "place_id": place.get("id", ""),
+                    "name": display_name.get("text", ""),
+                    "geometry": {
+                        "location": {
+                            "lat": location.get("latitude", 0),
+                            "lng": location.get("longitude", 0)
+                        }
+                    },
+                    "rating": place.get("rating", 0),
+                    "user_ratings_total": place.get("userRatingCount", 0),
+                    "business_status": place.get("businessStatus", "OPERATIONAL"),
+                    "vicinity": place.get("formattedAddress", ""),
+                    "types": place.get("types", []),
+                    # 🔧 Yeni: Gerçek şarj gücü
+                    "ev_charge_options": ev_options,
+                    "max_power_kw": max_power_kw,
+                    "connector_count": ev_options.get("connectorCount", 0)
+                }
+                results.append(legacy_place)
+            
+            logger.info(
+                f"Google Places (New) EV stations: {len(results)} near ({lat:.4f}, {lon:.4f})",
+                radius_m=radius_m
+            )
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Google Places (New) search failed: {e}")
+            return []
+
+    # ============================================================
+    # 5b) PLACES NEARBY SEARCH (Legacy) → EV Şarj İstasyonları
     # ============================================================
     @cacheable(prefix="google_ev_stations", ttl_seconds=3600)
     async def search_ev_charging_stations(

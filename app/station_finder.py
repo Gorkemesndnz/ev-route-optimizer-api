@@ -423,20 +423,20 @@ class CorridorSearcher:
         """
         search_radius_m = int(max(self.corridor_length_km, self.corridor_width_km) * 1000)
         
-        # 1. Google Places'tan dene
+        # 1. Google Places API (New) - evChargeOptions ile gerçek güç bilgisi
         try:
-            google_stations = await google_maps.search_ev_charging_stations(
+            google_stations = await google_maps.search_ev_charging_stations_new(
                 lat=hotspot.location.lat,
                 lon=hotspot.location.lon,
                 radius_m=search_radius_m,
-                max_results=50
+                max_results=20  # API (New) max 20
             )
             
             if google_stations:
-                logger.info(f"Google Places returned {len(google_stations)} stations")
+                logger.info(f"Google Places (New) returned {len(google_stations)} stations with power info")
                 return google_stations, "google"
             else:
-                logger.info("Google Places returned empty, falling back to OCM")
+                logger.info("Google Places (New) returned empty, falling back to OCM")
                 
         except Exception as e:
             logger.warning(f"Google Places search failed: {e}, falling back to OCM")
@@ -555,8 +555,9 @@ class CorridorSearcher:
                 opening_hours = station.get("opening_hours", {})
                 is_open_now = opening_hours.get("open_now") if opening_hours else None
                 
-                # Google Places EV charging station tipi varsayılan olarak DC kabul et
-                estimated_power_kw = 50.0  # Varsayılan DC güç
+                # 🔧 V3.1: Google Places API (New) - evChargeOptions'dan gerçek güç bilgisi
+                real_power_kw = station.get("max_power_kw", 0)
+                estimated_power_kw = real_power_kw if real_power_kw > 0 else 50.0  # Fallback 50 kW
                 
                 # Station info'yu Google formatında oluştur (OCM uyumlu dict)
                 station_info = {
