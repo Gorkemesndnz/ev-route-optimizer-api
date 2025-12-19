@@ -261,7 +261,8 @@ def _build_multi_legs(
     polyline: str,
     battery_capacity_kwh: float = 51.0,
     temperature_c: Optional[float] = None,
-    weather_info: Optional[WeatherInfo] = None
+    weather_info: Optional[WeatherInfo] = None,
+    vehicle_model_id: str = None  # 🔧 V3.0: Şarj eğrisi için araç ID
 ) -> List:
     """
     Multi-leg yapısı oluştur: DriveLeg + ChargeLeg + DriveLeg + ...
@@ -355,11 +356,11 @@ def _build_multi_legs(
         
         # 🔧 V3.0: Araç şarj eğrisi varsa ChargingTimeCalculator kullan
         catalog = _get_vehicle_catalog()
-        vehicle_curve = catalog.get_charge_curve(request.vehicle_model_id)
+        vehicle_curve = catalog.get_charge_curve(vehicle_model_id) if vehicle_model_id else None
         
         if vehicle_curve and vehicle_curve.points:
             # Gerçek araç eğrisi var → daha doğru hesaplama
-            vehicle_spec = catalog.get_by_id(request.vehicle_model_id)
+            vehicle_spec = catalog.get_by_id(vehicle_model_id)
             dc_max = vehicle_spec.dc_max_kw if vehicle_spec else charge_power_kw
             calculator = ChargingTimeCalculator(vehicle_curve, dc_max)
             charge_duration, _ = calculator.calculate_charge_time(
@@ -369,7 +370,7 @@ def _build_multi_legs(
                 station_max_kw=charge_power_kw
             )
             kwh_to_add = (hotspot_target_soc - max(0, end_soc)) / 100.0 * battery_capacity_kwh
-            logger.debug(f"[CHARGE] Using real curve for {request.vehicle_model_id}: {charge_duration:.1f} min")
+            logger.debug(f"[CHARGE] Using real curve for {vehicle_model_id}: {charge_duration:.1f} min")
         else:
             # Eğri yok → mevcut genel modele fallback
             charge_result = calculate_charge_time(
@@ -381,7 +382,7 @@ def _build_multi_legs(
             )
             charge_duration = charge_result.duration_minutes
             kwh_to_add = charge_result.energy_added_kwh
-            logger.debug(f"[CHARGE] Using fallback model for {request.vehicle_model_id}: {charge_duration:.1f} min")
+            logger.debug(f"[CHARGE] Using fallback model for {vehicle_model_id}: {charge_duration:.1f} min")
         
         # V2.0: Google Places verilerini dahil et
         station_source = station.station_info.get("_source", "ocm")
@@ -818,7 +819,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             polyline=polyline,
             battery_capacity_kwh=battery_kwh,
             temperature_c=avg_weather.temp_c if avg_weather else None,
-            weather_info=avg_weather  # 🔧 V2.6: Şarj istasyonları için hava durumu
+            weather_info=avg_weather,  # 🔧 V2.6: Şarj istasyonları için hava durumu
+            vehicle_model_id=request.vehicle_model_id  # 🔧 V3.0: Şarj eğrisi için
         )
         
         end_soc = sim_result.final_soc
