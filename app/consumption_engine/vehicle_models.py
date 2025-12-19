@@ -1,34 +1,67 @@
+"""
+Vehicle Models
+===============
+
+V2.0 - Hybrid approach with FileVehicleCatalog integration.
+
+This module provides backward compatibility with the legacy VEHICLE_DB
+while also supporting the new FileVehicleCatalog for expanded vehicle data.
+
+Lookup order:
+1. FileVehicleCatalog (1000+ vehicles from Open-EV-Data)
+2. Legacy VEHICLE_DB (fallback for known vehicles)
+"""
+
 from dataclasses import dataclass
+from typing import Optional
+
+# Lazy import to avoid circular dependencies
+_catalog = None
+
+
+def _get_catalog():
+    """Lazy load the FileVehicleCatalog singleton"""
+    global _catalog
+    if _catalog is None:
+        try:
+            from app.infrastructure.vehicle_catalog import FileVehicleCatalog
+            _catalog = FileVehicleCatalog()
+        except Exception:
+            _catalog = None
+    return _catalog
 
 
 @dataclass
 class VehicleModel:
     """
-    ✅ V1.6 - MainCalculator ile %100 uyumlu araç veri yapısı
+    V2.0 - MainCalculator ile %100 uyumlu araç veri yapısı
     
-    🔥 V1.6 GÜNCELLEME:
-    - base_weight_kg → curb_weight_kg (MainCalculator uyumu)
-    - auxiliary_power_kw eklendi (HVAC hesaplamaları için)
-    - Tüm alanlar MainCalculator beklentileriyle eşleşiyor
+    Bu dataclass hem legacy VEHICLE_DB hem de yeni FileVehicleCatalog
+    ile uyumlu çalışır.
     """
     model_name: str
 
     # Fiziksel özellikler
-    curb_weight_kg: int               # ✅ V1.6: base_weight_kg → curb_weight_kg
-    battery_capacity_kwh: float        # kullanılabilir kapasite (kWh)
+    curb_weight_kg: int
+    battery_capacity_kwh: float
 
     # Tüketim (Wh/km) → MainCalculator'da kwh/100km'e çevriliyor
     base_consumption_wh_km: float     
 
     # Şarj özellikleri
     connector_type: str               # "CCS" | "CHAdeMO" | "Type2"
-    avg_dc_charge_rate_kw: float      # 10 → 80 arası ortalama
-    avg_ac_charge_rate_kw: float
+    avg_dc_charge_rate_kw: float      # DC max power
+    avg_ac_charge_rate_kw: float      # AC max power
 
     # Yardımcı sistemler (HVAC, farlar, elektronik)
-    auxiliary_power_kw: float = 1.2   # ✅ V1.6: HVAC hesaplamaları için
+    auxiliary_power_kw: float = 1.2
 
-VEHICLE_DB = {
+
+# =============================================================================
+# LEGACY VEHICLE DATABASE (backward compatibility)
+# =============================================================================
+
+LEGACY_VEHICLE_DB = {
     "mg4_51kwh": VehicleModel(
         model_name="MG4 Electric 51 kWh",
         curb_weight_kg=1736,             # ✅ V1.6: base_weight_kg → curb_weight_kg
@@ -64,11 +97,78 @@ VEHICLE_DB = {
 }
 
 
+# =============================================================================
+# VEHICLE_DB ALIAS (backward compatibility)
+# =============================================================================
+
+VEHICLE_DB = LEGACY_VEHICLE_DB
+
+
+# =============================================================================
+# VEHICLE LOOKUP FUNCTIONS
+# =============================================================================
+
+def _convert_spec_to_model(spec) -> VehicleModel:
+    """Convert VehicleSpec from catalog to legacy VehicleModel"""
+    return VehicleModel(
+        model_name=spec.display_name,
+        curb_weight_kg=spec.curb_weight_kg,
+        battery_capacity_kwh=spec.battery_capacity_kwh,
+        base_consumption_wh_km=spec.base_consumption_wh_km,
+        connector_type=spec.connector_type.value,
+        avg_dc_charge_rate_kw=spec.dc_max_kw,
+        avg_ac_charge_rate_kw=spec.ac_max_kw,
+        auxiliary_power_kw=spec.auxiliary_power_kw,
+    )
+
+
 def get_vehicle_model(model_id: str) -> VehicleModel:
-    model = VEHICLE_DB.get(model_id)
-    if model is None:
-        raise ValueError(f"Unknown vehicle model: {model_id}")
-    return model
+    """
+    Get vehicle model by ID.
+    
+    Lookup order:
+    1. FileVehicleCatalog (if available and data loaded)
+    2. Legacy VEHICLE_DB
+    
+    Args:
+        model_id: Vehicle identifier (e.g. "tesla_model_3_long_range")
+        
+    Returns:
+        VehicleModel instance
+        
+    Raises:
+        ValueError: If vehicle not found in any source
+    """
+    # Try catalog first
+    catalog = _get_catalog()
+    if catalog is not None:
+        spec = catalog.get_by_id(model_id)
+        if spec is not None:
+            return _convert_spec_to_model(spec)
+    
+    # Fallback to legacy DB
+    model = LEGACY_VEHICLE_DB.get(model_id)
+    if model is not None:
+        return model
+    
+    raise ValueError(f"Unknown vehicle model: {model_id}")
+
+
+def get_available_vehicle_ids() -> list:
+    """
+    Get list of all available vehicle IDs.
+    
+    Returns:
+        List of vehicle ID strings
+    """
+    ids = set(LEGACY_VEHICLE_DB.keys())
+    
+    catalog = _get_catalog()
+    if catalog is not None:
+        for v in catalog.search(limit=2000):
+            ids.add(v.id)
+    
+    return sorted(ids)
 
 
 # Alias for main_calculator.py compatibility
