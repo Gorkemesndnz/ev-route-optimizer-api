@@ -229,7 +229,32 @@ GET /validate/{vehicle_id}  # Araç validasyonu
 - **Swagger UI**: `http://localhost:8000/docs`
 - **ReDoc**: `http://localhost:8000/redoc`
 
-## 🚗 Desteklenen Araçlar
+## 🚗 Araç Verisi / Vehicle Catalog
+
+Bu proje araç verisini dosya tabanlı bir katalog üzerinden yönetir.
+
+- **Kaynak dataset**: `KilowattApp/open-ev-data` (MIT lisanslı, attribution gerekir)
+- **Normalize edilmiş çıktılar**:
+  - `data/processed/vehicles_master.json` (1321 araç)
+  - `data/processed/charge_curves.json` (SOC→kW şarj eğrileri; 876 gerçek + kalanları tahmini)
+- **Ham veri**: `data/raw/open_ev_data.json` (repo’ya commit edilmez, `.gitignore` ile dışarıda)
+
+### Veri güncelleme
+
+```powershell
+python scripts/download_open_ev_data.py
+python scripts/convert_to_master.py
+python scripts/test_v2_integration.py
+```
+
+### Kod tarafında erişim
+
+- **Tek erişim noktası**: `app.infrastructure.vehicle_catalog.FileVehicleCatalog`
+- `app.consumption_engine.vehicle_models.get_vehicle_model()` fonksiyonu:
+  - önce katalogdan arar
+  - bulamazsa legacy `LEGACY_VEHICLE_DB` fallback yapar
+
+### Legacy örnek araç ID’leri (fallback)
 
 | Vehicle ID | Model | Battery | Consumption | Connector |
 |------------|-------|---------|-------------|-----------|
@@ -409,6 +434,9 @@ curl "http://localhost:8000/health"
 
 ```
 Ev-Route-Optimizer-Api/
+├── data/
+│   ├── raw/                  # Ham dataset (gitignore)
+│   └── processed/            # Normalize edilmiş dataset (commit edilir)
 ├── app/
 │   ├── main.py                 # FastAPI uygulaması
 │   ├── models.py               # Pydantic modelleri
@@ -416,17 +444,21 @@ Ev-Route-Optimizer-Api/
 │   ├── route_selector.py       # Google Directions entegrasyonu
 │   ├── station_finder.py       # Şarj istasyonu optimizasyonu
 │   ├── sustainability_calculator.py # CO2 hesaplamaları
+│   ├── infrastructure/         # Veri erişim katmanı
+│   │   └── vehicle_catalog/     # FileVehicleCatalog + modeller
 │   ├── services/               # External API servisleri
 │   │   ├── google_service.py   # Google Maps API
 │   │   ├── ocm_service.py      # Open Charge Map
 │   │   └── weather_service.py  # OpenWeatherMap
 │   ├── consumption_engine/     # Tüketim hesaplama
 │   │   ├── main_calculator.py  # Ana tüketim motoru
-│   │   └── vehicle_models.py   # Araç veritabanı
+│   │   ├── vehicle_models.py   # V2.0 adapter (catalog + legacy)
+│   │   └── v2_ml_model/        # Şarj süresi vb. ML/V2 hesapları
 │   └── utils/                  # Yardımcı modüller
 │       ├── config_manager.py   # Konfigürasyon yönetimi
 │       ├── logger.py           # Structured logging
 │       └── data_logger.py      # ML training data
+├── scripts/                    # Dataset indirme/convert/test scriptleri
 ├── notebooks/                  # ML training data
 ├── tests/                      # Testler
 ├── .env.example               # Environment şablonu
