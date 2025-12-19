@@ -42,6 +42,8 @@ from app.charging_model import calculate_charge_time
 from app.consumption_engine.main_calculator import calculate_route_consumption
 from app.consumption_engine.vehicle_models import get_vehicle_model
 from app.route_selector import find_best_route
+from app.infrastructure.vehicle_catalog import FileVehicleCatalog
+from app.consumption_engine.v2_ml_model import ChargingTimeCalculator
 # Station finder artık SOCSimulator içinden çağrılıyor
 from app.services.weather_service import WeatherService
 from app.services.google_service import google_maps
@@ -51,6 +53,16 @@ from app.utils.data_logger import log_route_decision, log_consumption
 
 logger = get_logger("route_planner")
 weather_service = WeatherService()
+
+# Lazy-load vehicle catalog for charging curves
+_vehicle_catalog = None
+
+def _get_vehicle_catalog() -> FileVehicleCatalog:
+    """Lazy-load vehicle catalog (singleton pattern)"""
+    global _vehicle_catalog
+    if _vehicle_catalog is None:
+        _vehicle_catalog = FileVehicleCatalog()
+    return _vehicle_catalog
 
 DEFAULT_TEMPERATURE_C = 20.0
 
@@ -337,19 +349,39 @@ def _build_multi_legs(
             end_soc_percent=round(max(0, end_soc), 1)
         ))
         
-        # 2. ChargeLeg: Şarj süresi hesapla
+        # 2. ChargeLeg: Şarj süresi hesapla (Hybrid: eğri varsa kullan, yoksa fallback)
         hotspot_target_soc = hotspot.recommended_charge_to
         charge_power_kw = station.power_kw if station.power_kw > 0 else 50.0
         
-        charge_result = calculate_charge_time(
-            start_soc=max(0, end_soc),
-            target_soc=hotspot_target_soc,
-            battery_capacity_kwh=battery_capacity_kwh,
-            peak_power_kw=charge_power_kw,
-            temperature_c=temperature_c
-        )
-        charge_duration = charge_result.duration_minutes
-        kwh_to_add = charge_result.energy_added_kwh
+        # 🔧 V3.0: Araç şarj eğrisi varsa ChargingTimeCalculator kullan
+        catalog = _get_vehicle_catalog()
+        vehicle_curve = catalog.get_charge_curve(request.vehicle_model_id)
+        
+        if vehicle_curve and vehicle_curve.points:
+            # Gerçek araç eğrisi var → daha doğru hesaplama
+            vehicle_spec = catalog.get_by_id(request.vehicle_model_id)
+            dc_max = vehicle_spec.dc_max_kw if vehicle_spec else charge_power_kw
+            calculator = ChargingTimeCalculator(vehicle_curve, dc_max)
+            charge_duration, _ = calculator.calculate_charge_time(
+                battery_kwh=battery_capacity_kwh,
+                soc_start=max(0, end_soc),
+                soc_target=hotspot_target_soc,
+                station_max_kw=charge_power_kw
+            )
+            kwh_to_add = (hotspot_target_soc - max(0, end_soc)) / 100.0 * battery_capacity_kwh
+            logger.debug(f"[CHARGE] Using real curve for {request.vehicle_model_id}: {charge_duration:.1f} min")
+        else:
+            # Eğri yok → mevcut genel modele fallback
+            charge_result = calculate_charge_time(
+                start_soc=max(0, end_soc),
+                target_soc=hotspot_target_soc,
+                battery_capacity_kwh=battery_capacity_kwh,
+                peak_power_kw=charge_power_kw,
+                temperature_c=temperature_c
+            )
+            charge_duration = charge_result.duration_minutes
+            kwh_to_add = charge_result.energy_added_kwh
+            logger.debug(f"[CHARGE] Using fallback model for {request.vehicle_model_id}: {charge_duration:.1f} min")
         
         # V2.0: Google Places verilerini dahil et
         station_source = station.station_info.get("_source", "ocm")
