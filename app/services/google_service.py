@@ -174,7 +174,7 @@ class GoogleMapsService(BaseService):
     # ============================================================
     # 2) ELEVATION API → path + samples = rota boyunca tırmanış
     # ============================================================
-    @cacheable(prefix="google_elevation", ttl_seconds=3600)
+    @cacheable(prefix="google_elevation", ttl_seconds=172800)  
     async def get_elevation_stats(self, polyline: str, samples: int = 50) -> dict:
         """
         Rota polyline üzerinden örnekleme yaparak toplam yükseliş/iniş döndürür.
