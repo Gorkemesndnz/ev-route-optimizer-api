@@ -568,11 +568,15 @@ class CorridorSearcher:
         except Exception as e:
             logger.warning(f"Google Places search failed: {e}")
         
-        # 2. 🔧 Hibrit: Google'da kW=0 olan istasyonlar var mı? OCM'den cross-reference yap
-        stations_without_power = [s for s in google_stations if s.get("max_power_kw", 0) == 0]
+        # 2. 🔧 V3.1: Hibrit - Sadece connector_count>0 olan ama kW=0 olan istasyonlar için OCM crossref
+        # Bu sayede yanlış POI'lere (oto yıkama gibi) OCM'den güç yapıştırılmaz
+        stations_need_power = [
+            s for s in google_stations 
+            if s.get("max_power_kw", 0) == 0 and s.get("connector_count", 0) > 0
+        ]
         
-        if google_stations and stations_without_power:
-            logger.info(f"Hybrid mode: {len(stations_without_power)} stations need OCM power lookup")
+        if google_stations and stations_need_power:
+            logger.info(f"Hybrid mode: {len(stations_need_power)} verified EV stations need OCM power lookup")
             
             try:
                 # OCM'den de istasyonları al
@@ -586,19 +590,18 @@ class CorridorSearcher:
                     # OCM istasyonlarından güç değerlerini çıkar (konum -> güç map)
                     ocm_power_map = self._build_ocm_power_map(ocm_stations)
                     
-                    # Google istasyonlarını OCM ile zenginleştir
+                    # Google istasyonlarını OCM ile zenginleştir (sadece connector_count>0 olanlar)
                     enriched_count = 0
-                    for station in google_stations:
-                        if station.get("max_power_kw", 0) == 0:
-                            # Bu istasyonun konumuna yakın OCM istasyonu var mı?
-                            lat = station.get("geometry", {}).get("location", {}).get("lat", 0)
-                            lng = station.get("geometry", {}).get("location", {}).get("lng", 0)
-                            
-                            ocm_power = self._find_ocm_power_nearby(lat, lng, ocm_power_map)
-                            if ocm_power > 0:
-                                station["max_power_kw"] = ocm_power
-                                station["_power_source"] = "ocm_crossref"
-                                enriched_count += 1
+                    for station in stations_need_power:
+                        # Bu istasyonun konumuna yakın OCM istasyonu var mı?
+                        lat = station.get("geometry", {}).get("location", {}).get("lat", 0)
+                        lng = station.get("geometry", {}).get("location", {}).get("lng", 0)
+                        
+                        ocm_power = self._find_ocm_power_nearby(lat, lng, ocm_power_map)
+                        if ocm_power > 0:
+                            station["max_power_kw"] = ocm_power
+                            station["_power_source"] = "ocm_crossref"
+                            enriched_count += 1
                     
                     if enriched_count > 0:
                         logger.info(f"Hybrid: enriched {enriched_count} stations with OCM power data")
@@ -726,24 +729,14 @@ class CorridorSearcher:
                 if distance > self.corridor_length_km:
                     continue
                 
-                # 🔧 V3.1: Şarj istasyonu olmayan yerleri filtrele (oto yıkama, benzinlik vb.)
-                station_name_lower = station.get("name", "").lower()
-                excluded_keywords = [
-                    "oto yıkama", "car wash", "yıkama", "wash",
-                    "benzinlik", "petrol", "akaryakıt", "gas station",
-                    "otopark", "parking lot", "car park",
-                    "oto tamir", "servis", "tamirci", "mechanic",
-                    "oto galeri", "oto alım", "oto satım",
-                    "rent a car", "araç kiralama"
-                ]
+                # 🔧 V3.1: Gerçek EV şarj istasyonu doğrulaması (connector_count / evChargeOptions)
+                # Google Places (New) sonucunda connector_count veya max_power_kw yoksa bu POI şarj istasyonu değil
+                connector_count = station.get("connector_count", 0)
+                max_power = station.get("max_power_kw", 0)
                 
-                # Eğer istasyon adında şarj ile ilgili kelime yoksa ve hariç tutulan kelime varsa filtrele
-                charging_keywords = ["şarj", "charge", "charging", "ev", "elektrik", "electric", "zes", "eşarj", "trugo", "tesla", "supercharger"]
-                has_charging_keyword = any(kw in station_name_lower for kw in charging_keywords)
-                has_excluded_keyword = any(kw in station_name_lower for kw in excluded_keywords)
-                
-                if has_excluded_keyword and not has_charging_keyword:
-                    logger.debug(f"Station filtered (not EV charger): {station.get('name')}")
+                # Eğer hem connector_count hem max_power 0 ise, bu gerçek bir şarj istasyonu değil
+                if connector_count == 0 and max_power == 0:
+                    logger.debug(f"Station filtered (no EV charge data): {station.get('name')} - connector_count=0, max_power=0")
                     continue
                 
                 # 🔧 V2.9: Otoyol yön filtresi - yolun karşı tarafındaki istasyonları filtrele
