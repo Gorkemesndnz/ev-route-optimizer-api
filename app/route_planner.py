@@ -838,7 +838,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                             leg_distance = hotspot.distance_from_start_km - prev_km
                             weather_weights.append(leg_distance)
                             prev_km = hotspot.distance_from_start_km
-                            logger.debug(f"Hotspot {i+1} weather: {hotspot_weather.temp_c}°C at {station.name}")
+                            logger.debug(f"Hotspot {i+1} weather: {hotspot_weather.temp_c}°C at {station.station_name}")
                 
                 # End noktası
                 if end_weather:

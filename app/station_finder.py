@@ -62,7 +62,7 @@ TOP_STATIONS_FOR_DETAILS = 3
 
 # Koridor sabitleri (V1.5)
 CORRIDOR_LENGTH_KM = 50.0
-CORRIDOR_WIDTH_KM = 3.0  # 🔧 V3.3: 8km'den 3km'e düşürüldü - sadece otoban üzerinde
+CORRIDOR_WIDTH_KM = 10.0  # 🔧 V3.4: 3km'den 10km'e artırıldı - service alanlarını dahil et
 MIN_DC_POWER_KW = 50.0
 MAX_STATIONS_PER_HOTSPOT = 5
 
@@ -458,14 +458,19 @@ class CorridorSearcher:
     
     async def search_for_hotspot(self, hotspot: ChargeHotspot) -> CorridorSearchResult:
         """
-        Bir hotspot için koridor araması yap.
+        🔧 V3.1: Google Places öncelikli + OCM fallback istasyon arama.
         
-        Strateji: Google Places öncelikli, OCM fallback.
-        🔧 V2.7: Forecast da paralel olarak alınır.
+        Args:
+            hotspot: Şarj gerekli olan nokta
+            
+        Returns:
+            CorridorSearchResult: Bulunan istasyonlar ve seçilen
         """
-        result = CorridorSearchResult(
-            hotspot=hotspot,
-            search_radius_km=self.corridor_length_km
+        logger.info(
+            f"🔍 Searching stations for hotspot at {hotspot.location.lat:.4f}, {hotspot.location.lon:.4f} "
+            f"(distance: {hotspot.distance_from_start_km:.0f}km from start, "
+            f"remaining: {hotspot.remaining_distance_km:.0f}km to end, "
+            f"corridor: {self.corridor_length_km}km length, {self.corridor_width_km}km width)"
         )
         
         logger.info(
@@ -473,6 +478,16 @@ class CorridorSearcher:
             hotspot_segment=hotspot.segment_index,
             location=f"({hotspot.location.lat:.4f}, {hotspot.location.lon:.4f})",
             soc=hotspot.soc_at_point
+        )
+        
+        # Initialize result
+        result = CorridorSearchResult(
+            hotspot=hotspot,
+            stations=[],
+            best_station=None,
+            total_found=0,
+            dc_compatible=0,
+            weather_forecast=None
         )
         
         try:
@@ -740,21 +755,9 @@ class CorridorSearcher:
                     logger.debug(f"Station filtered (no EV charge data): {station.get('name')} - connector_count=0, max_power=0")
                     continue
                 
-                # 🔧 V2.9: Otoyol yön filtresi - yolun karşı tarafındaki istasyonları filtrele
-                # Sadece rota yönü bilgisi varsa ve mesafe 5 km'den küçükse uygula
-                # (uzak istasyonlar zaten farklı lokasyonlarda olabilir)
-                if hotspot.route_bearing > 0 and distance <= 5.0:
-                    is_valid, perp_dist = _is_station_on_route_side(
-                        route_bearing=hotspot.route_bearing,
-                        hotspot_lat=hotspot.location.lat,
-                        hotspot_lon=hotspot.location.lon,
-                        station_lat=station_lat,
-                        station_lon=station_lng,
-                        max_perpendicular_distance_km=1.5  # Otoyolda 1.5 km tolerans
-                    )
-                    if not is_valid:
-                        logger.debug(f"Station filtered (wrong side): {station.get('name')} - perp_dist={perp_dist:.2f}km")
-                        continue
+                # 🔧 V3.3: Perpendicular distance filtresi kaldırıldı
+                # Service alanları genellikle otobana dik bağlantı yollarıyla bağlı
+                # Koridor genişliği (3km) zaten yeterli filtreleme sağlıyor
                 
                 # Rating al (Google doğrudan sağlar)
                 rating = station.get("rating", 4.0)
@@ -1119,7 +1122,8 @@ async def find_stations_for_hotspots(
     
     for i, result in enumerate(raw_results):
         if isinstance(result, Exception):
-            logger.error(f"Hotspot {i} search failed", error=str(result))
+            import traceback
+            logger.error(f"Hotspot {i} search failed: {result}\n{traceback.format_exception(type(result), result, result.__traceback__)}")
             continue
         
         # Akıllı istasyon seçimi
