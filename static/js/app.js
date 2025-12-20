@@ -30,9 +30,14 @@ function toggleAiMode() {
     const prefsToggleBtn = document.querySelector('[onclick*="togglePreferences"]');
     const stationPrefsInputs = stationPrefsPanel ? stationPrefsPanel.querySelectorAll('input, select') : [];
 
+    const passengerLoadCard = document.getElementById('passengerLoadCard');
+    const stationPreferencesCard = document.getElementById('stationPreferencesCard');
+
     if (aiMode) {
         // AI açık: Batarya/Şarj gizle, değerlerini temizle
-        batterySettings.style.display = 'none';
+        if (batterySettings) {
+            batterySettings.style.display = 'none';
+        }
         clearBatteryInputs();
 
         // Yolcu/Yük butonlarını ve input'ları kilitle
@@ -51,9 +56,19 @@ function toggleAiMode() {
         }
         stationPrefsInputs.forEach(input => input.disabled = true);
         if (stationPrefsPanel) stationPrefsPanel.style.display = 'none';
+
+        // Kartların tamamını tıklanamaz yap
+        if (passengerLoadCard) {
+            passengerLoadCard.classList.add('opacity-50', 'pointer-events-none');
+        }
+        if (stationPreferencesCard) {
+            stationPreferencesCard.classList.add('opacity-50', 'pointer-events-none');
+        }
     } else {
         // AI kapalı: Batarya/Şarj göster (manuel mod)
-        batterySettings.style.display = 'block';
+        if (batterySettings) {
+            batterySettings.style.display = 'block';
+        }
 
         // Yolcu/Yük butonlarını ve input'ları aç
         passengerBtns.forEach(btn => {
@@ -70,6 +85,14 @@ function toggleAiMode() {
             prefsToggleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
         }
         stationPrefsInputs.forEach(input => input.disabled = false);
+
+        // Kartları tekrar tıklanabilir yap
+        if (passengerLoadCard) {
+            passengerLoadCard.classList.remove('opacity-50', 'pointer-events-none');
+        }
+        if (stationPreferencesCard) {
+            stationPreferencesCard.classList.remove('opacity-50', 'pointer-events-none');
+        }
     }
 }
 
@@ -187,6 +210,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     initVehicleCatalogUI();
+
+    // Sayfa ilk açılışta AI toggle varsayılanı açıksa kilitleri hemen uygula
+    toggleAiMode();
 });
 
 async function initVehicleCatalogUI() {
