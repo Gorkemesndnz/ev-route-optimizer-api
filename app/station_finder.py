@@ -62,7 +62,7 @@ TOP_STATIONS_FOR_DETAILS = 3
 
 # Koridor sabitleri (V1.5)
 CORRIDOR_LENGTH_KM = 50.0
-CORRIDOR_WIDTH_KM = 8.0  # 🔧 V3.2: 15km'den 8km'e düşürüldü - şehir merkezlerini hariç tut
+CORRIDOR_WIDTH_KM = 3.0  # 🔧 V3.3: 8km'den 3km'e düşürüldü - sadece otoban üzerinde
 MIN_DC_POWER_KW = 50.0
 MAX_STATIONS_PER_HOTSPOT = 5
 
