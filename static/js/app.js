@@ -74,6 +74,41 @@ function renderStrategyTrafficInfo(data) {
 }
 
 /**
+ * 🔧 V3.1: İstasyon Tercihleri toggle
+ */
+function togglePreferences() {
+    const prefs = document.getElementById('stationPreferences');
+    const toggleText = document.getElementById('prefsToggleText');
+
+    if (prefs.style.display === 'none') {
+        prefs.style.display = 'block';
+        toggleText.textContent = 'Gizle ▲';
+    } else {
+        prefs.style.display = 'none';
+        toggleText.textContent = 'Göster ▼';
+    }
+}
+
+/**
+ * 🔧 V3.1: Preferences verilerini topla
+ */
+function getStationPreferences() {
+    return {
+        max_detour_km: parseFloat(document.getElementById('maxDetourKm')?.value) || 10,
+        preferred_plug_types: document.getElementById('preferredPlugType')?.value ?
+            [document.getElementById('preferredPlugType').value] : [],
+        preferred_operators: document.getElementById('preferredOperator')?.value ?
+            [document.getElementById('preferredOperator').value] : [],
+        amenities_required: [
+            document.getElementById('reqToilet')?.checked ? 'toilet' : null,
+            document.getElementById('reqFood')?.checked ? 'food' : null,
+            document.getElementById('reqShopping')?.checked ? 'shopping' : null,
+            document.getElementById('reqParking')?.checked ? 'parking' : null
+        ].filter(Boolean)
+    };
+}
+
+/**
  * Batarya/Şarj inputlarını temizle (AI modu için)
  */
 function clearBatteryInputs() {
@@ -333,6 +368,9 @@ async function handleFormSubmit(e) {
         }
         // AI modu açıksa Batarya/Şarj otomatik - backend hesaplar
 
+        // 🔧 V3.1: İstasyon Tercihleri
+        formData.preferences = getStationPreferences();
+
         // DEBUG: Form verilerini kontrol et
         console.log('🤖 AI Modu:', aiMode ? 'AÇIK' : 'KAPALI');
         console.log('🔍 Form verileri:', formData);
@@ -367,6 +405,9 @@ async function handleFormSubmit(e) {
  * @param {Object} data - API response data
  */
 function showResults(data) {
+    // 🔧 V3.1: Rota verisini sakla (feedback için)
+    storeRouteData(data);
+
     const resultsDiv = document.getElementById('routeResults');
     const firstLeg = data.legs?.[0] || {};
 
@@ -800,6 +841,33 @@ function renderChargeLeg(leg, index) {
                 
                 <!-- Weather -->
                 ${weatherHtml}
+                
+                <!-- 🔧 V3.1: Action Buttons -->
+                <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-yellow-500/20">
+                    <!-- Feedback Button -->
+                    <button 
+                        onclick="openFeedbackModal('${station.id}', '${station.name?.replace(/'/g, "\\'")}', ${index})"
+                        class="flex items-center gap-1 px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
+                    >
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                        </svg>
+                        Sorun Bildir
+                    </button>
+                    
+                    <!-- Alternatives Button (if available) -->
+                    ${leg.alternative_stations && leg.alternative_stations.length > 0 ? `
+                        <button 
+                            onclick="showAlternativeStations(${index}, ${JSON.stringify(leg.alternative_stations).replace(/"/g, '&quot;')})"
+                            class="flex items-center gap-1 px-2 py-1 text-xs bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
+                        >
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                            </svg>
+                            Alternatifler (${leg.alternative_stations.length})
+                        </button>
+                    ` : ''}
+                </div>
             </div>
         </div>
     `;
@@ -940,4 +1008,254 @@ function showError(data) {
 
     errorDiv.innerHTML = html;
     document.getElementById('errorCard').style.display = 'block';
+}
+
+
+// ============================================
+// 🔧 V3.1: FEEDBACK & ALTERNATIVES SYSTEM
+// ============================================
+
+// Global state for feedback
+let currentFeedbackData = null;
+let currentRouteData = null;
+let excludedStationIds = [];
+
+/**
+ * Rota verisini sakla (feedback için)
+ */
+function storeRouteData(data) {
+    currentRouteData = data;
+}
+
+/**
+ * Feedback modal'ını aç
+ */
+function openFeedbackModal(stationId, stationName, legIndex) {
+    currentFeedbackData = { stationId, stationName, legIndex };
+
+    const modalHtml = `
+        <div id="feedbackModal" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div class="bg-slate-800 rounded-2xl p-6 max-w-md w-full border border-white/10">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-white font-semibold text-lg">⚠️ Sorun Bildir</h3>
+                    <button onclick="closeFeedbackModal()" class="text-gray-400 hover:text-white">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                
+                <p class="text-gray-400 text-sm mb-4">
+                    <span class="text-yellow-400">${stationName}</span> istasyonu için sorun bildirin:
+                </p>
+                
+                <div class="space-y-2 mb-4">
+                    <button onclick="submitFeedback('station_broken')" class="w-full p-3 bg-white/5 hover:bg-red-500/20 rounded-lg text-left text-white text-sm transition-colors flex items-center gap-2">
+                        <span class="text-red-400">🔧</span> İstasyon Arızalı
+                    </button>
+                    <button onclick="submitFeedback('station_occupied')" class="w-full p-3 bg-white/5 hover:bg-yellow-500/20 rounded-lg text-left text-white text-sm transition-colors flex items-center gap-2">
+                        <span class="text-yellow-400">🚗</span> İstasyon Meşgul
+                    </button>
+                    <button onclick="submitFeedback('soc_low')" class="w-full p-3 bg-white/5 hover:bg-orange-500/20 rounded-lg text-left text-white text-sm transition-colors flex items-center gap-2">
+                        <span class="text-orange-400">🔋</span> Şarjım Yetmedi
+                    </button>
+                    <button onclick="submitFeedback('high_price')" class="w-full p-3 bg-white/5 hover:bg-purple-500/20 rounded-lg text-left text-white text-sm transition-colors flex items-center gap-2">
+                        <span class="text-purple-400">💰</span> Yüksek Ücret
+                    </button>
+                    <button onclick="submitFeedback('wrong_location')" class="w-full p-3 bg-white/5 hover:bg-blue-500/20 rounded-lg text-left text-white text-sm transition-colors flex items-center gap-2">
+                        <span class="text-blue-400">📍</span> Yanlış Konum
+                    </button>
+                    <button onclick="submitFeedback('private_property')" class="w-full p-3 bg-white/5 hover:bg-gray-500/20 rounded-lg text-left text-white text-sm transition-colors flex items-center gap-2">
+                        <span class="text-gray-400">🚫</span> Özel Mülk / Erişilemiyor
+                    </button>
+                </div>
+                
+                <button onclick="closeFeedbackModal()" class="w-full p-2 text-gray-400 hover:text-white text-sm transition-colors">
+                    İptal
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+
+/**
+ * Feedback modal'ını kapat
+ */
+function closeFeedbackModal() {
+    const modal = document.getElementById('feedbackModal');
+    if (modal) modal.remove();
+    currentFeedbackData = null;
+}
+
+/**
+ * Feedback gönder ve rotayı yeniden hesapla
+ */
+async function submitFeedback(feedbackType) {
+    if (!currentFeedbackData || !currentRouteData) {
+        alert('Hata: Rota verisi bulunamadı');
+        closeFeedbackModal();
+        return;
+    }
+
+    // Modal'ı güncelle - loading state
+    const modal = document.getElementById('feedbackModal');
+    if (modal) {
+        modal.innerHTML = `
+            <div class="bg-slate-800 rounded-2xl p-6 max-w-md w-full border border-white/10 text-center">
+                <div class="animate-spin w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                <p class="text-white">Yeni rota hesaplanıyor...</p>
+            </div>
+        `;
+    }
+
+    try {
+        // Excluded stations listesine ekle
+        excludedStationIds.push(currentFeedbackData.stationId);
+
+        const response = await fetch('/station_feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                station_id: currentFeedbackData.stationId,
+                feedback_type: feedbackType,
+                current_location: {
+                    lat: parseFloat(document.getElementById('startLocation').dataset.lat || 41.0082),
+                    lon: parseFloat(document.getElementById('startLocation').dataset.lon || 28.9784)
+                },
+                current_soc_percent: parseFloat(document.getElementById('currentSoc')?.value || 80),
+                destination: {
+                    lat: parseFloat(document.getElementById('endLocation').dataset.lat || 39.9334),
+                    lon: parseFloat(document.getElementById('endLocation').dataset.lon || 32.8597)
+                },
+                vehicle_model_id: document.getElementById('vehicleModel')?.value || 'mg4_51kwh',
+                excluded_station_ids: excludedStationIds
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'success' && data.route) {
+            // Yeni rotayı göster
+            storeRouteData(data.route);
+            displayRouteResults(data.route);
+            showSuccessToast('Rota yeniden hesaplandı!');
+        } else {
+            showErrorToast(data.message || 'Rota hesaplanamadı');
+        }
+
+    } catch (error) {
+        console.error('Feedback error:', error);
+        showErrorToast('Bağlantı hatası');
+    }
+
+    closeFeedbackModal();
+}
+
+/**
+ * Alternatif istasyonları göster
+ */
+function showAlternativeStations(legIndex, alternatives) {
+    // JSON parse if string
+    const altList = typeof alternatives === 'string' ? JSON.parse(alternatives) : alternatives;
+
+    const modalHtml = `
+        <div id="alternativesModal" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div class="bg-slate-800 rounded-2xl p-6 max-w-lg w-full border border-white/10 max-h-[80vh] overflow-y-auto">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-white font-semibold text-lg">🔄 Alternatif İstasyonlar</h3>
+                    <button onclick="closeAlternativesModal()" class="text-gray-400 hover:text-white">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                
+                <p class="text-gray-400 text-sm mb-4">
+                    Bu bacak için ${altList.length} alternatif istasyon bulundu:
+                </p>
+                
+                <div class="space-y-3">
+                    ${altList.map((alt, i) => `
+                        <div class="p-3 bg-white/5 hover:bg-blue-500/10 rounded-lg border border-white/10 cursor-pointer transition-colors"
+                             onclick="selectAlternativeStation(${legIndex}, '${alt.id}', ${JSON.stringify(alt).replace(/"/g, '&quot;')})">
+                            <div class="flex items-start justify-between">
+                                <div class="flex-1">
+                                    <p class="text-white font-medium text-sm">${alt.name}</p>
+                                    <p class="text-gray-400 text-xs mt-1">${alt.vicinity || ''}</p>
+                                    ${alt.rating ? `
+                                        <div class="flex items-center gap-1 mt-1">
+                                            <span class="text-yellow-400 text-xs">⭐ ${alt.rating.toFixed(1)}</span>
+                                            ${alt.user_ratings_total ? `<span class="text-gray-500 text-xs">(${alt.user_ratings_total})</span>` : ''}
+                                        </div>
+                                    ` : ''}
+                                </div>
+                                <div class="text-right ml-3">
+                                    <p class="text-white font-bold">${alt.connectors?.[0]?.power_kw || 120} kW</p>
+                                    <p class="text-gray-400 text-xs">${alt.distance_from_route_km?.toFixed(1) || '?'} km sapma</p>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                
+                <button onclick="closeAlternativesModal()" class="w-full mt-4 p-2 text-gray-400 hover:text-white text-sm transition-colors">
+                    İptal
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+}
+
+/**
+ * Alternatifler modal'ını kapat
+ */
+function closeAlternativesModal() {
+    const modal = document.getElementById('alternativesModal');
+    if (modal) modal.remove();
+}
+
+/**
+ * Alternatif istasyon seç
+ */
+async function selectAlternativeStation(legIndex, newStationId, newStation) {
+    // JSON parse if string
+    const stationData = typeof newStation === 'string' ? JSON.parse(newStation) : newStation;
+
+    closeAlternativesModal();
+
+    // Loading toast
+    showInfoToast('İstasyon değiştiriliyor...');
+
+    // TODO: Backend'e switch_station isteği gönder
+    // Şimdilik sadece local güncelleme yapıyoruz
+
+    showSuccessToast(`İstasyon değiştirildi: ${stationData.name}`);
+}
+
+/**
+ * Toast bildirimleri
+ */
+function showSuccessToast(message) {
+    showToast(message, 'green');
+}
+
+function showErrorToast(message) {
+    showToast(message, 'red');
+}
+
+function showInfoToast(message) {
+    showToast(message, 'blue');
+}
+
+function showToast(message, color) {
+    const toast = document.createElement('div');
+    toast.className = `fixed bottom-4 right-4 bg-${color}-500/90 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-pulse`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => toast.remove(), 3000);
 }

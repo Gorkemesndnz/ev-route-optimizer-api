@@ -301,39 +301,88 @@
                                             placeholder="0" min="0" max="500">
                                     </div>
                                 </div>
-                                <p class="text-gray-600 text-xs mt-2">💡 Boş bırakırsanız: 1 yetişkin, 0 çocuk, 0 kg
-                                    yük</p>
+                                <p class="text-gray-600 text-xs mt-2">💡 Boş bırakırsanız: 1 yetişkin, 0 çocuk, 0 kg yük
+                                </p>
                             </div>
 
-                            <!-- Batarya/Şarj Ayarları (AI kapalıyken görünür) -->
-                            <div id="batterySettings" class="bg-white/5 rounded-xl p-4 border border-yellow-500/20"
-                                style="display: none;">
-                                <div class="flex items-center gap-2 mb-3">
-                                    <span class="text-yellow-400">🔋</span>
-                                    <span class="text-gray-300 text-sm font-medium">Batarya / Şarj Ayarları</span>
-                                    <span class="text-xs text-yellow-400 ml-auto">Manuel Mod</span>
+                            <!-- 🔧 V3.1: İstasyon Tercihleri -->
+                            <div class="bg-white/5 rounded-xl p-4 border border-white/10">
+                                <div class="flex items-center justify-between mb-3">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-purple-400">⚙️</span>
+                                        <span class="text-gray-300 text-sm font-medium">İstasyon Tercihleri</span>
+                                    </div>
+                                    <button type="button" onclick="togglePreferences()"
+                                        class="text-xs text-purple-400 hover:text-purple-300">
+                                        <span id="prefsToggleText">Göster ▼</span>
+                                    </button>
                                 </div>
-                                <div class="grid grid-cols-3 gap-3">
+
+                                <div id="stationPreferences" style="display: none;" class="space-y-3">
+                                    <!-- Maksimum Sapma Mesafesi -->
                                     <div>
-                                        <label class="block text-gray-500 text-xs mb-1">📍 Şarj Eşiği %</label>
-                                        <input type="number" id="chargeMinSoc"
+                                        <label class="block text-gray-500 text-xs mb-1">📏 Maks. Sapma (km)</label>
+                                        <input type="number" id="maxDetourKm"
                                             class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
-                                            placeholder="15-25" min="10" max="40">
+                                            placeholder="10" min="1" max="50" value="10">
                                     </div>
+
+                                    <!-- Soket Tipi -->
                                     <div>
-                                        <label class="block text-gray-500 text-xs mb-1">⚡ Şarj Hedefi %</label>
-                                        <input type="number" id="chargeTargetSoc"
-                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
-                                            placeholder="80-95" min="50" max="100">
+                                        <label class="block text-gray-500 text-xs mb-1">🔌 Tercih Edilen Soket</label>
+                                        <select id="preferredPlugType"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm appearance-none cursor-pointer">
+                                            <option value="" class="bg-slate-800">Hepsi</option>
+                                            <option value="CCS2" class="bg-slate-800">CCS2 (Avrupa DC)</option>
+                                            <option value="CHAdeMO" class="bg-slate-800">CHAdeMO</option>
+                                            <option value="Type 2" class="bg-slate-800">Type 2 (AC)</option>
+                                        </select>
                                     </div>
+
+                                    <!-- Tercih Edilen Operatör -->
                                     <div>
-                                        <label class="block text-gray-500 text-xs mb-1">🎯 Varış Hedefi %</label>
-                                        <input type="number" id="targetArrivalSoc"
-                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
-                                            placeholder="10-25" min="5" max="50">
+                                        <label class="block text-gray-500 text-xs mb-1">🏢 Tercih Edilen
+                                            Operatör</label>
+                                        <select id="preferredOperator"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm appearance-none cursor-pointer">
+                                            <option value="" class="bg-slate-800">Hepsi</option>
+                                            <option value="ZES" class="bg-slate-800">ZES</option>
+                                            <option value="Eşarj" class="bg-slate-800">Eşarj</option>
+                                            <option value="Sharz" class="bg-slate-800">Sharz</option>
+                                            <option value="Tesla" class="bg-slate-800">Tesla Supercharger</option>
+                                            <option value="Trugo" class="bg-slate-800">Trugo</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- Zorunlu İmkanlar -->
+                                    <div>
+                                        <label class="block text-gray-500 text-xs mb-2">🛎️ Zorunlu İmkanlar</label>
+                                        <div class="flex flex-wrap gap-2">
+                                            <label
+                                                class="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-lg cursor-pointer hover:bg-white/10">
+                                                <input type="checkbox" id="reqToilet" class="w-3 h-3 accent-purple-500">
+                                                <span class="text-gray-300 text-xs">🚻 WC</span>
+                                            </label>
+                                            <label
+                                                class="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-lg cursor-pointer hover:bg-white/10">
+                                                <input type="checkbox" id="reqFood" class="w-3 h-3 accent-purple-500">
+                                                <span class="text-gray-300 text-xs">🍔 Yemek</span>
+                                            </label>
+                                            <label
+                                                class="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-lg cursor-pointer hover:bg-white/10">
+                                                <input type="checkbox" id="reqShopping"
+                                                    class="w-3 h-3 accent-purple-500">
+                                                <span class="text-gray-300 text-xs">🛒 Market</span>
+                                            </label>
+                                            <label
+                                                class="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-lg cursor-pointer hover:bg-white/10">
+                                                <input type="checkbox" id="reqParking"
+                                                    class="w-3 h-3 accent-purple-500">
+                                                <span class="text-gray-300 text-xs">🅿️ Otopark</span>
+                                            </label>
+                                        </div>
                                     </div>
                                 </div>
-                                <p class="text-gray-600 text-xs mt-2">💡 Boş bırakırsanız sistem otomatik hesaplar</p>
                             </div>
 
                             <!-- Submit Button -->

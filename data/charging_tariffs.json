@@ -1,0 +1,122 @@
+[
+  {
+    "brand": "Eşarj",
+    "aliases": ["esarj", "e-sarj", "e sarj"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 90, "below_price": 12.90, "above_price": 13.70},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 9.40, "above_price": 9.40}
+    ]
+  },
+  {
+    "brand": "5 Şarj",
+    "aliases": ["5sarj", "5 sarj", "bessarj"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 180, "below_price": 10.99, "above_price": 13.99},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 8.99, "above_price": 8.99}
+    ]
+  },
+  {
+    "brand": "ZES",
+    "aliases": ["zes", "zorlu"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 180, "below_price": 9.99, "above_price": 12.99},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 8.99, "above_price": 8.99}
+    ]
+  },
+  {
+    "brand": "Voltrun",
+    "aliases": ["voltrun"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 100, "below_price": 10.49, "above_price": 12.49},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 9.29, "above_price": 9.29}
+    ]
+  },
+  {
+    "brand": "Beefull",
+    "aliases": ["beefull", "bee full"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 80, "below_price": 10.99, "above_price": 12.99},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 8.99, "above_price": 8.99}
+    ]
+  },
+  {
+    "brand": "Şarjon",
+    "aliases": ["sarjon", "şarjon"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 75, "below_price": 11.19, "above_price": 11.99},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 8.99, "above_price": 8.99}
+    ]
+  },
+  {
+    "brand": "Aksa Şarj",
+    "aliases": ["aksa", "aksasarj", "aksa sarj"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 100, "below_price": 9.99, "above_price": 10.99},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 8.99, "above_price": 8.99}
+    ]
+  },
+  {
+    "brand": "Miggo",
+    "aliases": ["miggo"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 180, "below_price": 10.50, "above_price": 10.50},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 8.50, "above_price": 8.50}
+    ]
+  },
+  {
+    "brand": "Evbee",
+    "aliases": ["evbee", "ev bee"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 150, "below_price": 10.60, "above_price": 11.82},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 8.49, "above_price": 8.49}
+    ]
+  },
+  {
+    "brand": "Trugo",
+    "aliases": ["trugo", "togg trugo", "togg"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 150, "below_price": 10.60, "above_price": 11.82},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 8.49, "above_price": 8.49}
+    ]
+  },
+  {
+    "brand": "Tesla",
+    "aliases": ["tesla", "supercharger"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 250, "below_price": 12.50, "above_price": 12.50}
+    ],
+    "note": "Tesla sahipleri için 8.90 TL/kWh, diğer EV'ler için 12.50 TL/kWh"
+  },
+  {
+    "brand": "Shell Recharge",
+    "aliases": ["shell", "shell recharge"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 60, "below_price": 13.50, "above_price": 14.99},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 11.99, "above_price": 11.99}
+    ]
+  },
+  {
+    "brand": "otoWATT",
+    "aliases": ["otowatt", "oto watt"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 60, "below_price": 11.49, "above_price": 12.49},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 9.99, "above_price": 9.99}
+    ]
+  },
+  {
+    "brand": "Q Charge",
+    "aliases": ["qcharge", "q charge", "q-charge"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 60, "below_price": 10.60, "above_price": 10.60},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 8.49, "above_price": 8.49}
+    ]
+  },
+  {
+    "brand": "Sharz",
+    "aliases": ["sharz", "sharz.net"],
+    "tariffs": [
+      {"socket_type": "DC", "power_threshold_kw": 100, "below_price": 11.00, "above_price": 13.00},
+      {"socket_type": "AC", "power_threshold_kw": 22, "below_price": 9.00, "above_price": 9.00}
+    ]
+  }
+]

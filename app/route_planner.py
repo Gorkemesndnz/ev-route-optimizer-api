@@ -39,6 +39,7 @@ from app.soc_simulator import (
     ChargePlanOptimizer  # Yeni: Durak sayısını minimize eden optimizer
 )
 from app.charging_model import calculate_charge_time
+from app.charging_tariffs import get_price_for_station  # 🔧 V3.1: Dinamik fiyatlandırma
 from app.consumption_engine.main_calculator import calculate_route_consumption
 from app.consumption_engine.vehicle_models import get_vehicle_model
 from app.route_selector import find_best_route
@@ -162,6 +163,72 @@ def _extract_weather_from_forecast(
     except Exception as e:
         logger.warning(f"Failed to parse forecast: {e}")
         return None
+
+
+def _build_alternative_stations(
+    corridor_stations: list,
+    best_station_id: str,
+    max_alternatives: int = 4
+) -> Optional[List[StationInfo]]:
+    """
+    🔧 V3.1: CorridorStation listesinden alternatif istasyonları StationInfo formatına çevir.
+    
+    Args:
+        corridor_stations: CorridorSearchResult.stations listesi
+        best_station_id: Seçilen en iyi istasyonun ID'si (bu hariç tutulacak)
+        max_alternatives: Maksimum alternatif sayısı
+    
+    Returns:
+        StationInfo listesi veya None (alternatif yoksa)
+    """
+    if not corridor_stations:
+        return None
+    
+    alternatives = []
+    
+    for station in corridor_stations:
+        # Best station'ı atla
+        if station.station_id == best_station_id:
+            continue
+        
+        # StationInfo'ya çevir
+        try:
+            station_info = StationInfo(
+                id=station.station_id,
+                name=station.station_name,
+                location=station.location,
+                rating=station.rating,
+                user_ratings_total=station.user_ratings_total,
+                connectors=[
+                    ConnectorInfo(
+                        plug_type=PlugType.CCS2,
+                        charger_type=ChargerType.DC,
+                        power_kw=station.power_kw if station.power_kw > 0 else 120.0
+                    )
+                ],
+                amenities=StationAmenity(
+                    has_toilet=station.has_toilet,
+                    has_food=station.has_food,
+                    has_shopping=station.has_shopping,
+                    has_parking=station.has_parking,
+                    is_24_7=station.is_open_now is True
+                ),
+                data_source=station.station_info.get("_source", "ocm"),
+                place_id=station.station_info.get("_place_id"),
+                vicinity=station.station_info.get("AddressInfo", {}).get("AddressLine1", ""),
+                distance_from_route_km=station.deviation_km,
+                is_open_now=station.is_open_now
+            )
+            alternatives.append(station_info)
+            
+            if len(alternatives) >= max_alternatives:
+                break
+                
+        except Exception as e:
+            logger.warning(f"Failed to convert alternative station: {e}")
+            continue
+    
+    return alternatives if alternatives else None
 
 
 def _resolve_defaults(request: RouteRequest) -> tuple:
@@ -460,6 +527,23 @@ def _build_multi_legs(
         # Forecast yoksa fallback olarak genel weather_info kullan
         charge_weather = station_weather if station_weather else weather_info
         
+        # 🔧 V3.1: Alternatif istasyonları hazırla (Plan B, C, D)
+        alternative_station_infos = _build_alternative_stations(
+            station_result.stations,
+            best_station_id=station.station_id,
+            max_alternatives=4
+        )
+        
+        # 🔧 V3.1: Şarj maliyeti hesaplama (operatör bazlı dinamik fiyat)
+        station_power = station.power_kw if station.power_kw > 0 else 120.0
+        is_dc_charger = station.is_dc or station_power >= 50
+        price_per_kwh, detected_operator = get_price_for_station(
+            station_name=station.station_name,
+            power_kw=station_power,
+            is_dc=is_dc_charger
+        )
+        estimated_charge_cost = round(kwh_to_add * price_per_kwh, 2)
+        
         legs.append(ChargeLeg(
             type="charge",
             station=station_info,
@@ -467,7 +551,10 @@ def _build_multi_legs(
             target_soc_percent=round(hotspot_target_soc, 1),
             energy_added_kwh=round(kwh_to_add, 2),
             duration_minutes=round(max(10, charge_duration), 1),
-            weather_context=charge_weather  # 🔧 V2.7: ETA bazlı forecast hava durumu
+            weather_context=charge_weather,  # 🔧 V2.7: ETA bazlı forecast hava durumu
+            alternative_stations=alternative_station_infos,  # 🔧 V3.1: Alternatif istasyonlar
+            price_per_kwh=price_per_kwh,  # 🔧 V3.1: Operatör bazlı birim fiyat
+            estimated_cost=estimated_charge_cost  # 🔧 V3.1: Tahmini maliyet
         ))
         
         # Güncellemeler
@@ -697,9 +784,19 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         
         if hotspots:
             from app.station_finder import find_stations_for_hotspots
+            # 🔧 V3.1: Kullanıcı tercihlerini istasyon aramaya aktar
+            prefs_dict = None
+            if request.preferences:
+                prefs_dict = {
+                    "max_detour_km": request.preferences.max_detour_km,
+                    "preferred_operators": request.preferences.preferred_operators,
+                    "preferred_plug_types": [p.value for p in request.preferences.preferred_plug_types] if request.preferences.preferred_plug_types else [],
+                    "amenities_required": [a.value for a in request.preferences.amenities_required] if request.preferences.amenities_required else []
+                }
             station_results = await find_stations_for_hotspots(
                 hotspots,
-                request.vehicle_model_id
+                request.vehicle_model_id,
+                preferences=prefs_dict
             )
         
         charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0
@@ -927,6 +1024,29 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         # 🔧 V3.0: Trafiksiz süre hesapla
         duration_without_traffic = route_leg["duration"]["value"] / 60
         
+        # 🔧 V3.1: Toplam regen hesapla (segment bazlı)
+        total_regen_kwh = 0.0
+        # segments_with_consumption içinden regen bilgisi çıkar (varsa)
+        # Not: Şu an segment.consumption_kwh toplam değer, regen ayrı hesaplanmıyor
+        # Gelecekte segment bazlı regen eklenebilir
+        
+        # 🔧 V3.1: Toplam şarj maliyeti (legs'ten topla)
+        total_charging_cost = sum(
+            leg.estimated_cost for leg in legs 
+            if hasattr(leg, 'estimated_cost') and leg.estimated_cost
+        )
+        
+        # 🔧 V3.1: Uyarı mesajları oluştur
+        warning_messages = []
+        if end_soc < 15:
+            warning_messages.append("⚠️ Varışta düşük batarya seviyesi. Dikkatli olun.")
+        if charge_stops > 3:
+            warning_messages.append("ℹ️ Uzun rota - çoklu şarj durağı planlandı.")
+        if charge_stops == 0 and end_soc < 25:
+            warning_messages.append("💡 Şarj durağı olmadan varılabilir ama batarya düşük kalacak.")
+        if traffic_ratio and traffic_ratio > 1.3:
+            warning_messages.append("🚗 Yoğun trafik bekleniyor. Süre uzayabilir.")
+        
         return MultiStopRouteResponse(
             status="success",
             total_distance_km=round(route_distance_km, 1),
@@ -942,7 +1062,11 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             duration_without_traffic_minutes=round(duration_without_traffic, 1),
             # 🔧 V2.7: Başlangıç ve varış hava durumu
             start_weather=start_weather,
-            end_weather=end_weather
+            end_weather=end_weather,
+            # 🔧 V3.1: Ek metrikler
+            total_regen_recovered_kwh=round(total_regen_kwh, 2),
+            total_charging_cost=round(total_charging_cost, 2),
+            warning_messages=warning_messages
         )
         
     except Exception as e:

@@ -533,6 +533,191 @@ async def search_vehicles(
     }
 
 
+# =============================================================================
+# 🔧 V3.1: FEEDBACK & RECALCULATE ENDPOINTS
+# =============================================================================
+
+from app.models import (
+    StationFeedbackRequest,
+    SwitchStationRequest,
+    RecalculateResponse,
+    FeedbackType
+)
+
+
+@app.post("/station_feedback", response_model=RecalculateResponse, tags=["Feedback"])
+async def station_feedback(request: StationFeedbackRequest) -> RecalculateResponse:
+    """
+    🔧 V3.1: Kullanıcı istasyon feedback'i ve yeniden rota hesaplama.
+    
+    Kullanıcı mevcut rotadaki bir istasyon hakkında sorun bildirdiğinde:
+    1. Sorunlu istasyonu blacklist'e al
+    2. Kullanıcının mevcut konumundan varışa yeni rota hesapla
+    3. Yeni rotayı döndür
+    """
+    request_id = f"feedback_{int(time.time() * 1000)}"
+    
+    logger.info(
+        f"[{request_id}] Station feedback received",
+        station_id=request.station_id,
+        feedback_type=request.feedback_type.value,
+        current_soc=request.current_soc_percent
+    )
+    
+    try:
+        # Excluded station listesini güncelle
+        excluded_ids = list(set(request.excluded_station_ids + [request.station_id]))
+        
+        # Yeni rota isteği oluştur
+        new_route_request = RouteRequest(
+            start_location=request.current_location,
+            end_location=request.destination,
+            vehicle_model_id=request.vehicle_model_id,
+            current_soc_percent=request.current_soc_percent
+        )
+        
+        # Yeni rota hesapla
+        new_route = await plan_route(new_route_request)
+        
+        # TODO: Excluded station'ları filtreleme mantığı eklenecek
+        # Şimdilik tam rota yeniden hesaplanıyor
+        
+        logger.info(
+            f"[{request_id}] New route calculated",
+            charge_stops=new_route.charge_stops,
+            total_distance=new_route.total_distance_km
+        )
+        
+        return RecalculateResponse(
+            status="success",
+            message=f"Rota yeniden hesaplandı. {request.feedback_type.value} bildirimi kaydedildi.",
+            recalculate_type="full_route",
+            route=new_route,
+            affected_legs=list(range(len(new_route.legs)))
+        )
+        
+    except Exception as e:
+        logger.error(f"[{request_id}] Feedback processing failed", error=str(e))
+        return RecalculateResponse(
+            status="error",
+            message=f"Rota yeniden hesaplanamadı: {str(e)}",
+            recalculate_type="none",
+            route=None,
+            affected_legs=[]
+        )
+
+
+@app.post("/switch_station", response_model=RecalculateResponse, tags=["Feedback"])
+async def switch_station(request: SwitchStationRequest) -> RecalculateResponse:
+    """
+    🔧 V3.1: İstasyon değiştirme ve etki analizi.
+    
+    Kullanıcı alternatif istasyonlardan birini seçtiğinde:
+    
+    Senaryo A (Sorunsuz): Yeni istasyondan sonraki durağa ulaşılabiliyorsa
+    → Sadece o bacağı güncelle, rotanın geri kalanına dokunma
+    
+    Senaryo B (Kritik): Yeni istasyon seçimi sonraki durağa varmayı imkansız kılıyorsa
+    → O noktadan itibaren tüm rotayı yeniden hesapla
+    """
+    request_id = f"switch_{int(time.time() * 1000)}"
+    
+    logger.info(
+        f"[{request_id}] Station switch requested",
+        original=request.original_station_id,
+        new=request.new_station_id,
+        leg_index=request.leg_index
+    )
+    
+    try:
+        vehicle = get_vehicle_model(request.vehicle_model_id)
+        battery_kwh = request.battery_capacity_kwh
+        
+        # Yeni istasyona gidiş için tahmini tüketim hesapla
+        # Basit hesap: Haversine mesafe * ortalama tüketim
+        from app.station_finder import haversine_km
+        
+        distance_to_new = haversine_km(
+            request.current_location.lat, request.current_location.lon,
+            request.new_station.location.lat, request.new_station.location.lon
+        )
+        
+        # Ortalama tüketim: Wh/km -> kWh
+        avg_consumption_kwh_per_km = vehicle.base_consumption_wh_km / 1000
+        estimated_consumption = distance_to_new * avg_consumption_kwh_per_km
+        
+        # Yeni istasyona vardığında tahmini SOC
+        soc_at_new_station = request.current_soc_percent - (estimated_consumption / battery_kwh * 100)
+        
+        # Senaryo kontrolü: Sonraki durağa ulaşılabilir mi?
+        can_reach_next = True
+        
+        if request.next_station_location:
+            distance_to_next = haversine_km(
+                request.new_station.location.lat, request.new_station.location.lon,
+                request.next_station_location.lat, request.next_station_location.lon
+            )
+            
+            # Şarj sonrası tahmini SOC (80% hedef varsayalım)
+            soc_after_charge = 80.0
+            consumption_to_next = distance_to_next * avg_consumption_kwh_per_km
+            soc_at_next = soc_after_charge - (consumption_to_next / battery_kwh * 100)
+            
+            # Minimum güvenli SOC: 15%
+            can_reach_next = soc_at_next >= 15.0
+            
+            logger.debug(
+                f"[{request_id}] Reach analysis",
+                soc_after_charge=soc_after_charge,
+                consumption_to_next=consumption_to_next,
+                soc_at_next=soc_at_next,
+                can_reach=can_reach_next
+            )
+        
+        if can_reach_next:
+            # Senaryo A: Sadece tek bacak güncellemesi
+            logger.info(f"[{request_id}] Scenario A: Single leg update")
+            
+            return RecalculateResponse(
+                status="success",
+                message="İstasyon değiştirildi. Sonraki durağa ulaşılabilir.",
+                recalculate_type="single_leg",
+                route=None,  # Frontend sadece o bacağı güncelleyecek
+                affected_legs=[request.leg_index]
+            )
+        else:
+            # Senaryo B: Tam rota yeniden hesaplama
+            logger.info(f"[{request_id}] Scenario B: Full route recalculation needed")
+            
+            # Yeni rota hesapla (yeni istasyondan sonra)
+            new_route_request = RouteRequest(
+                start_location=request.new_station.location,
+                end_location=request.destination,
+                vehicle_model_id=request.vehicle_model_id,
+                current_soc_percent=80.0  # Şarj sonrası varsayılan
+            )
+            
+            new_route = await plan_route(new_route_request)
+            
+            return RecalculateResponse(
+                status="full_recalculate",
+                message="İstasyon değişti ve sonraki durağa ulaşılamıyor. Rota yeniden hesaplandı.",
+                recalculate_type="full_route",
+                route=new_route,
+                affected_legs=list(range(request.leg_index, request.leg_index + len(new_route.legs) + 1))
+            )
+        
+    except Exception as e:
+        logger.error(f"[{request_id}] Station switch failed", error=str(e))
+        return RecalculateResponse(
+            status="error",
+            message=f"İstasyon değiştirilemedi: {str(e)}",
+            recalculate_type="none",
+            route=None,
+            affected_legs=[]
+        )
+
+
 if __name__ == "__main__":
     import uvicorn
     

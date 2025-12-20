@@ -288,6 +288,8 @@ class DriveLeg(BaseModel):
 class ChargeLeg(BaseModel):
     """
     İstasyonda şarj bacağı.
+    
+    🔧 V3.1: alternative_stations eklendi - Kullanıcı feedback veya tercih değişikliği için
     """
     type: Literal["charge"] = "charge"
     station: StationInfo
@@ -303,6 +305,11 @@ class ChargeLeg(BaseModel):
     )
     currency: str = "TRY"
     weather_context: Optional[WeatherInfo] = None
+    # 🔧 V3.1: Alternatif istasyonlar (Plan B, C, D)
+    alternative_stations: Optional[List[StationInfo]] = Field(
+        default=None,
+        description="Bu bacak için alternatif istasyonlar (en iyi 3-5). Kullanıcı feedback verirse veya istasyon değiştirmek isterse kullanılır."
+    )
 
 
 # ======================================================
@@ -362,7 +369,77 @@ class MultiStopRouteResponse(BaseModel):
     # 🔧 V2.7: Başlangıç ve varış hava durumu
     start_weather: Optional[WeatherInfo] = Field(None, description="Başlangıç noktası hava durumu (current)")
     end_weather: Optional[WeatherInfo] = Field(None, description="Varış noktası hava durumu (forecast)")
+    # 🔧 V3.1: Ek metrikler
+    total_regen_recovered_kwh: float = Field(0.0, description="Toplam rejeneratif frenleme ile geri kazanılan enerji (kWh)")
+    total_charging_cost: float = Field(0.0, description="Toplam şarj maliyeti (TRY)")
+    warning_messages: List[str] = Field(default_factory=list, description="Kullanıcı için uyarı mesajları")
     debug_info: Optional[dict] = Field(
         default=None, 
         description="Debug bilgileri (sadece development modunda)"
     )
+
+
+# ======================================================
+# 9. FEEDBACK & RECALCULATE MODELS (V3.1)
+# ======================================================
+
+class FeedbackType(str, Enum):
+    """Kullanıcı feedback tipleri."""
+    STATION_BROKEN = "station_broken"       # İstasyon arızalı
+    STATION_OCCUPIED = "station_occupied"   # İstasyon meşgul
+    SOC_LOW = "soc_low"                     # SOC beklenenden düşük
+    HIGH_PRICE = "high_price"               # Yüksek park/şarj ücreti
+    PRIVATE_PROPERTY = "private_property"   # Özel mülk, erişilemiyor
+    WRONG_LOCATION = "wrong_location"       # Yanlış konum
+    OTHER = "other"                         # Diğer
+
+
+class StationFeedbackRequest(BaseModel):
+    """
+    🔧 V3.1: Kullanıcı feedback isteği.
+    
+    Kullanıcı mevcut rotadaki bir istasyon hakkında sorun bildirdiğinde kullanılır.
+    """
+    station_id: str = Field(..., description="Sorunlu istasyonun ID'si")
+    feedback_type: FeedbackType = Field(..., description="Feedback tipi")
+    current_location: GeoPoint = Field(..., description="Kullanıcının anlık konumu")
+    current_soc_percent: float = Field(..., ge=0, le=100, description="Kullanıcının anlık SOC'u")
+    destination: GeoPoint = Field(..., description="Varış noktası")
+    vehicle_model_id: str = Field(..., description="Araç modeli ID")
+    excluded_station_ids: List[str] = Field(
+        default_factory=list,
+        description="Hariç tutulacak istasyon ID'leri (daha önce sorunlu bulunanlar)"
+    )
+    message: Optional[str] = Field(None, description="Opsiyonel kullanıcı mesajı")
+
+
+class SwitchStationRequest(BaseModel):
+    """
+    🔧 V3.1: İstasyon değiştirme isteği.
+    
+    Kullanıcı alternatif istasyonlardan birini seçtiğinde kullanılır.
+    """
+    original_station_id: str = Field(..., description="Orijinal seçilen istasyonun ID'si")
+    new_station_id: str = Field(..., description="Yeni seçilen istasyonun ID'si")
+    new_station: StationInfo = Field(..., description="Yeni istasyon bilgileri")
+    leg_index: int = Field(..., ge=0, description="Değiştirilecek bacak indeksi")
+    current_location: GeoPoint = Field(..., description="Kullanıcının anlık konumu")
+    current_soc_percent: float = Field(..., ge=0, le=100, description="Kullanıcının anlık SOC'u")
+    destination: GeoPoint = Field(..., description="Varış noktası")
+    vehicle_model_id: str = Field(..., description="Araç modeli ID")
+    # Sonraki bacak bilgileri (etki analizi için)
+    next_station_location: Optional[GeoPoint] = Field(None, description="Sonraki istasyonun konumu")
+    battery_capacity_kwh: float = Field(..., gt=0, description="Batarya kapasitesi")
+
+
+class RecalculateResponse(BaseModel):
+    """
+    🔧 V3.1: Yeniden hesaplama yanıtı.
+    """
+    status: str = Field(..., description="success, partial_recalculate, full_recalculate, error")
+    message: str = Field(..., description="Açıklama mesajı")
+    recalculate_type: Literal["none", "single_leg", "full_route"] = Field(
+        ..., description="Yeniden hesaplama tipi"
+    )
+    route: Optional[MultiStopRouteResponse] = Field(None, description="Yeni rota (gerekiyorsa)")
+    affected_legs: List[int] = Field(default_factory=list, description="Etkilenen bacak indeksleri")

@@ -206,11 +206,12 @@ def _is_station_on_route_side(
     max_perpendicular_distance_km: float = 1.0
 ) -> Tuple[bool, float]:
     """
-    🔧 V2.9: İstasyonun rotanın doğru tarafında olup olmadığını kontrol et.
+    🔧 V3.1: İstasyonun rotanın doğru tarafında olup olmadığını kontrol et.
     
     Otoyolda karşı yöndeki istasyonları filtrelemek için:
     - Rota yönüne dik mesafeyi hesapla
-    - Çok uzakta olan istasyonları (yolun karşısı) filtrele
+    - Açı farkı kontrolü (90°+ = muhtemelen karşı tarafta)
+    - Mesafeye göre dinamik tolerans
     
     Args:
         route_bearing: Rotanın gittiği yön (derece)
@@ -238,13 +239,32 @@ def _is_station_on_route_side(
     # İleri yönde mesafe (along-route) = toplam mesafe × cos(açı farkı)
     along_route_distance = total_distance * math.cos(math.radians(angle_diff))
     
-    # Kriterler:
-    # 1. İstasyon ileri yönde olmalı (arkada değil) - along_route >= -2 km tolerans
-    # 2. Rotaya dik mesafe max_perpendicular_distance_km'den küçük olmalı
-    is_forward = along_route_distance >= -2.0  # 2km geriye tolerans
-    is_close_to_route = perpendicular_distance <= max_perpendicular_distance_km
+    # 🔧 V3.1: Dinamik tolerans - yakın istasyonlar için daha sıkı kontrol
+    # Otoyolda karşı şerit sadece 50-200m uzaklıkta, bu yüzden yakın mesafelerde
+    # daha sıkı filtreleme gerekiyor
+    if total_distance <= 1.0:
+        # Çok yakın istasyonlar (1 km içinde) - sıkı kontrol
+        effective_max_perp = min(max_perpendicular_distance_km, 0.3)  # Max 300m
+    elif total_distance <= 3.0:
+        # Yakın istasyonlar (1-3 km) - orta sıkılıkta
+        effective_max_perp = min(max_perpendicular_distance_km, 0.5)  # Max 500m
+    else:
+        # Uzak istasyonlar - normal tolerans
+        effective_max_perp = max_perpendicular_distance_km
     
-    is_valid = is_forward and is_close_to_route
+    # 🔧 V3.1: Açı farkı kontrolü
+    # Eğer istasyon rotanın neredeyse ters yönündeyse (135°+), büyük ihtimalle
+    # karşı yönde veya çok farklı bir yerde
+    is_opposite_direction = angle_diff >= 135.0
+    
+    # Kriterler:
+    # 1. İstasyon ileri yönde olmalı (arkada değil) - along_route >= -1 km tolerans
+    # 2. Rotaya dik mesafe effective_max_perp'den küçük olmalı
+    # 3. Ters yönde olmamalı (135°+ açı farkı)
+    is_forward = along_route_distance >= -1.0  # 1km geriye tolerans (daraltıldı)
+    is_close_to_route = perpendicular_distance <= effective_max_perp
+    
+    is_valid = is_forward and is_close_to_route and not is_opposite_direction
     
     return is_valid, perpendicular_distance
 
@@ -1044,7 +1064,8 @@ class CorridorSearcher:
 async def find_stations_for_hotspots(
     hotspots: List[ChargeHotspot],
     vehicle_model_id: str,
-    min_distance_between_stations_km: float = 50.0
+    min_distance_between_stations_km: float = 50.0,
+    preferences: Optional[Dict[str, Any]] = None
 ) -> List[CorridorSearchResult]:
     """
     Birden fazla hotspot için akıllı istasyon seçimi.
@@ -1053,16 +1074,26 @@ async def find_stations_for_hotspots(
     - Aynı istasyonu tekrar seçmez
     - Birbirine çok yakın istasyonları önler
     - Her hotspot için alternatif istasyon bulur
+    - 🔧 V3.1: Kullanıcı tercihlerine göre filtreleme
     
     Args:
         hotspots: Şarj gerekli noktalar
         vehicle_model_id: Araç modeli
         min_distance_between_stations_km: İstasyonlar arası minimum mesafe
+        preferences: Kullanıcı tercihleri (max_detour_km, preferred_operators, vb.)
     """
     if not hotspots:
         return []
     
-    searcher = CorridorSearcher(vehicle_model_id=vehicle_model_id)
+    # 🔧 V3.1: Preferences'dan max_detour_km al
+    max_detour_km = CORRIDOR_LENGTH_KM  # Default: 50km
+    if preferences and preferences.get("max_detour_km"):
+        max_detour_km = min(preferences["max_detour_km"], CORRIDOR_LENGTH_KM)
+    
+    searcher = CorridorSearcher(
+        vehicle_model_id=vehicle_model_id,
+        corridor_length_km=max_detour_km
+    )
     
     # Paralel arama yap (tüm istasyonları bul)
     tasks = [searcher.search_for_hotspot(hotspot) for hotspot in hotspots]
@@ -1084,6 +1115,39 @@ async def find_stations_for_hotspots(
                 s for s in result.stations 
                 if s.station_id not in used_station_ids
             ]
+            
+            # 🔧 V3.1: Kullanıcı tercihlerine göre filtrele
+            if preferences and available_stations:
+                # Operatör filtresi (istasyon adında operatör adı aranır)
+                pref_operators = preferences.get("preferred_operators", [])
+                if pref_operators:
+                    filtered = [
+                        s for s in available_stations
+                        if any(op.lower() in s.station_name.lower() for op in pref_operators)
+                    ]
+                    if filtered:  # Sonuç varsa uygula, yoksa tüm istasyonları koru
+                        available_stations = filtered
+                        logger.info(f"Operator filter applied: {len(filtered)} stations match {pref_operators}")
+                
+                # Zorunlu imkanlar filtresi (amenities_required)
+                req_amenities = preferences.get("amenities_required", [])
+                if req_amenities:
+                    def has_required_amenities(station):
+                        for amenity in req_amenities:
+                            if amenity == "toilet" and not station.has_toilet:
+                                return False
+                            if amenity == "food" and not station.has_food:
+                                return False
+                            if amenity == "shopping" and not station.has_shopping:
+                                return False
+                            if amenity == "parking" and not station.has_parking:
+                                return False
+                        return True
+                    
+                    filtered = [s for s in available_stations if has_required_amenities(s)]
+                    if filtered:  # Sonuç varsa uygula
+                        available_stations = filtered
+                        logger.info(f"Amenities filter applied: {len(filtered)} stations have {req_amenities}")
             
             # Çok yakın istasyonları filtrele
             if last_station_location and available_stations:
