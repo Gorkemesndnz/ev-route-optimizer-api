@@ -13,7 +13,7 @@ async def debug_route():
     request = RouteRequest(
         start_location=GeoPoint(lat=41.0082, lon=28.9784),  # İstanbul
         end_location=GeoPoint(lat=39.9334, lon=32.8597),    # Ankara
-        vehicle_model_id="mg4_51kwh",
+        vehicle_model_id="tesla_model_3_long_range",
         current_soc_percent=85,
         route_strategy="optimal"
     )
