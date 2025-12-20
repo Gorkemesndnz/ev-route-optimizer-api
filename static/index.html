@@ -327,6 +327,18 @@
                                             placeholder="10" min="1" max="50" value="10">
                                     </div>
 
+                                    <!-- Şarj Tipi (HPC/DC/AC) -->
+                                    <div>
+                                        <label class="block text-gray-500 text-xs mb-1">⚡ Şarj Tipi</label>
+                                        <select id="preferredChargerType"
+                                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm appearance-none cursor-pointer">
+                                            <option value="" class="bg-slate-800">Hepsi</option>
+                                            <option value="HPC" class="bg-slate-800">HPC (150+ kW)</option>
+                                            <option value="DC" class="bg-slate-800">DC (50-150 kW)</option>
+                                            <option value="AC" class="bg-slate-800">AC (22 kW ve altı)</option>
+                                        </select>
+                                    </div>
+
                                     <!-- Soket Tipi -->
                                     <div>
                                         <label class="block text-gray-500 text-xs mb-1">🔌 Tercih Edilen Soket</label>
@@ -335,7 +347,7 @@
                                             <option value="" class="bg-slate-800">Hepsi</option>
                                             <option value="CCS2" class="bg-slate-800">CCS2 (Avrupa DC)</option>
                                             <option value="CHAdeMO" class="bg-slate-800">CHAdeMO</option>
-                                            <option value="Type 2" class="bg-slate-800">Type 2 (AC)</option>
+                                            <option value="Type2" class="bg-slate-800">Type 2 (AC)</option>
                                         </select>
                                     </div>
 

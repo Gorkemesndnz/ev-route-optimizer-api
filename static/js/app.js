@@ -19,13 +19,37 @@ function toggleAiMode() {
     const aiMode = document.getElementById('aiPlanningMode').checked;
     const batterySettings = document.getElementById('batterySettings');
 
+    // 🔧 V3.1: AI modunda yolcu/yük butonlarını ve input'ları kilitle
+    const passengerBtns = document.querySelectorAll('[onclick*="adjustPassengers"], [onclick*="adjustChildren"]');
+    const passengerInput = document.getElementById('passengerCount');
+    const childInput = document.getElementById('childCount');
+    const loadInput = document.getElementById('extraLoad');
+
     if (aiMode) {
         // AI açık: Batarya/Şarj gizle, değerlerini temizle
         batterySettings.style.display = 'none';
         clearBatteryInputs();
+
+        // Yolcu/Yük butonlarını ve input'ları kilitle
+        passengerBtns.forEach(btn => {
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+        });
+        if (passengerInput) passengerInput.disabled = true;
+        if (childInput) childInput.disabled = true;
+        if (loadInput) loadInput.disabled = true;
     } else {
         // AI kapalı: Batarya/Şarj göster (manuel mod)
         batterySettings.style.display = 'block';
+
+        // Yolcu/Yük butonlarını ve input'ları aç
+        passengerBtns.forEach(btn => {
+            btn.disabled = false;
+            btn.classList.remove('opacity-50', 'cursor-not-allowed');
+        });
+        if (passengerInput) passengerInput.disabled = false;
+        if (childInput) childInput.disabled = false;
+        if (loadInput) loadInput.disabled = false;
     }
 }
 
@@ -95,6 +119,7 @@ function togglePreferences() {
 function getStationPreferences() {
     return {
         max_detour_km: parseFloat(document.getElementById('maxDetourKm')?.value) || 10,
+        preferred_charger_type: document.getElementById('preferredChargerType')?.value || '',
         preferred_plug_types: document.getElementById('preferredPlugType')?.value ?
             [document.getElementById('preferredPlugType').value] : [],
         preferred_operators: document.getElementById('preferredOperator')?.value ?
