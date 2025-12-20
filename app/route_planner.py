@@ -52,6 +52,18 @@ from app.sustainability_calculator import calculate_co2_savings
 from app.utils.logger import get_logger
 from app.utils.data_logger import log_route_decision, log_consumption
 from app.utils.charging_estimator import get_smart_dc_max, is_curve_suspicious
+from app.constants import (
+    HARD_MIN_SOC,
+    TARGET_ARRIVAL_SOC,
+    TARGET_CHARGE_MIN_SOC,
+    DEFAULT_PASSENGER_COUNT,
+    DEFAULT_CHILD_COUNT,
+    DEFAULT_EXTRA_LOAD_KG,
+    DEFAULT_TEMPERATURE_C,
+    MIN_SOC_RANGE,
+    TARGET_SOC_RANGE,
+    ARRIVAL_SOC_RANGE
+)
 
 logger = get_logger("route_planner")
 weather_service = WeatherService()
@@ -65,30 +77,6 @@ def _get_vehicle_catalog() -> FileVehicleCatalog:
     if _vehicle_catalog is None:
         _vehicle_catalog = FileVehicleCatalog()
     return _vehicle_catalog
-
-DEFAULT_TEMPERATURE_C = 20.0
-
-# =============================================================================
-# VARSAYILAN DEĞERLER
-# =============================================================================
-DEFAULT_PASSENGER_COUNT = 1
-DEFAULT_CHILD_COUNT = 0
-DEFAULT_EXTRA_LOAD_KG = 0.0
-
-# =============================================================================
-# 🔧 V3.5: DİNAMİK SOC SABİTLERİ - Gereksiz durak önleme
-# =============================================================================
-# HARD_MIN: Mutlak minimum - bunun altına düşmemeli (güvenlik)
-HARD_MIN_SOC = 8.0  # %8 - kritik minimum, bunun altı tehlikeli
-
-# TARGET: Tercih edilen hedefler - mümkünse ulaşılmalı
-TARGET_ARRIVAL_SOC = 15.0  # Varışta tercih edilen
-TARGET_CHARGE_MIN_SOC = 12.0  # İstasyona varışta tercih edilen
-
-# Eski sabitler (geriye uyumluluk)
-MIN_SOC_RANGE = (HARD_MIN_SOC, 20.0)  # Şarj eşiği
-TARGET_SOC_RANGE = (75.0, 95.0)   # Şarj hedefi
-ARRIVAL_SOC_RANGE = (HARD_MIN_SOC, 20.0)  # Varış hedefi
 
 
 def _extract_weather_from_forecast(

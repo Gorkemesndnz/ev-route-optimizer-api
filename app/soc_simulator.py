@@ -34,50 +34,29 @@ from app.models import GeoPoint
 from app.route_segmenter import RouteSegment
 from app.utils.logger import get_logger
 from app.charging_model import calculate_charge_time, apply_high_soc_penalty
+from app.constants import (
+    HARD_MIN_SOC,
+    TARGET_MIN_SOC,
+    SAFETY_BUFFER_PERCENT,
+    MIN_CHARGE_THRESHOLD_PERCENT,
+    MIN_DISTANCE_BETWEEN_STOPS_KM,
+    STOP_PENALTY_MINUTES,
+    SHORT_INTERVAL_PENALTY_MINUTES,
+    MIN_DRIVING_INTERVAL_MINUTES,
+    TARGET_SOC_MIN,
+    TARGET_SOC_MAX,
+    TARGET_SOC_STEP,
+    MAX_MIN_REQUIRED_SOC,
+    HOTSPOT_SOC_BUFFER,
+    MULTI_STOP_TARGET_MIN,
+    MULTI_STOP_TARGET_MAX,
+    FINAL_STOP_TARGET_MIN,
+    FINAL_STOP_TARGET_MAX,
+    DEFAULT_ARRIVAL_SOC,
+    LONG_ROUTE_ARRIVAL_SOC
+)
 
 logger = get_logger("soc_simulator")
-
-
-# =============================================================================
-# CONSTANTS
-# =============================================================================
-
-# 🔧 V3.5: DİNAMİK SOC SABİTLERİ
-# HARD_MIN: Mutlak minimum - bunun altına düşmemeli (güvenlik)
-HARD_MIN_SOC = 8.0  # %8 - kritik minimum
-MIN_CHARGE_THRESHOLD_PERCENT = 10.0  # Acil şarj eşiği - bunun altında hotspot oluştur
-
-# TARGET: Tercih edilen hedefler
-TARGET_MIN_SOC = 15.0  # Tercih edilen minimum
-SAFETY_BUFFER_PERCENT = 5.0  # Güvenlik marjı (10→5 düşürüldü)
-MIN_DISTANCE_BETWEEN_STOPS_KM = 50.0  # Şarj durakları arası minimum mesafe
-
-# Optimizer sabitleri
-STOP_PENALTY_MINUTES = 60.0  # Her ek durak = 60 dk ceza (park, bul, bekle, çık)
-SHORT_INTERVAL_PENALTY_MINUTES = 15.0  # Kısa aralıklı durak penaltisi (dk)
-MIN_DRIVING_INTERVAL_MINUTES = 75.0  # 1.25 saatten kısa sürüş aralıkları penalize edilir
-
-# 🔧 DİNAMİK TARGET SOC: Statik liste KALDIRILDI
-# Artık %65-100 arası TÜM değerler deneniyor
-TARGET_SOC_MIN = 65
-TARGET_SOC_MAX = 100  # V2.6: %100'e kadar şarj seçeneği
-TARGET_SOC_STEP = 5  # %5 aralıklarla dene (hız için)
-
-# Hotspot üretim sınırları - 🔧 V3.5: Daha esnek
-MAX_MIN_REQUIRED_SOC = 50.0  # min_required_soc üst sınırı
-HOTSPOT_SOC_BUFFER = 40.0  # SOC tampon marjı (35→40 artırıldı = daha az hotspot)
-# Sonuç: Hotspot eşiği = 50-40 = %10 civarı
-
-# 🔧 V2.3: UZUN ROTA İÇİN DİNAMİK HEDEFLER
-# Birden fazla şarj durağı olan rotalarda daha düşük hedefler
-MULTI_STOP_TARGET_MIN = 72  # Ara duraklar için minimum hedef
-MULTI_STOP_TARGET_MAX = 82  # Ara duraklar için maksimum hedef
-FINAL_STOP_TARGET_MIN = 60  # Son durak için minimum hedef
-FINAL_STOP_TARGET_MAX = 85  # Son durak için maksimum hedef
-
-# Varış SOC hedefi (uzun rotalarda düşük tutulmalı)
-DEFAULT_ARRIVAL_SOC = 20.0  # Varsayılan varış hedefi %20
-LONG_ROUTE_ARRIVAL_SOC = 15.0  # Uzun rotalarda %15 yeterli
 
 
 # =============================================================================
