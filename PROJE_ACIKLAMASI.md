@@ -1,17 +1,43 @@
 # EV Route Optimizer – Mimari ve Hesaplama Özeti
 
-## 0. Sürüm Notu (V2.8)
+## 0. Sürüm Notu (V3.0)
 
 Bu doküman, projenin mimarisini ve hesaplama katmanlarını açıklar.
 
-V2.7 / V2.8 ile gelen başlıca iyileştirmeler:
+### V3.0 ile Gelen Yenilikler (Aralık 2024)
 
-- **2-Pass weather refinement**: Pass 1 ile duraklar bulunur, Pass 2’de durak noktalarının hava durumu ile tüketim yeniden hesaplanır (eşik kaldırıldı → refined weather varsa her zaman çalışır).
-- **ETA bazlı forecast weather**:
-  - **Başlangıç**: current weather
-  - **Varış**: ETA’ya göre forecast weather
-  - **Şarj durakları**: ETA’ya göre forecast weather (ChargeLeg.weather_context)
-- **İstasyon seçimi (V2.8)**: Sapma + güç + **weighted rating** + **amenities** (WC/yemek/market/otopark/açık) birlikte skora girer.
+#### Crowd-Sourced İstasyon Güvenilirlik Sistemi
+- **FeedbackManager** (`app/services/feedback_service.py`): 3-Strike kuralı ile güvenilmez istasyonları otomatik bloklar
+- Spam koruması: Aynı kullanıcı 24 saat içinde tekrar raporlayamaz
+- Otomatik açılma: 48 saat sonra blok kalkar
+- Blok uzatma: Bloklu istasyona yeni rapor gelirse süre uzar
+
+#### Modüler Refactoring
+- **StationFilter** (`app/services/station_logic/filter.py`): İstasyon filtreleme mantığı ayrı sınıfa taşındı
+- **StationScorer** (`app/services/station_logic/scorer.py`): Skorlama mantığı ayrı sınıfa taşındı
+- **Merkezi Sabitler** (`app/constants.py`): Tüm SOC sabitleri tek dosyada (DRY prensibi)
+
+#### Dinamik SOC Toleransı
+- **8-15% arası tolerans**: Projected SOC %8-15 arasındaysa gereksiz şarj durağı eklenmez
+- Mesafeye göre dinamik eşik: Kısa rota → düşük eşik, uzun rota → yüksek eşik
+
+#### Modern UI (Cyberpunk Tema)
+- Scanning line efekti
+- Neon glow kartlar
+- Floating particles
+- Animated gradient arka plan
+
+#### Kapsamlı Test Suite
+- `tests/test_core_logic.py`: 51 pytest testi
+- FeedbackManager, SOC Logic, StationScorer, StationFilter testleri
+
+---
+
+### V2.7 / V2.8 Özellikleri (Önceki Sürümler)
+
+- **2-Pass weather refinement**: Pass 1 ile duraklar bulunur, Pass 2'de durak noktalarının hava durumu ile tüketim yeniden hesaplanır
+- **ETA bazlı forecast weather**: Varış ve şarj durakları için varış anına göre forecast
+- **İstasyon seçimi**: Sapma + güç + **weighted rating** + **amenities** (WC/yemek/market/otopark/açık) birlikte skora girer
 
 ---
 
