@@ -75,10 +75,20 @@ DEFAULT_PASSENGER_COUNT = 1
 DEFAULT_CHILD_COUNT = 0
 DEFAULT_EXTRA_LOAD_KG = 0.0
 
-# Şarj parametreleri aralıkları (V1 kural tabanlı)
-MIN_SOC_RANGE = (15.0, 25.0)      # Şarj eşiği
+# =============================================================================
+# 🔧 V3.5: DİNAMİK SOC SABİTLERİ - Gereksiz durak önleme
+# =============================================================================
+# HARD_MIN: Mutlak minimum - bunun altına düşmemeli (güvenlik)
+HARD_MIN_SOC = 8.0  # %8 - kritik minimum, bunun altı tehlikeli
+
+# TARGET: Tercih edilen hedefler - mümkünse ulaşılmalı
+TARGET_ARRIVAL_SOC = 15.0  # Varışta tercih edilen
+TARGET_CHARGE_MIN_SOC = 12.0  # İstasyona varışta tercih edilen
+
+# Eski sabitler (geriye uyumluluk)
+MIN_SOC_RANGE = (HARD_MIN_SOC, 20.0)  # Şarj eşiği
 TARGET_SOC_RANGE = (75.0, 95.0)   # Şarj hedefi
-ARRIVAL_SOC_RANGE = (10.0, 25.0)  # Varış hedefi
+ARRIVAL_SOC_RANGE = (HARD_MIN_SOC, 20.0)  # Varış hedefi
 
 
 def _extract_weather_from_forecast(
@@ -253,46 +263,61 @@ def _calculate_base_soc_params(
     request: RouteRequest
 ) -> tuple:
     """
-    Temel SOC parametrelerini hesapla (charge_min_soc ve arrival_soc).
+    🔧 V3.5: Dinamik SOC parametreleri - gereksiz durak önleme.
     
-    NOT: charge_target_soc artık ChargePlanOptimizer tarafından dinamik olarak belirlenir.
-    80% sabit hedef KALDIRILDI - optimizer 75-95% arasında en iyi değeri seçer.
-    
-    Kullanıcı değer girdiyse aynen kullan, None ise optimize et.
+    MANTIK:
+    1. HARD_MIN_SOC (8%) = Mutlak minimum, bunun altına düşmemeli
+    2. TARGET_ARRIVAL_SOC (15%) = Tercih edilen, ama zorunlu değil
+    3. Eğer HARD_MIN_SOC üzerinde varabiliyorsak, şarj ATLANIR
     
     Returns:
         (charge_min_soc, user_target_soc_override, arrival_soc)
-        user_target_soc_override: Kullanıcı değer girdiyse o değer, yoksa None
     """
     # Mevcut enerji ve ihtiyaç
     current_energy_kwh = (start_soc / 100) * battery_kwh
     
-    # Tek şarjla gidebilir miyiz?
-    can_complete_direct = current_energy_kwh >= total_consumption_kwh * 1.15  # %15 güvenlik
+    # Tahmini varış SOC'u hesapla (şarjsız)
+    projected_arrival_soc = ((current_energy_kwh - total_consumption_kwh) / battery_kwh) * 100
     
-    # 1. Varış SOC
+    # 🔧 V3.5: "CAN I MAKE IT?" KONTROLÜ
+    # Eğer HARD_MIN_SOC üzerinde varabiliyorsak, şarj gerekMEZ
+    can_reach_with_hard_min = projected_arrival_soc >= HARD_MIN_SOC
+    can_reach_with_target = projected_arrival_soc >= TARGET_ARRIVAL_SOC
+    
+    logger.info(
+        f"Projected arrival SOC: {projected_arrival_soc:.1f}% "
+        f"(hard_min={HARD_MIN_SOC}%, target={TARGET_ARRIVAL_SOC}%, "
+        f"can_reach_hard={can_reach_with_hard_min}, can_reach_target={can_reach_with_target})"
+    )
+    
+    # 1. Varış SOC - DİNAMİK
     if request.target_arrival_soc_percent is not None:
+        # Kullanıcı değer girdiyse aynen kullan
         arrival_soc = request.target_arrival_soc_percent
     else:
-        if can_complete_direct:
-            # Şarj gerekmiyorsa, kalan SOC'u hesapla
-            remaining_percent = ((current_energy_kwh - total_consumption_kwh) / battery_kwh) * 100
-            arrival_soc = max(ARRIVAL_SOC_RANGE[0], min(remaining_percent, ARRIVAL_SOC_RANGE[1]))
+        if can_reach_with_hard_min:
+            # 🔧 Şarjsız gidebiliyoruz! Gerçek varış SOC'u kullan
+            # Ama HARD_MIN'in altına düşmesin
+            arrival_soc = max(HARD_MIN_SOC, projected_arrival_soc)
+            logger.info(f"Can reach destination without charging! arrival_soc={arrival_soc:.1f}%")
         else:
-            # Şarj gerekiyorsa, minimum varış hedefi
-            arrival_soc = 15.0
+            # Şarj gerekiyor - hedef SOC kullan
+            arrival_soc = TARGET_ARRIVAL_SOC
     
-    # 2. Şarj Eşiği (min_soc) - 🔧 V3.4: Düşürüldü - gereksiz durak önleme
+    # 2. Şarj Eşiği (charge_min_soc) - 🔧 V3.5: Bacak uzunluğuna göre esnek
     if request.charge_min_soc_percent is not None:
         charge_min_soc = request.charge_min_soc_percent
     else:
-        # Rota uzunluğuna göre ayarla - daha düşük eşikler
-        if route_distance_km < 200:
+        # Rota uzunluğuna göre dinamik eşik
+        if route_distance_km < 100:
+            # Çok kısa rota - düşük eşik güvenli
+            charge_min_soc = HARD_MIN_SOC  # %8
+        elif route_distance_km < 200:
             charge_min_soc = 10.0  # Kısa rota
         elif route_distance_km < 400:
-            charge_min_soc = 12.0  # Orta rota
+            charge_min_soc = TARGET_CHARGE_MIN_SOC  # %12
         else:
-            charge_min_soc = 15.0  # Uzun rota - yeterli güvenlik
+            charge_min_soc = TARGET_ARRIVAL_SOC  # %15 - uzun rota
     
     # 3. Kullanıcı target_soc override'ı (None ise optimizer belirler)
     user_target_soc_override = request.charge_target_soc_percent

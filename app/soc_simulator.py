@@ -42,8 +42,14 @@ logger = get_logger("soc_simulator")
 # CONSTANTS
 # =============================================================================
 
-SAFETY_BUFFER_PERCENT = 10.0  # Güvenlik marjı
-MIN_CHARGE_THRESHOLD_PERCENT = 15.0  # Minimum şarj seviyesi
+# 🔧 V3.5: DİNAMİK SOC SABİTLERİ
+# HARD_MIN: Mutlak minimum - bunun altına düşmemeli (güvenlik)
+HARD_MIN_SOC = 8.0  # %8 - kritik minimum
+MIN_CHARGE_THRESHOLD_PERCENT = 10.0  # Acil şarj eşiği - bunun altında hotspot oluştur
+
+# TARGET: Tercih edilen hedefler
+TARGET_MIN_SOC = 15.0  # Tercih edilen minimum
+SAFETY_BUFFER_PERCENT = 5.0  # Güvenlik marjı (10→5 düşürüldü)
 MIN_DISTANCE_BETWEEN_STOPS_KM = 50.0  # Şarj durakları arası minimum mesafe
 
 # Optimizer sabitleri
@@ -57,11 +63,10 @@ TARGET_SOC_MIN = 65
 TARGET_SOC_MAX = 100  # V2.6: %100'e kadar şarj seçeneği
 TARGET_SOC_STEP = 5  # %5 aralıklarla dene (hız için)
 
-# Hotspot üretim sınırları (agresif üretimi önle)
-# 🔧 V2.6: İstasyona daha düşük SOC ile varabilme - %15 civarı
+# Hotspot üretim sınırları - 🔧 V3.5: Daha esnek
 MAX_MIN_REQUIRED_SOC = 50.0  # min_required_soc üst sınırı
-HOTSPOT_SOC_BUFFER = 35.0  # SOC tampon marjı (20→35)
-# Sonuç: Hotspot eşiği = 50-35 = %15 civarı
+HOTSPOT_SOC_BUFFER = 40.0  # SOC tampon marjı (35→40 artırıldı = daha az hotspot)
+# Sonuç: Hotspot eşiği = 50-40 = %10 civarı
 
 # 🔧 V2.3: UZUN ROTA İÇİN DİNAMİK HEDEFLER
 # Birden fazla şarj durağı olan rotalarda daha düşük hedefler
