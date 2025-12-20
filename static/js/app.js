@@ -25,6 +25,11 @@ function toggleAiMode() {
     const childInput = document.getElementById('childCount');
     const loadInput = document.getElementById('extraLoad');
 
+    // 🔧 V3.1: İstasyon tercihleri paneli
+    const stationPrefsPanel = document.getElementById('stationPreferences');
+    const prefsToggleBtn = document.querySelector('[onclick*="togglePreferences"]');
+    const stationPrefsInputs = stationPrefsPanel ? stationPrefsPanel.querySelectorAll('input, select') : [];
+
     if (aiMode) {
         // AI açık: Batarya/Şarj gizle, değerlerini temizle
         batterySettings.style.display = 'none';
@@ -38,6 +43,14 @@ function toggleAiMode() {
         if (passengerInput) passengerInput.disabled = true;
         if (childInput) childInput.disabled = true;
         if (loadInput) loadInput.disabled = true;
+
+        // İstasyon tercihleri panelini kilitle
+        if (prefsToggleBtn) {
+            prefsToggleBtn.disabled = true;
+            prefsToggleBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        }
+        stationPrefsInputs.forEach(input => input.disabled = true);
+        if (stationPrefsPanel) stationPrefsPanel.style.display = 'none';
     } else {
         // AI kapalı: Batarya/Şarj göster (manuel mod)
         batterySettings.style.display = 'block';
@@ -50,6 +63,13 @@ function toggleAiMode() {
         if (passengerInput) passengerInput.disabled = false;
         if (childInput) childInput.disabled = false;
         if (loadInput) loadInput.disabled = false;
+
+        // İstasyon tercihleri panelini aç
+        if (prefsToggleBtn) {
+            prefsToggleBtn.disabled = false;
+            prefsToggleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+        stationPrefsInputs.forEach(input => input.disabled = false);
     }
 }
 

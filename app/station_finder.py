@@ -1137,11 +1137,11 @@ async def find_stations_for_hotspots(
                     def matches_charger_type(station):
                         power = station.power_kw
                         if charger_type == "HPC":
-                            return power >= 180  # HPC: 150+ kW
+                            return power >= 180  # HPC: 180+ kW
                         elif charger_type == "DC":
-                            return 50 <= power < 180  # DC: 50-150 kW
+                            return 50 <= power < 180  # DC: 50-180 kW
                         elif charger_type == "AC":
-                            return power < 50  # AC: 22 kW ve altı (50 kW'a kadar tolerans)
+                            return power < 50  # AC: 22 kW ve altı
                         return True
                     
                     filtered = [s for s in available_stations if matches_charger_type(s)]
