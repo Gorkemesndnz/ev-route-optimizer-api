@@ -554,6 +554,22 @@ function renderStatsGrid(data, durationStr, consumption) {
                 <p class="text-emerald-400 text-sm">kg</p>
             </div>
         </div>
+        
+        <!-- 🔧 V3.1: Şarj Maliyeti Özeti -->
+        ${data.total_charging_cost > 0 ? `
+        <div class="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 rounded-xl p-4 mb-6 border border-yellow-500/20">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <span class="text-yellow-400 text-lg">💰</span>
+                    <span class="text-gray-300 text-sm">Tahmini Şarj Maliyeti</span>
+                </div>
+                <div class="text-right">
+                    <span class="text-2xl font-bold text-yellow-400">${data.total_charging_cost.toFixed(2)}</span>
+                    <span class="text-yellow-400/70 text-sm ml-1">TRY</span>
+                </div>
+            </div>
+        </div>
+        ` : ''}
     `;
 }
 
@@ -888,7 +904,7 @@ function renderChargeLeg(leg, index) {
                 </div>
                 
                 <!-- Stats Grid -->
-                <div class="grid grid-cols-4 gap-2 text-center text-xs">
+                <div class="grid grid-cols-5 gap-2 text-center text-xs">
                     <div class="bg-white/5 rounded p-2">
                         <p class="text-gray-500">Varış</p>
                         <p class="text-red-400 font-medium">${leg.arrival_soc_percent?.toFixed(0)}%</p>
@@ -904,6 +920,10 @@ function renderChargeLeg(leg, index) {
                     <div class="bg-white/5 rounded p-2">
                         <p class="text-gray-500">Enerji</p>
                         <p class="text-yellow-400 font-medium">+${leg.energy_added_kwh?.toFixed(1)} kWh</p>
+                    </div>
+                    <div class="bg-white/5 rounded p-2">
+                        <p class="text-gray-500">Maliyet</p>
+                        <p class="text-orange-400 font-medium">${leg.estimated_cost ? leg.estimated_cost.toFixed(0) + '₺' : '-'}</p>
                     </div>
                 </div>
                 
