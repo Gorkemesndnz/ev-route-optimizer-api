@@ -1131,6 +1131,24 @@ async def find_stations_for_hotspots(
             
             # 🔧 V3.1: Kullanıcı tercihlerine göre filtrele
             if preferences and available_stations:
+                # Şarj tipi filtresi (HPC/DC/AC)
+                charger_type = preferences.get("preferred_charger_type", "")
+                if charger_type:
+                    def matches_charger_type(station):
+                        power = station.power_kw
+                        if charger_type == "HPC":
+                            return power >= 180  # HPC: 150+ kW
+                        elif charger_type == "DC":
+                            return 50 <= power < 180  # DC: 50-150 kW
+                        elif charger_type == "AC":
+                            return power < 50  # AC: 22 kW ve altı (50 kW'a kadar tolerans)
+                        return True
+                    
+                    filtered = [s for s in available_stations if matches_charger_type(s)]
+                    if filtered:
+                        available_stations = filtered
+                        logger.info(f"Charger type filter applied: {len(filtered)} stations match {charger_type}")
+                
                 # Operatör filtresi (istasyon adında operatör adı aranır)
                 pref_operators = preferences.get("preferred_operators", [])
                 if pref_operators:
