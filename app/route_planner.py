@@ -56,6 +56,7 @@ from app.constants import (
     HARD_MIN_SOC,
     TARGET_ARRIVAL_SOC,
     TARGET_CHARGE_MIN_SOC,
+    MIN_CHARGE_THRESHOLD_PERCENT,
     DEFAULT_PASSENGER_COUNT,
     DEFAULT_CHILD_COUNT,
     DEFAULT_EXTRA_LOAD_KG,
@@ -301,7 +302,7 @@ def _calculate_base_soc_params(
             # Çok kısa rota - düşük eşik güvenli
             charge_min_soc = HARD_MIN_SOC  # %8
         elif route_distance_km < 200:
-            charge_min_soc = 10.0  # Kısa rota
+            charge_min_soc = MIN_CHARGE_THRESHOLD_PERCENT  # %10 - Kısa rota
         elif route_distance_km < 400:
             charge_min_soc = TARGET_CHARGE_MIN_SOC  # %12
         else:
