@@ -1309,7 +1309,7 @@ async function selectAlternativeStation(legIndex, newStationId, newStation) {
         }
 
         // Tercih edilen istasyonu preferences'a ekle ve rotayı yeniden planla
-        const formData = getFormData();
+        const formData = await getFormDataAsync();
 
         // Seçilen istasyonun operatörünü tercih olarak ekle
         const stationName = stationData.name || '';
@@ -1354,18 +1354,26 @@ async function selectAlternativeStation(legIndex, newStationId, newStation) {
 }
 
 /**
- * Form verilerini topla (yeniden planlama için)
+ * Form verilerini topla (yeniden planlama için) - async geocoding dahil
  */
-function getFormData() {
+async function getFormDataAsync() {
     const aiMode = document.getElementById('aiPlanningMode')?.checked ?? true;
 
+    // Adresleri koordinata çevir
+    const startAddress = document.getElementById('startLocation')?.value || '';
+    const endAddress = document.getElementById('endLocation')?.value || '';
+
+    const [startLocation, endLocation] = await Promise.all([
+        geocodeAddress(startAddress),
+        geocodeAddress(endAddress)
+    ]);
+
     const formData = {
-        start_location: document.getElementById('startLocation')?.value || '',
-        end_location: document.getElementById('endLocation')?.value || '',
+        start_location: startLocation,
+        end_location: endLocation,
         vehicle_model_id: document.getElementById('vehicleModel')?.value || '',
-        initial_soc_percent: parseInt(document.getElementById('initialSoc')?.value) || 85,
+        current_soc_percent: parseInt(document.getElementById('initialSoc')?.value) || 85,
         route_strategy: document.getElementById('routeStrategy')?.value || 'optimal',
-        ai_planning_mode: aiMode,
         preferences: getStationPreferences()
     };
 
@@ -1373,7 +1381,10 @@ function getFormData() {
     const passengerCount = parseInt(document.getElementById('passengerCount')?.value) || 1;
     const childCount = parseInt(document.getElementById('childCount')?.value) || 0;
     const extraLoad = parseInt(document.getElementById('extraLoad')?.value) || 0;
-    formData.extra_load_kg = (passengerCount * 75) + (childCount * 30) + extraLoad;
+
+    if (passengerCount > 1) formData.passenger_count = passengerCount;
+    if (childCount > 0) formData.child_count = childCount;
+    if (extraLoad > 0) formData.extra_load_kg = extraLoad;
 
     // Çıkış zamanı
     const departureTime = document.getElementById('departureTime')?.value;
