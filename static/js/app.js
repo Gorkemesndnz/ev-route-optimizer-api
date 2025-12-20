@@ -1264,7 +1264,7 @@ function closeAlternativesModal() {
 }
 
 /**
- * Alternatif istasyon seç
+ * Alternatif istasyon seç ve rotayı yeniden planla
  */
 async function selectAlternativeStation(legIndex, newStationId, newStation) {
     // JSON parse if string
@@ -1273,12 +1273,89 @@ async function selectAlternativeStation(legIndex, newStationId, newStation) {
     closeAlternativesModal();
 
     // Loading toast
-    showInfoToast('İstasyon değiştiriliyor...');
+    showInfoToast('İstasyon değiştiriliyor ve rota yeniden planlanıyor...');
 
-    // TODO: Backend'e switch_station isteği gönder
-    // Şimdilik sadece local güncelleme yapıyoruz
+    try {
+        // Mevcut rota verisinden bilgileri al
+        if (!currentRouteData) {
+            showErrorToast('Rota verisi bulunamadı');
+            return;
+        }
 
-    showSuccessToast(`İstasyon değiştirildi: ${stationData.name}`);
+        // Tercih edilen istasyonu preferences'a ekle ve rotayı yeniden planla
+        const formData = getFormData();
+
+        // Seçilen istasyonun operatörünü tercih olarak ekle
+        const stationName = stationData.name || '';
+        const operatorKeywords = ['ZES', 'Eşarj', 'Sharz', 'Tesla', 'Trugo'];
+        let preferredOperator = '';
+        for (const op of operatorKeywords) {
+            if (stationName.toLowerCase().includes(op.toLowerCase())) {
+                preferredOperator = op;
+                break;
+            }
+        }
+
+        // Preferences güncelle
+        if (!formData.preferences) formData.preferences = {};
+        if (preferredOperator) {
+            formData.preferences.preferred_operators = [preferredOperator];
+        }
+
+        // Rotayı yeniden planla
+        showLoading();
+
+        const response = await fetch('/optimize_route', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+        });
+
+        const data = await response.json();
+        hideLoading();
+
+        if (data.status === 'success' || data.total_distance_km > 0) {
+            storeRouteData(data);
+            showResults(data);
+            showSuccessToast(`Rota güncellendi! Tercih: ${preferredOperator || stationData.name}`);
+        } else {
+            showErrorToast('Rota güncellenemedi: ' + (data.message || 'Bilinmeyen hata'));
+        }
+    } catch (error) {
+        hideLoading();
+        showErrorToast('Hata: ' + error.message);
+    }
+}
+
+/**
+ * Form verilerini topla (yeniden planlama için)
+ */
+function getFormData() {
+    const aiMode = document.getElementById('aiPlanningMode')?.checked ?? true;
+
+    const formData = {
+        start_location: document.getElementById('startLocation')?.value || '',
+        end_location: document.getElementById('endLocation')?.value || '',
+        vehicle_model_id: document.getElementById('vehicleModel')?.value || '',
+        initial_soc_percent: parseInt(document.getElementById('initialSoc')?.value) || 85,
+        route_strategy: document.getElementById('routeStrategy')?.value || 'optimal',
+        ai_planning_mode: aiMode,
+        preferences: getStationPreferences()
+    };
+
+    // Yolcu ve yük bilgileri
+    const passengerCount = parseInt(document.getElementById('passengerCount')?.value) || 1;
+    const childCount = parseInt(document.getElementById('childCount')?.value) || 0;
+    const extraLoad = parseInt(document.getElementById('extraLoad')?.value) || 0;
+    formData.extra_load_kg = (passengerCount * 75) + (childCount * 30) + extraLoad;
+
+    // Çıkış zamanı
+    const departureTime = document.getElementById('departureTime')?.value;
+    if (departureTime) {
+        formData.departure_time_iso = new Date(departureTime).toISOString();
+    }
+
+    return formData;
 }
 
 /**
