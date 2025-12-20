@@ -17,81 +17,51 @@
  */
 function toggleAiMode() {
     const aiMode = document.getElementById('aiPlanningMode').checked;
+
+    // Yönetilecek ana kapsayıcıları (kartları) seçiyoruz
     const batterySettings = document.getElementById('batterySettings');
-
-    // 🔧 V3.1: AI modunda yolcu/yük butonlarını ve input'ları kilitle
-    const passengerBtns = document.querySelectorAll('[onclick*="adjustPassengers"], [onclick*="adjustChildren"]');
-    const passengerInput = document.getElementById('passengerCount');
-    const childInput = document.getElementById('childCount');
-    const loadInput = document.getElementById('extraLoad');
-
-    // 🔧 V3.1: İstasyon tercihleri paneli
-    const stationPrefsPanel = document.getElementById('stationPreferences');
-    const prefsToggleBtn = document.querySelector('[onclick*="togglePreferences"]');
-    const stationPrefsInputs = stationPrefsPanel ? stationPrefsPanel.querySelectorAll('input, select') : [];
-
     const passengerLoadCard = document.getElementById('passengerLoadCard');
     const stationPreferencesCard = document.getElementById('stationPreferencesCard');
 
     if (aiMode) {
-        // AI açık: Batarya/Şarj gizle, değerlerini temizle
+        // --- AI MODU AÇIK: Kartları GİZLE ---
+
+        // 1. Batarya ayarlarını gizle
         if (batterySettings) {
             batterySettings.style.display = 'none';
         }
-        clearBatteryInputs();
 
-        // Yolcu/Yük butonlarını ve input'ları kilitle
-        passengerBtns.forEach(btn => {
-            btn.disabled = true;
-            btn.classList.add('opacity-50', 'cursor-not-allowed');
-        });
-        if (passengerInput) passengerInput.disabled = true;
-        if (childInput) childInput.disabled = true;
-        if (loadInput) loadInput.disabled = true;
-
-        // İstasyon tercihleri panelini kilitle
-        if (prefsToggleBtn) {
-            prefsToggleBtn.disabled = true;
-            prefsToggleBtn.classList.add('opacity-50', 'cursor-not-allowed');
-        }
-        stationPrefsInputs.forEach(input => input.disabled = true);
-        if (stationPrefsPanel) stationPrefsPanel.style.display = 'none';
-
-        // Kartların tamamını tıklanamaz yap
+        // 2. Yolcu ve Yük kartını tamamen gizle
         if (passengerLoadCard) {
-            passengerLoadCard.classList.add('opacity-50', 'pointer-events-none');
+            passengerLoadCard.style.display = 'none';
         }
+
+        // 3. İstasyon tercihleri kartını tamamen gizle
         if (stationPreferencesCard) {
-            stationPreferencesCard.classList.add('opacity-50', 'pointer-events-none');
+            stationPreferencesCard.style.display = 'none';
         }
+
+        // 4. (Opsiyonel) Değerleri temizle ki AI yanlış veri almasın
+        if (typeof clearBatteryInputs === 'function') {
+            clearBatteryInputs();
+        }
+
     } else {
-        // AI kapalı: Batarya/Şarj göster (manuel mod)
+        // --- AI MODU KAPALI: Kartları GÖSTER ---
+
+        // Varsayılan görünüm neyse (block, flex, grid) ona geri döndürür.
+        // Genelde 'block' veya boş string '' işe yarar.
+
         if (batterySettings) {
             batterySettings.style.display = 'block';
         }
 
-        // Yolcu/Yük butonlarını ve input'ları aç
-        passengerBtns.forEach(btn => {
-            btn.disabled = false;
-            btn.classList.remove('opacity-50', 'cursor-not-allowed');
-        });
-        if (passengerInput) passengerInput.disabled = false;
-        if (childInput) childInput.disabled = false;
-        if (loadInput) loadInput.disabled = false;
-
-        // İstasyon tercihleri panelini aç
-        if (prefsToggleBtn) {
-            prefsToggleBtn.disabled = false;
-            prefsToggleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-        }
-        stationPrefsInputs.forEach(input => input.disabled = false);
-
-        // Kartları tekrar tıklanabilir yap
         if (passengerLoadCard) {
-            passengerLoadCard.classList.remove('opacity-50', 'pointer-events-none');
+            passengerLoadCard.style.display = 'block';
         }
+
         if (stationPreferencesCard) {
-            stationPreferencesCard.classList.remove('opacity-50', 'pointer-events-none');
+            stationPreferencesCard.style.display = 'block';
         }
     }
 }
