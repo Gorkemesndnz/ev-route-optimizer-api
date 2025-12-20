@@ -41,6 +41,7 @@ from app.utils.logger import get_logger
 from app.utils.config_manager import config
 from app.consumption_engine.vehicle_models import get_vehicle_model, VEHICLE_DB
 from app.infrastructure.vehicle_catalog import FileVehicleCatalog
+from app.services.feedback_service import feedback_manager
 
 
 # =============================================================================
@@ -565,8 +566,21 @@ async def station_feedback(request: StationFeedbackRequest) -> RecalculateRespon
     )
     
     try:
-        # Excluded station listesini güncelle
-        excluded_ids = list(set(request.excluded_station_ids + [request.station_id]))
+        # 🔧 V3.2: FeedbackManager ile istasyonu raporla
+        # user_id yoksa request_id kullan (anonim feedback)
+        user_id = getattr(request, 'user_id', None) or request_id
+        feedback_result = await feedback_manager.report_station(
+            station_id=request.station_id,
+            user_id=user_id,
+            reason=request.feedback_type.value
+        )
+        
+        logger.info(
+            f"[{request_id}] Feedback recorded",
+            station_id=request.station_id,
+            feedback_status=feedback_result["status"],
+            is_blocked=feedback_result["is_blocked"]
+        )
         
         # Yeni rota isteği oluştur
         new_route_request = RouteRequest(
@@ -576,11 +590,8 @@ async def station_feedback(request: StationFeedbackRequest) -> RecalculateRespon
             current_soc_percent=request.current_soc_percent
         )
         
-        # Yeni rota hesapla
+        # Yeni rota hesapla (bloklu istasyonlar otomatik filtrelenir)
         new_route = await plan_route(new_route_request)
-        
-        # TODO: Excluded station'ları filtreleme mantığı eklenecek
-        # Şimdilik tam rota yeniden hesaplanıyor
         
         logger.info(
             f"[{request_id}] New route calculated",
@@ -588,9 +599,14 @@ async def station_feedback(request: StationFeedbackRequest) -> RecalculateRespon
             total_distance=new_route.total_distance_km
         )
         
+        # Feedback durumuna göre mesaj oluştur
+        feedback_msg = feedback_result["message"]
+        if feedback_result["is_blocked"]:
+            feedback_msg += " İstasyon geçici olarak bloklandı."
+        
         return RecalculateResponse(
             status="success",
-            message=f"Rota yeniden hesaplandı. {request.feedback_type.value} bildirimi kaydedildi.",
+            message=f"Rota yeniden hesaplandı. {feedback_msg}",
             recalculate_type="full_route",
             route=new_route,
             affected_legs=list(range(len(new_route.legs)))

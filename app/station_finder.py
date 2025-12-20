@@ -45,6 +45,7 @@ from app.consumption_engine.vehicle_models import get_vehicle_model, VehicleMode
 from app.utils.config_manager import config
 from app.utils.logger import get_logger
 from app.utils.charging_estimator import estimate_dc_charging_power
+from app.services.feedback_service import feedback_manager
 
 
 # =============================================================================
@@ -723,6 +724,12 @@ class CorridorSearcher:
         
         for station in google_stations:
             try:
+                # 🔧 V3.2: Feedback blok kontrolü
+                place_id = station.get("place_id", "")
+                if place_id and feedback_manager.is_station_blocked(place_id):
+                    logger.debug(f"Station filtered (blocked by feedback): {station.get('name')}")
+                    continue
+                
                 # İşletme durumu kontrolü
                 business_status = station.get("business_status", "OPERATIONAL")
                 if business_status not in ("OPERATIONAL", None):
@@ -877,6 +884,12 @@ class CorridorSearcher:
         max_power_in_batch = 0.0
         
         for station in raw_stations:
+            # 🔧 V3.2: Feedback blok kontrolü (OCM)
+            ocm_id = str(station.get("ID", ""))
+            if ocm_id and feedback_manager.is_station_blocked(ocm_id):
+                logger.debug(f"OCM station filtered (blocked by feedback): {station.get('AddressInfo', {}).get('Title')}")
+                continue
+            
             # Operasyonel kontrolü
             status_type = station.get("StatusType", {})
             is_operational = status_type.get("IsOperational", True)
