@@ -282,17 +282,17 @@ def _calculate_base_soc_params(
             # Şarj gerekiyorsa, minimum varış hedefi
             arrival_soc = 15.0
     
-    # 2. Şarj Eşiği (min_soc)
+    # 2. Şarj Eşiği (min_soc) - 🔧 V3.4: Düşürüldü - gereksiz durak önleme
     if request.charge_min_soc_percent is not None:
         charge_min_soc = request.charge_min_soc_percent
     else:
-        # Rota uzunluğuna göre ayarla
+        # Rota uzunluğuna göre ayarla - daha düşük eşikler
         if route_distance_km < 200:
-            charge_min_soc = 15.0  # Kısa rota
+            charge_min_soc = 10.0  # Kısa rota
         elif route_distance_km < 400:
-            charge_min_soc = 20.0  # Orta rota
+            charge_min_soc = 12.0  # Orta rota
         else:
-            charge_min_soc = 25.0  # Uzun rota - daha güvenli
+            charge_min_soc = 15.0  # Uzun rota - yeterli güvenlik
     
     # 3. Kullanıcı target_soc override'ı (None ise optimizer belirler)
     user_target_soc_override = request.charge_target_soc_percent
