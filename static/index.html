@@ -43,6 +43,12 @@
 </head>
 
 <body class="gradient-bg min-h-screen font-sans">
+    <!-- Grid Pattern Overlay -->
+    <div class="grid-pattern"></div>
+
+    <!-- Floating Particles -->
+    <div class="particles" id="particles"></div>
+
     <!-- ============================================
          HEADER
          ============================================ -->
@@ -592,6 +598,25 @@
     <script src="/static/js/ui.js"></script>
     <script src="/static/js/geocoding.js"></script>
     <script src="/static/js/app.js?v=3.1.3"></script>
+
+    <!-- Particle Animation -->
+    <script>
+            (function () {
+                const particlesContainer = document.getElementById('particles');
+                if (!particlesContainer) return;
+
+                const particleCount = 20;
+
+                for (let i = 0; i < particleCount; i++) {
+                    const particle = document.createElement('div');
+                    particle.className = 'particle';
+                    particle.style.left = Math.random() * 100 + '%';
+                    particle.style.animationDelay = Math.random() * 15 + 's';
+                    particle.style.opacity = Math.random() * 0.5 + 0.3;
+                    particlesContainer.appendChild(particle);
+                }
+            })();
+    </script>
 </body>
 
 </html>
