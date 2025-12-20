@@ -830,7 +830,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                     if station_result.best_station:
                         station = station_result.best_station
                         hotspot_weather = await weather_service.get_weather_at_point(
-                            station.lat, station.lon
+                            station.location.lat, station.location.lon
                         )
                         if hotspot_weather:
                             weather_points.append(hotspot_weather)
