@@ -1072,6 +1072,12 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         if traffic_ratio and traffic_ratio > 1.3:
             warning_messages.append("🚗 Yoğun trafik bekleniyor. Süre uzayabilir.")
         
+        # 🔧 V3.2: Amenities warning'lerini ekle (station_results'tan)
+        for sr in station_results:
+            if sr.amenities_warning:
+                warning_messages.append(sr.amenities_warning)
+                break  # Tek uyarı yeterli
+        
         return MultiStopRouteResponse(
             status="success",
             total_distance_km=round(route_distance_km, 1),

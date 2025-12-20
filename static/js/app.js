@@ -1310,6 +1310,7 @@ function closeAlternativesModal() {
 
 /**
  * Alternatif istasyon seç ve rotayı yeniden planla
+ * 🔧 V3.2: /switch_station endpoint'i ile doğru istasyon değişimi
  */
 async function selectAlternativeStation(legIndex, newStationId, newStation) {
     // JSON parse if string
@@ -1327,49 +1328,85 @@ async function selectAlternativeStation(legIndex, newStationId, newStation) {
             return;
         }
 
-        // Tercih edilen istasyonu preferences'a ekle ve rotayı yeniden planla
-        const formData = await getFormDataAsync();
+        showLoading();
 
-        // Seçilen istasyonun operatörünü tercih olarak ekle
-        const stationName = stationData.name || '';
-        const operatorKeywords = ['ZES', 'Eşarj', 'Sharz', 'Tesla', 'Trugo'];
-        let preferredOperator = '';
-        for (const op of operatorKeywords) {
-            if (stationName.toLowerCase().includes(op.toLowerCase())) {
-                preferredOperator = op;
+        // Mevcut bacaktan orijinal istasyon bilgisini al
+        const currentLeg = currentRouteData.legs?.[legIndex];
+        const originalStationId = currentLeg?.station?.id || '';
+
+        // Sonraki şarj bacağını bul (etki analizi için)
+        let nextStationLocation = null;
+        for (let i = legIndex + 1; i < currentRouteData.legs.length; i++) {
+            if (currentRouteData.legs[i].type === 'charge') {
+                nextStationLocation = currentRouteData.legs[i].station?.location;
                 break;
             }
         }
 
-        // Preferences güncelle
-        if (!formData.preferences) formData.preferences = {};
-        if (preferredOperator) {
-            formData.preferences.preferred_operators = [preferredOperator];
-        }
+        // Varış noktasını son drive leg'den al
+        const lastLeg = currentRouteData.legs[currentRouteData.legs.length - 1];
+        const destination = lastLeg?.end_point || lastLeg?.station?.location;
 
-        // Rotayı yeniden planla
-        showLoading();
+        // Kullanıcının mevcut konumu (başlangıç noktası varsay)
+        const firstLeg = currentRouteData.legs[0];
+        const currentLocation = firstLeg?.start_point || { lat: 41.0082, lon: 28.9784 };
 
-        const response = await fetch('/optimize_route', {
+        // Batarya kapasitesini al (vehicle model'den)
+        const vehicleModelId = document.getElementById('vehicleModel')?.value || 'mg4_51kwh';
+        const batteryCapacity = 51.0; // Default, backend'de hesaplanacak
+
+        // /switch_station endpoint'ini çağır
+        const response = await fetch('/switch_station', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(formData)
+            body: JSON.stringify({
+                original_station_id: originalStationId,
+                new_station_id: newStationId,
+                new_station: stationData,
+                leg_index: legIndex,
+                current_location: currentLocation,
+                current_soc_percent: parseFloat(document.getElementById('currentSoc')?.value || 80),
+                destination: destination,
+                vehicle_model_id: vehicleModelId,
+                next_station_location: nextStationLocation,
+                battery_capacity_kwh: batteryCapacity
+            })
         });
 
         const data = await response.json();
         hideLoading();
 
-        if (data.status === 'success' || data.total_distance_km > 0) {
-            storeRouteData(data);
-            showResults(data);
-            showSuccessToast(`Rota güncellendi! Tercih: ${preferredOperator || stationData.name}`);
+        if (data.status === 'success' || data.status === 'full_recalculate') {
+            if (data.route) {
+                // Tam rota yeniden hesaplandı
+                storeRouteData(data.route);
+                showResults(data.route);
+                showSuccessToast(`Rota güncellendi! ${stationData.name}`);
+            } else {
+                // Tek bacak güncellendi - mevcut rotada sadece istasyonu değiştir
+                updateSingleLegStation(legIndex, stationData);
+                showSuccessToast(`İstasyon değiştirildi: ${stationData.name}`);
+            }
         } else {
-            showErrorToast('Rota güncellenemedi: ' + (data.message || 'Bilinmeyen hata'));
+            showErrorToast('İstasyon değiştirilemedi: ' + (data.message || 'Bilinmeyen hata'));
         }
     } catch (error) {
         hideLoading();
         showErrorToast('Hata: ' + error.message);
     }
+}
+
+/**
+ * 🔧 V3.2: Tek bacaktaki istasyonu güncelle (UI only)
+ */
+function updateSingleLegStation(legIndex, newStation) {
+    if (!currentRouteData || !currentRouteData.legs[legIndex]) return;
+
+    // Mevcut rotadaki istasyonu güncelle
+    currentRouteData.legs[legIndex].station = newStation;
+
+    // UI'ı yeniden render et
+    showResults(currentRouteData);
 }
 
 /**

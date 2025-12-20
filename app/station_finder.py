@@ -153,6 +153,7 @@ class CorridorSearchResult:
     total_found: int = 0
     dc_compatible: int = 0
     weather_forecast: Optional[Dict[str, Any]] = None  # 🔧 V2.7: İstasyon için forecast
+    amenities_warning: Optional[str] = None  # 🔧 V3.2: Zorunlu imkan bulunamadı uyarısı
 
 
 # =============================================================================
@@ -1184,6 +1185,12 @@ async def find_stations_for_hotspots(
                     if filtered:  # Sonuç varsa uygula
                         available_stations = filtered
                         logger.info(f"Amenities filter applied: {len(filtered)} stations have {req_amenities}")
+                    else:
+                        # 🔧 V3.2: Uygun istasyon yoksa warning ekle (soft filter)
+                        amenity_names = {"toilet": "tuvalet", "food": "yemek", "shopping": "market", "parking": "otopark"}
+                        missing_amenities = [amenity_names.get(a, a) for a in req_amenities]
+                        result.amenities_warning = f"⚠️ İstenen imkanlara ({', '.join(missing_amenities)}) sahip istasyon bulunamadı. En yakın istasyonlar gösteriliyor."
+                        logger.warning(f"No stations found with required amenities {req_amenities}, showing all stations")
             
             # Çok yakın istasyonları filtrele
             if last_station_location and available_stations:
