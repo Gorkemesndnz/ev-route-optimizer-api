@@ -726,6 +726,26 @@ class CorridorSearcher:
                 if distance > self.corridor_length_km:
                     continue
                 
+                # 🔧 V3.1: Şarj istasyonu olmayan yerleri filtrele (oto yıkama, benzinlik vb.)
+                station_name_lower = station.get("name", "").lower()
+                excluded_keywords = [
+                    "oto yıkama", "car wash", "yıkama", "wash",
+                    "benzinlik", "petrol", "akaryakıt", "gas station",
+                    "otopark", "parking lot", "car park",
+                    "oto tamir", "servis", "tamirci", "mechanic",
+                    "oto galeri", "oto alım", "oto satım",
+                    "rent a car", "araç kiralama"
+                ]
+                
+                # Eğer istasyon adında şarj ile ilgili kelime yoksa ve hariç tutulan kelime varsa filtrele
+                charging_keywords = ["şarj", "charge", "charging", "ev", "elektrik", "electric", "zes", "eşarj", "trugo", "tesla", "supercharger"]
+                has_charging_keyword = any(kw in station_name_lower for kw in charging_keywords)
+                has_excluded_keyword = any(kw in station_name_lower for kw in excluded_keywords)
+                
+                if has_excluded_keyword and not has_charging_keyword:
+                    logger.debug(f"Station filtered (not EV charger): {station.get('name')}")
+                    continue
+                
                 # 🔧 V2.9: Otoyol yön filtresi - yolun karşı tarafındaki istasyonları filtrele
                 # Sadece rota yönü bilgisi varsa ve mesafe 5 km'den küçükse uygula
                 # (uzak istasyonlar zaten farklı lokasyonlarda olabilir)
