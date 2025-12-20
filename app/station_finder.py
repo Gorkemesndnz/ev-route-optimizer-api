@@ -46,6 +46,17 @@ from app.utils.config_manager import config
 from app.utils.logger import get_logger
 from app.utils.charging_estimator import estimate_dc_charging_power
 from app.services.feedback_service import feedback_manager
+from app.services.station_logic import StationScorer, StationFilter
+from app.services.station_logic.filter import haversine_km, calculate_bearing
+from app.services.station_logic.scorer import (
+    WEIGHT_DEVIATION, WEIGHT_POWER, WEIGHT_RATING, WEIGHT_AMENITIES, WEIGHT_POPULARITY,
+    GREEDY_WEIGHT_POWER, GREEDY_WEIGHT_DEVIATION, GREEDY_WEIGHT_RATING,
+    GREEDY_WEIGHT_AMENITIES, GREEDY_WEIGHT_POPULARITY,
+    RATING_CONFIDENCE_THRESHOLD, RATING_PRIOR,
+    POPULARITY_HIGH_THRESHOLD, POPULARITY_VERY_HIGH_THRESHOLD,
+    AMENITY_BONUS_TOILET, AMENITY_BONUS_FOOD, AMENITY_BONUS_SHOPPING,
+    AMENITY_BONUS_PARKING, AMENITY_BONUS_OPEN_NOW, MAX_DEVIATION_MINUTES
+)
 
 
 # =============================================================================
@@ -56,46 +67,18 @@ logger = get_logger("station_finder")
 
 # Filtreleme sabitleri
 MAX_HAVERSINE_DISTANCE_KM = 50.0
-MAX_DEVIATION_MINUTES = 15.0
 DC_POWER_THRESHOLD_KW = 40.0
 MAX_DISTANCE_MATRIX_DESTINATIONS = 100
 TOP_STATIONS_FOR_DETAILS = 3
 
 # Koridor sabitleri (V1.5)
 CORRIDOR_LENGTH_KM = 50.0
-CORRIDOR_WIDTH_KM = 10.0  # 🔧 V3.4: 3km'den 10km'e artırıldı - service alanlarını dahil et
+CORRIDOR_WIDTH_KM = 10.0
 MIN_DC_POWER_KW = 50.0
 MAX_STATIONS_PER_HOTSPOT = 5
 
-# Skorlama ağırlıkları (V2.9: Rating ağırlığı artırıldı)
-# 🔧 V2.9: Rating %15 → %25, Deviation %40 → %30 (popüler istasyonlar tercih edilsin)
-WEIGHT_DEVIATION = 0.30
-WEIGHT_POWER = 0.20
-WEIGHT_RATING = 0.25  # 🔧 V2.9: Artırıldı - Highway gibi popüler yerler öncelik alsın
-WEIGHT_AMENITIES = 0.15
-WEIGHT_POPULARITY = 0.10  # 🔧 V2.9: Yüksek yorum sayısı bonusu
-
-# Greedy selection ağırlıkları (V2.9: Rating artırıldı)
-GREEDY_WEIGHT_POWER = 0.30
-GREEDY_WEIGHT_DEVIATION = 0.25
-GREEDY_WEIGHT_RATING = 0.25  # 🔧 V2.9: Artırıldı
-GREEDY_WEIGHT_AMENITIES = 0.10
-GREEDY_WEIGHT_POPULARITY = 0.10  # 🔧 V2.9: Yüksek yorum sayısı bonusu
-
-# Weighted rating sabitleri (V2.9: Threshold artırıldı)
-RATING_CONFIDENCE_THRESHOLD = 100  # 🔧 V2.9: 50 → 100 (daha fazla yorum = daha güvenilir)
-RATING_PRIOR = 3.0  # 🔧 V2.9: 3.5 → 3.0 (az yorumlu istasyonlar dezavantajlı olsun)
-
-# Popülerlik sabitleri (V2.9: Yüksek yorum sayısına bonus)
-POPULARITY_HIGH_THRESHOLD = 200  # 200+ yorum = popüler istasyon
-POPULARITY_VERY_HIGH_THRESHOLD = 500  # 500+ yorum = çok popüler (Highway gibi)
-
-# Amenities bonus değerleri (V2.8) - toplam max 1.0
-AMENITY_BONUS_TOILET = 0.25
-AMENITY_BONUS_FOOD = 0.20
-AMENITY_BONUS_SHOPPING = 0.15
-AMENITY_BONUS_PARKING = 0.15
-AMENITY_BONUS_OPEN_NOW = 0.25  # Şu an açık olması önemli
+# 🔧 V3.2: Skorlama ve filtreleme sabitleri station_logic/ altına taşındı
+# Import: from app.services.station_logic.scorer import WEIGHT_*, AMENITY_*, etc.
 
 
 # =============================================================================
