@@ -162,7 +162,6 @@ function togglePreferences() {
 function getStationPreferences() {
     return {
         max_detour_km: parseFloat(document.getElementById('maxDetourKm')?.value) || 10,
-        preferred_charger_type: document.getElementById('preferredChargerType')?.value || '',
         preferred_plug_types: document.getElementById('preferredPlugType')?.value ?
             [document.getElementById('preferredPlugType').value] : [],
         preferred_operators: document.getElementById('preferredOperator')?.value ?

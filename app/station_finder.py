@@ -62,7 +62,7 @@ TOP_STATIONS_FOR_DETAILS = 3
 
 # Koridor sabitleri (V1.5)
 CORRIDOR_LENGTH_KM = 50.0
-CORRIDOR_WIDTH_KM = 15.0
+CORRIDOR_WIDTH_KM = 8.0  # 🔧 V3.2: 15km'den 8km'e düşürüldü - şehir merkezlerini hariç tut
 MIN_DC_POWER_KW = 50.0
 MAX_STATIONS_PER_HOTSPOT = 5
 
@@ -377,6 +377,8 @@ def _calculate_popularity_score(user_ratings_total: int) -> float:
         return 0.0  # 10'dan az yorum = bonus yok
 
 
+
+
 def _calculate_station_score(
     deviation_minutes: float,
     power_kw: float,
@@ -395,7 +397,6 @@ def _calculate_station_score(
     V2.9 Güncellemeleri:
     - Rating ağırlığı artırıldı (%15 → %25)
     - Popülerlik skoru eklendi (yüksek yorum sayısı = bonus)
-    - Highway gibi popüler istasyonlar artık daha fazla tercih edilecek
     """
     deviation_score = max(0, 1 - (deviation_minutes / MAX_DEVIATION_MINUTES))
     power_score = power_kw / max_power_kw if max_power_kw > 0 else 0
