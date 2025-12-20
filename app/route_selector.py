@@ -27,6 +27,7 @@ import time
 from typing import Dict, Any, List, Union, Optional
 from app.models import GeoPoint, RouteStrategy
 from app.services.google_service import google_maps
+from app.services.pricing_service import pricing_service, DEFAULT_PRICE_PER_KWH
 from app.consumption_engine.vehicle_models import get_vehicle_model
 from app.utils.config_manager import config
 from app.utils.logger import get_logger
@@ -96,9 +97,9 @@ def _analyze_route(route: dict, index: int) -> Dict[str, Any]:
         avg_consumption_per_km = 0.18
         estimated_consumption_kwh = distance_km * avg_consumption_per_km
         
-        # Tahmini şarj maliyeti (cheapest için placeholder)
-        # Gerçek maliyet istasyon fiyatları ile hesaplanacak
-        avg_price_per_kwh = 5.0  # TRY - placeholder
+        # Tahmini şarj maliyeti - ortalama piyasa fiyatı ile hesapla
+        # (Gerçek maliyet istasyon seçiminden sonra kesinleşir)
+        avg_price_per_kwh = pricing_service.get_average_dc_price()
         estimated_cost_try = estimated_consumption_kwh * avg_price_per_kwh
         
         return {
