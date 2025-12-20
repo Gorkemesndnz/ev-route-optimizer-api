@@ -31,6 +31,14 @@ Bu doküman, projenin mimarisini ve hesaplama katmanlarını açıklar.
 - `tests/test_core_logic.py`: 51 pytest testi
 - FeedbackManager, SOC Logic, StationScorer, StationFilter testleri
 
+#### PricingService (Şarj Fiyatları)
+- **15 Türk şarj ağı** desteği (ZES, Eşarj, Trugo, Tesla, Shell vb.)
+- `data/charging_tariffs.json` dosyasından gerçek fiyatlar
+- Marka eşleştirme (alias desteği: "zes", "zorlu", "esarj", "e-sarj" vb.)
+- Güç eşiğine göre fiyat (örn: DC <90kW vs >90kW)
+- Bilinmeyen markalar için varsayılan 11 TL/kWh
+- CHEAPEST stratejisi artık gerçek fiyatlarla çalışıyor
+
 ---
 
 ### V2.7 / V2.8 Özellikleri (Önceki Sürümler)

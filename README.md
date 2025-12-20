@@ -109,10 +109,23 @@ Content-Type: application/json
 
 | Strategy | Description |
 |----------|-------------|
-| `optimal` | Balance of time and energy efficiency |
-| `fastest` | Minimize total travel time |
+| `optimal` | Balance of time and energy efficiency (default) |
+| `fastest` | Minimize total travel time (with real-time traffic) |
 | `efficient` | Minimize energy consumption |
-| `cheapest` | Minimize charging costs |
+| `cheapest` | Minimize charging costs (real pricing from 15 Turkish networks) |
+
+### Charging Tariffs
+
+Real pricing data from `data/charging_tariffs.json`:
+
+| Network | DC Price (TL/kWh) |
+|---------|-------------------|
+| ZES | 9.99 - 12.99 |
+| Aksa Şarj | 9.99 - 10.99 |
+| Trugo (TOGG) | 10.60 - 11.82 |
+| Eşarj | 12.90 - 13.70 |
+| Tesla | 12.50 |
+| Unknown | 11.00 (default) |
 
 ### Station Feedback
 
