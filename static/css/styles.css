@@ -1,59 +1,23 @@
 /* EV Route Optimizer Styles */
-/* Version: 3.0 - Cyberpunk Futuristic Theme */
+/* Version: 3.1 - Fixed Click Issues */
 
 /* ============================================
-   CYBERPUNK BACKGROUND
+   GLOBAL FIX - Ensure all overlays don't block clicks
+   ============================================ */
+.gradient-bg::before,
+.gradient-bg::after,
+.grid-pattern,
+.particles,
+.holo-noise {
+    pointer-events: none !important;
+}
+
+/* ============================================
+   CYBERPUNK BACKGROUND - Simplified
    ============================================ */
 .gradient-bg {
-    background: #000000;
+    background: #0f172a;
     position: relative;
-    overflow: hidden;
-}
-
-/* Animated cyber gradient */
-.gradient-bg::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background:
-        radial-gradient(ellipse 80% 50% at 20% -20%, rgba(0, 255, 136, 0.15) 0%, transparent 50%),
-        radial-gradient(ellipse 80% 50% at 80% 120%, rgba(0, 200, 255, 0.12) 0%, transparent 50%),
-        radial-gradient(ellipse 60% 40% at 50% 50%, rgba(120, 0, 255, 0.08) 0%, transparent 60%);
-    pointer-events: none;
-    z-index: 0;
-    animation: cyberPulse 8s ease-in-out infinite;
-}
-
-/* Scanning line effect */
-.gradient-bg::after {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, rgba(0, 255, 136, 0.8), transparent);
-    animation: scanLine 4s linear infinite;
-    pointer-events: none;
-    z-index: 100;
-    box-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
-}
-
-@keyframes cyberPulse {
-
-    0%,
-    100% {
-        opacity: 0.8;
-        filter: hue-rotate(0deg);
-    }
-
-    50% {
-        opacity: 1;
-        filter: hue-rotate(15deg);
-    }
 }
 
 @keyframes scanLine {
@@ -76,7 +40,8 @@
     }
 }
 
-/* Cyber grid pattern */
+/* Cyber grid pattern - DISABLED for performance */
+/*
 .grid-pattern {
     position: fixed;
     top: 0;
@@ -91,6 +56,7 @@
     z-index: 1;
     animation: gridMove 20s linear infinite;
 }
+*/
 
 @keyframes gridMove {
     0% {
@@ -149,6 +115,7 @@
     mask-composite: exclude;
     opacity: 0;
     transition: opacity 0.4s ease;
+    pointer-events: none;
 }
 
 .glass-card:hover {
@@ -247,6 +214,7 @@
     height: 100%;
     background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
     transition: left 0.6s ease;
+    pointer-events: none;
 }
 
 .btn-glow::after {
@@ -263,6 +231,7 @@
     animation: neonBorder 3s ease infinite;
     opacity: 0;
     transition: opacity 0.3s ease;
+    pointer-events: none;
 }
 
 @keyframes neonBorder {
