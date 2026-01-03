@@ -387,9 +387,20 @@ def _build_multi_legs(
     remaining_duration = total_duration_min  # Kalan süre takibi
     last_segment_index = -1  # Son işlenen segment
     
+    # 🔧 V3.3: İstasyon bulunamayan hotspotları takip et
+    missing_station_warnings = []
+    
     # Her hotspot + istasyon için leg oluştur
     for i, (hotspot, station_result) in enumerate(zip(hotspots, station_results)):
         if not station_result.best_station:
+            # 🔧 V3.3: Kullanıcı uyarısı - bu noktada şarj gerekiyor ama istasyon bulunamadı
+            warning_msg = (
+                f"⚠️ {hotspot.distance_from_start_km:.0f}. km'de şarj durağı gerekiyor "
+                f"(SOC: %{hotspot.soc_at_point:.0f}) ancak yakında uygun istasyon bulunamadı. "
+                f"Rotanız eksik olabilir, manuel şarj planlaması önerilir."
+            )
+            missing_station_warnings.append(warning_msg)
+            logger.warning(f"Hotspot {i+1}: No station found at {hotspot.distance_from_start_km:.0f}km (SOC: {hotspot.soc_at_point:.0f}%)")
             continue
         
         station = station_result.best_station
@@ -607,7 +618,9 @@ def _build_multi_legs(
         ))
     
     logger.info(f"Multi-leg built: {len(legs)} legs (drive + charge)")
-    return legs
+    
+    # 🔧 V3.3: missing_station_warnings'ı da döndür
+    return legs, missing_station_warnings
 
 
 async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
@@ -946,7 +959,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                 logger.warning(f"Pass 2 weather refinement failed: {e}")
         
         # STEP 11: Multi-Leg Builder (SEGMENT BAZLI TÜKETİM)
-        legs = _build_multi_legs(
+        legs, missing_station_warnings = _build_multi_legs(
             start_point=GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"]),
             end_point=GeoPoint(lat=end_coords["lat"], lon=end_coords["lng"]),
             total_distance_km=route_distance_km,
@@ -1066,6 +1079,10 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             if sr.amenities_warning:
                 warning_messages.append(sr.amenities_warning)
                 break  # Tek uyarı yeterli
+        
+        # 🔧 V3.3: İstasyon bulunamayan hotspot uyarılarını ekle
+        if missing_station_warnings:
+            warning_messages.extend(missing_station_warnings)
         
         return MultiStopRouteResponse(
             status="success",

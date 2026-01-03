@@ -77,6 +77,9 @@ CORRIDOR_WIDTH_KM = 10.0
 MIN_DC_POWER_KW = 50.0
 MAX_STATIONS_PER_HOTSPOT = 5
 
+# 🔧 V3.3: Kademeli arama yarıçapları (istasyon bulunamazsa genişlet)
+SEARCH_RADII_KM = [50, 80, 120]  # km - 3 kademeli arama
+
 # 🔧 V3.2: Skorlama ve filtreleme sabitleri station_logic/ altına taşındı
 # Import: from app.services.station_logic.scorer import WEIGHT_*, AMENITY_*, etc.
 
@@ -476,47 +479,66 @@ class CorridorSearcher:
         )
         
         try:
-            # 🔧 V2.7: İstasyon araması ve forecast paralel olarak al
-            stations_task = self._fetch_stations_google_first(hotspot)
-            forecast_task = weather_service.get_forecast_for_point(
-                lat=hotspot.location.lat,
-                lon=hotspot.location.lon
-            )
+            # 🔧 V3.3: Kademeli arama yarıçapı - istasyon bulunamazsa genişlet
+            raw_stations = []
+            source = "none"
+            used_radius = SEARCH_RADII_KM[0]
             
-            (raw_stations, source), forecast_data = await asyncio.gather(
-                stations_task,
-                forecast_task,
-                return_exceptions=True
-            )
+            for radius in SEARCH_RADII_KM:
+                used_radius = radius
+                stations_task = self._fetch_stations_google_first(hotspot, search_radius_km=radius)
+                forecast_task = weather_service.get_forecast_for_point(
+                    lat=hotspot.location.lat,
+                    lon=hotspot.location.lon
+                )
+                
+                (fetch_result, source), forecast_data = await asyncio.gather(
+                    stations_task,
+                    forecast_task,
+                    return_exceptions=True
+                )
+                
+                # Forecast sonucunu işle (sadece ilk iterasyonda)
+                if radius == SEARCH_RADII_KM[0]:
+                    if isinstance(forecast_data, Exception):
+                        logger.warning(f"Forecast fetch failed for hotspot: {forecast_data}")
+                        forecast_data = None
+                    result.weather_forecast = forecast_data
+                
+                # İstasyon sonucunu işle
+                if isinstance(fetch_result, Exception):
+                    logger.error(f"Station fetch failed at {radius}km: {fetch_result}")
+                    continue
+                
+                raw_stations = fetch_result
+                result.total_found = len(raw_stations)
+                
+                if raw_stations:
+                    # Kaynak bazlı filtreleme ve skorlama
+                    if source == "google":
+                        corridor_stations = self._filter_and_score_google_stations(raw_stations, hotspot)
+                    else:
+                        corridor_stations = self._filter_and_score_stations(raw_stations, hotspot)
+                    
+                    result.dc_compatible = len(corridor_stations)
+                    
+                    if corridor_stations:
+                        logger.info(f"Found {len(corridor_stations)} DC stations at {radius}km radius")
+                        break
+                    else:
+                        logger.warning(f"No compatible DC stations at {radius}km, expanding search...")
+                else:
+                    logger.warning(f"No stations found at {radius}km radius, expanding search...")
             
-            # Forecast sonucunu işle
-            if isinstance(forecast_data, Exception):
-                logger.warning(f"Forecast fetch failed for hotspot: {forecast_data}")
-                forecast_data = None
-            result.weather_forecast = forecast_data
-            
-            # İstasyon sonucunu işle
-            if isinstance(raw_stations, Exception):
-                logger.error(f"Station fetch failed: {raw_stations}")
-                raw_stations = []
-                source = "none"
-            
-            result.total_found = len(raw_stations)
-            
+            # Tüm yarıçaplarda istasyon bulunamadı
             if not raw_stations:
-                logger.warning("No stations found from any source")
+                logger.warning(f"No stations found after trying all radii: {SEARCH_RADII_KM}")
                 return result
             
-            # 2. Kaynak bazlı filtreleme ve skorlama
-            if source == "google":
-                corridor_stations = self._filter_and_score_google_stations(raw_stations, hotspot)
-            else:
-                corridor_stations = self._filter_and_score_stations(raw_stations, hotspot)
-            
-            result.dc_compatible = len(corridor_stations)
+            result.search_radius_km = used_radius
             
             if not corridor_stations:
-                logger.warning("No compatible DC stations found")
+                logger.warning("No compatible DC stations found after expanding search")
                 return result
             
             # Sırala ve en iyi N'i al
@@ -540,16 +562,22 @@ class CorridorSearcher:
             logger.exception("Corridor search failed", error=str(e))
             return result
     
-    async def _fetch_stations_google_first(self, hotspot: ChargeHotspot) -> Tuple[List[Dict[str, Any]], str]:
+    async def _fetch_stations_google_first(self, hotspot: ChargeHotspot, search_radius_km: float = None) -> Tuple[List[Dict[str, Any]], str]:
         """
         Google Places öncelikli istasyon arama.
         🔧 V3.2: Hibrit sistem - Google'da kW yoksa OCM'den cross-reference.
+        🔧 V3.3: Kademeli arama yarıçapı desteği.
+        
+        Args:
+            hotspot: Şarj gerekli olan nokta
+            search_radius_km: Arama yarıçapı (None ise varsayılan kullanılır)
         
         Returns:
             (stations_list, source) - source: "google" veya "ocm"
         """
-        search_radius_m = int(max(self.corridor_length_km, self.corridor_width_km) * 1000)
-        search_radius_km = max(self.corridor_length_km, self.corridor_width_km)
+        if search_radius_km is None:
+            search_radius_km = max(self.corridor_length_km, self.corridor_width_km)
+        search_radius_m = int(search_radius_km * 1000)
         
         # 1. Google Places API (New) - evChargeOptions ile gerçek güç bilgisi
         google_stations = []
@@ -562,9 +590,9 @@ class CorridorSearcher:
             )
             
             if google_stations:
-                logger.info(f"Google Places (New) returned {len(google_stations)} stations")
+                logger.info(f"Google Places (New) returned {len(google_stations)} stations (radius={search_radius_km}km)")
             else:
-                logger.info("Google Places (New) returned empty, falling back to OCM")
+                logger.info(f"Google Places (New) returned empty at {search_radius_km}km, falling back to OCM")
                 
         except Exception as e:
             logger.warning(f"Google Places search failed: {e}")
@@ -1120,7 +1148,16 @@ async def find_stations_for_hotspots(
     for i, result in enumerate(raw_results):
         if isinstance(result, Exception):
             import traceback
-            logger.error(f"Hotspot {i} search failed: {result}\n{traceback.format_exception(type(result), result, result.__traceback__)}")
+            logger.error(f"Hotspot {i+1} search failed: {result}\n{traceback.format_exception(type(result), result, result.__traceback__)}")
+            # 🔧 V3.3: Exception durumunda boş result ekle (liste boyutu korunsun)
+            empty_result = CorridorSearchResult(
+                hotspot=hotspots[i],
+                stations=[],
+                best_station=None,
+                total_found=0,
+                dc_compatible=0
+            )
+            valid_results.append(empty_result)
             continue
         
         # Akıllı istasyon seçimi
@@ -1188,15 +1225,47 @@ async def find_stations_for_hotspots(
                         result.amenities_warning = f"⚠️ İstenen imkanlara ({', '.join(missing_amenities)}) sahip istasyon bulunamadı. En yakın istasyonlar gösteriliyor."
                         logger.warning(f"No stations found with required amenities {req_amenities}, showing all stations")
             
+            # 🔧 V3.3: Akıllı mesafe filtresi - kademeli esnetme
+            original_available = available_stations.copy()
+            distance_filter_relaxed = False
+            
             # Çok yakın istasyonları filtrele
             if last_station_location and available_stations:
-                available_stations = [
+                filtered_by_distance = [
                     s for s in available_stations
                     if haversine_km(
                         last_station_location.lat, last_station_location.lon,
                         s.location.lat, s.location.lon
                     ) >= min_distance_between_stations_km
                 ]
+                
+                # Filtre sonrası istasyon kaldıysa kullan
+                if filtered_by_distance:
+                    available_stations = filtered_by_distance
+                else:
+                    # Filtre çok katı - yarı mesafe ile tekrar dene
+                    half_distance = min_distance_between_stations_km / 2
+                    filtered_half = [
+                        s for s in available_stations
+                        if haversine_km(
+                            last_station_location.lat, last_station_location.lon,
+                            s.location.lat, s.location.lon
+                        ) >= half_distance
+                    ]
+                    
+                    if filtered_half:
+                        available_stations = filtered_half
+                        distance_filter_relaxed = True
+                        logger.warning(
+                            f"Hotspot {i+1}: Distance filter relaxed from {min_distance_between_stations_km}km to {half_distance}km"
+                        )
+                    # Hala boşsa orijinal listeyi koru (sadece duplicate filtresi)
+                    elif original_available:
+                        available_stations = original_available
+                        distance_filter_relaxed = True
+                        logger.warning(
+                            f"Hotspot {i+1}: Distance filter disabled - only duplicate filter active"
+                        )
             
             # Sırala ve en iyiyi seç
             if available_stations:
@@ -1205,9 +1274,10 @@ async def find_stations_for_hotspots(
                 used_station_ids.add(result.best_station.station_id)
                 last_station_location = result.best_station.location
                 
+                relaxed_note = " (distance filter relaxed)" if distance_filter_relaxed else ""
                 logger.info(
                     f"Smart station selection: Hotspot {i+1} → {result.best_station.station_name} "
-                    f"(avoided {len(result.stations) - len(available_stations)} duplicates)"
+                    f"(avoided {len(result.stations) - len(available_stations)} duplicates){relaxed_note}"
                 )
             else:
                 # Alternatif bulunamazsa, en iyiyi kullan (uyarı ile)
