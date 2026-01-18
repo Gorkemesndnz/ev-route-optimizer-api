@@ -87,14 +87,15 @@ class StationScorer:
         self,
         deviation_minutes: float,
         power_kw: float,
-        max_power_kw: float,
+        max_power_kw: float,  # Batch max power (Legacy or fallback)
         rating: float,
         user_ratings_total: int = 0,
         has_toilet: bool = False,
         has_food: bool = False,
         has_shopping: bool = False,
         has_parking: bool = False,
-        is_open_now: Optional[bool] = None
+        is_open_now: Optional[bool] = None,
+        vehicle_max_power_kw: Optional[float] = None  # 🔧 NEW: Adaptive Scoring
     ) -> float:
         """
         İstasyon için ağırlıklı skor hesapla.
@@ -106,12 +107,13 @@ class StationScorer:
             rating: Google/OCM rating (0-5)
             user_ratings_total: Toplam yorum sayısı
             has_toilet, has_food, etc.: Amenity bilgileri
+            vehicle_max_power_kw: Aracın maksimum şarj gücü (Adaptive Scoring için)
         
         Returns:
             0.0 - 1.0 arası ağırlıklı skor
         """
         deviation_score = self._calculate_deviation_score(deviation_minutes)
-        power_score = self._calculate_power_score(power_kw, max_power_kw)
+        power_score = self._calculate_power_score(power_kw, max_power_kw, vehicle_max_power_kw)
         rating_score = self._calculate_rating_score(rating, user_ratings_total)
         amenities_score = self.calculate_amenities_score(
             has_toilet, has_food, has_shopping, has_parking, is_open_now
@@ -138,12 +140,13 @@ class StationScorer:
         has_food: bool = False,
         has_shopping: bool = False,
         has_parking: bool = False,
-        is_open_now: Optional[bool] = None
+        is_open_now: Optional[bool] = None,
+        vehicle_max_power_kw: Optional[float] = None
     ) -> float:
         """
         Greedy selection için skor hesapla.
         """
-        power_score = power_kw / max_power_kw if max_power_kw > 0 else 0
+        power_score = self._calculate_power_score(power_kw, max_power_kw, vehicle_max_power_kw)
         deviation_score = 1 - (deviation_km / max_deviation_km) if max_deviation_km > 0 else 1
         rating_score = self._calculate_rating_score(rating, user_ratings_total)
         amenities_score = self.calculate_amenities_score(
@@ -163,9 +166,33 @@ class StationScorer:
         """Sapma skoru: 0 dakika = 1.0, 15+ dakika = 0.0"""
         return max(0, 1 - (deviation_minutes / MAX_DEVIATION_MINUTES))
     
-    def _calculate_power_score(self, power_kw: float, max_power_kw: float) -> float:
-        """Güç skoru: max güce oranla normalize"""
-        return power_kw / max_power_kw if max_power_kw > 0 else 0
+    def _calculate_power_score(self, power_kw: float, max_power_kw: float, vehicle_max_kw: Optional[float] = None) -> float:
+        """
+        Güç skoru hesapla.
+        
+        Modlar:
+        1. Adaptive (Eğer vehicle_max_kw varsa): Aracın kapasitesine göre 'doygunluk' ölçer.
+        2. Absolute (Eğer yoksa): 350kW (veya max_power_kw) referansı ile mutlak güç ölçer.
+        """
+        try:
+            # 🔧 Adaptive Mode
+            if vehicle_max_kw and vehicle_max_kw > 0:
+                # Utility: (İstasyonun verebildiği effektif güç / Aracın alabileceği max güç)
+                effective_power = min(power_kw, vehicle_max_kw)
+                return effective_power / vehicle_max_kw
+            
+            # Legacy/Absolute Mode
+            denominator = 350.0  # Varsayılan standart max
+            if max_power_kw > 0:
+                denominator = max(denominator, max_power_kw)
+                
+            return power_kw / denominator
+            
+        except ZeroDivisionError:
+            return 0.0
+        except Exception as e:
+            logger.error(f"Power score calculation error: {e}")
+            return 0.0
     
     def _calculate_rating_score(self, rating: float, user_ratings_total: int) -> float:
         """Rating skoru: Weighted rating ile 0-1 normalize"""

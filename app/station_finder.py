@@ -1023,11 +1023,11 @@ class CorridorSearcher:
         current_soc: float
     ) -> Optional[CorridorStation]:
         """
-        🔧 V2.9: Greedy algoritma ile en iyi istasyonu seç.
+        🔧 V3.4: Greedy algoritma ile en iyi istasyonu seç.
         
-        V2.9 Güncellemeleri:
-        - Rating ağırlığı artırıldı
-        - Popülerlik skoru eklendi (Highway gibi popüler yerler tercih edilsin)
+        V3.4 Güncellemeleri:
+        - Adaptive Power Scoring: Araç kapasitesine göre güç puanlama
+        - Fallback: Araç bilgisi yoksa 350kW referans
         """
         if not stations:
             return None
@@ -1045,7 +1045,7 @@ class CorridorSearcher:
             deviation_weight = 0.15
             amenities_weight = 0.05
             rating_weight = 0.20
-            popularity_weight = 0.15  # Popüler yerlerde şarjcı boş olma ihtimali düşük
+            popularity_weight = 0.15
         elif current_soc < 30.0:
             power_weight = 0.40
             deviation_weight = 0.20
@@ -1056,8 +1056,25 @@ class CorridorSearcher:
         best_station = None
         best_greedy_score = -1
         
+        # 🔧 V3.4: Adaptive Power Scoring için araç gücünü al
+        try:
+            vehicle_max_kw = self.vehicle.max_charge_power_kw if self.vehicle else None
+        except AttributeError:
+            vehicle_max_kw = None
+        
         for station in stations:
-            power_score = station.power_kw / 350.0
+            # 🔧 V3.4: Adaptive Power Score
+            # Araç kapasitesi biliniyorsa: Efektif güç / Araç kapasitesi
+            # Bilinmiyorsa: İstasyon gücü / 350kW (fallback)
+            try:
+                if vehicle_max_kw and vehicle_max_kw > 0:
+                    effective_power = min(station.power_kw, vehicle_max_kw)
+                    power_score = effective_power / vehicle_max_kw
+                else:
+                    power_score = station.power_kw / 350.0
+            except (ZeroDivisionError, TypeError):
+                power_score = station.power_kw / 350.0
+                
             deviation_score = max(0, 1.0 - (station.deviation_km / self.corridor_length_km))
             
             # Weighted rating kullan
@@ -1073,7 +1090,7 @@ class CorridorSearcher:
                 station.is_open_now
             )
             
-            # 🔧 V2.9: Popülerlik skoru
+            # Popülerlik skoru
             popularity_score = _calculate_popularity_score(station.user_ratings_total)
             
             greedy_score = (
@@ -1093,7 +1110,8 @@ class CorridorSearcher:
                 "Greedy selection completed",
                 station=best_station.station_name,
                 power_kw=best_station.power_kw,
-                deviation_km=best_station.deviation_km
+                deviation_km=best_station.deviation_km,
+                score=round(best_greedy_score, 3)
             )
         
         return best_station
