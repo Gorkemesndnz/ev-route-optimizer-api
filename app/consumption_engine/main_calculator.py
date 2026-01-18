@@ -363,31 +363,53 @@ def calculate_segment_consumption_kwh(
     segment_elevation_gain_m: float = 0.0,
     segment_elevation_loss_m: float = 0.0,
     temperature_celsius: float = 20.0,
+    wind_speed_mps: float = 0.0,           # 🔧 V2.0: Rüzgar hızı
+    wind_direction_deg: float = 0.0,       # 🔧 V2.0: Rüzgar yönü
+    weather_condition: str = "clear",      # 🔧 V2.0: Hava durumu
+    start_point = None,                    # 🔧 V2.0: Bearing hesabı için
+    end_point = None,                      # 🔧 V2.0: Bearing hesabı için
     extra_load_kg: float = 0.0,
     passenger_count: int = 1,
     child_count: int = 0,
     engine_version: str = "v1"
 ) -> float:
     """
-    Basit wrapper - route_planner.py uyumlu interface.
+    V2.0: Rüzgar entegrasyonlu segment tüketim hesabı.
     
-    MainCalculator.calculate_segment_consumption kullanır ama 
-    daha basit parametrelerle çalışır.
+    MainCalculator.calculate_segment_consumption kullanır.
+    Artık rüzgar hızı, yönü ve segment bearing'i ile gerçek
+    headwind/tailwind etkisi hesaplanır.
     
     Args:
         vehicle: VehicleModel veya VehiclePhysicsProfile
         segment_distance_km: Segment mesafesi (km)
         segment_elevation_gain_m: Yükselme (m)
-        segment_elevation_loss_m: İniş (m) - opsiyonel
+        segment_elevation_loss_m: İniş (m)
         temperature_celsius: Sıcaklık (°C)
+        wind_speed_mps: Rüzgar hızı (m/s) - V2.0
+        wind_direction_deg: Rüzgar yönü (0-360°) - V2.0
+        weather_condition: Hava durumu (clear, rain, snow, fog)
+        start_point: GeoPoint - Bearing hesabı için
+        end_point: GeoPoint - Bearing hesabı için
         extra_load_kg: Ekstra yük (kg)
         passenger_count: Yetişkin yolcu sayısı
-        child_count: Çocuk yolcu sayısı (30 kg/çocuk)
+        child_count: Çocuk yolcu sayısı
         engine_version: "v1" (kural tabanlı)
     
     Returns:
         Toplam tüketim (kWh)
     """
+    # Weather condition mapping
+    condition_map = {
+        "clear": WeatherCondition.CLEAR,
+        "rain": WeatherCondition.RAIN,
+        "snow": WeatherCondition.SNOW,
+        "fog": WeatherCondition.FOG,
+        "windy": WeatherCondition.WINDY,
+        "cloudy": WeatherCondition.CLOUDY
+    }
+    weather_cond = condition_map.get(weather_condition.lower(), WeatherCondition.CLEAR)
+    
     # MockDriveLeg benzeri basit segment oluştur
     class SimpleSegment:
         def __init__(self):
@@ -395,13 +417,13 @@ def calculate_segment_consumption_kwh(
             self.elevation_gain_m = segment_elevation_gain_m
             self.elevation_loss_m = segment_elevation_loss_m
             self.duration_minutes = (segment_distance_km / 60) * 60  # Tahmini 60 km/h
-            self.start_point = None
-            self.end_point = None
+            self.start_point = start_point  # 🔧 V2.0: Bearing için
+            self.end_point = end_point      # 🔧 V2.0: Bearing için
             self.weather_context = WeatherInfo(
                 temp_c=temperature_celsius,
-                wind_speed_mps=0.0,
-                wind_direction_deg=0,
-                condition=WeatherCondition.CLEAR
+                wind_speed_mps=wind_speed_mps,         # 🔧 V2.0
+                wind_direction_deg=wind_direction_deg, # 🔧 V2.0
+                condition=weather_cond                 # 🔧 V2.0
             )
     
     segment = SimpleSegment()
@@ -421,9 +443,37 @@ def calculate_segment_consumption_kwh(
 # V2.0: ROUTE CONSUMPTION CALCULATOR (Tüm segmentler için)
 # =============================================================================
 
+def _find_nearest_checkpoint_weather(
+    segment_cumulative_km: float,
+    weather_checkpoints: list
+) -> tuple:
+    """
+    Segment'e en yakın weather checkpoint'i bul.
+    
+    Args:
+        segment_cumulative_km: Segment'in kümülatif mesafesi
+        weather_checkpoints: [(WeatherCheckpoint, WeatherInfo), ...]
+        
+    Returns:
+        (WeatherInfo, wind_direction_deg) tuple
+    """
+    if not weather_checkpoints:
+        return None, 0
+    
+    # En yakın checkpoint'i bul
+    nearest = min(
+        weather_checkpoints,
+        key=lambda cp_tuple: abs(cp_tuple[0].cumulative_km - segment_cumulative_km)
+    )
+    checkpoint, weather = nearest
+    return weather, weather.wind_direction_deg if weather else 0
+
+
 def calculate_route_consumption(
     vehicle,
     segments,  # List[RouteSegment] from route_segmenter_v2
+    weather_checkpoints: list = None,  # 🔧 V2.0: [(WeatherCheckpoint, WeatherInfo), ...]
+    # Eski parametreler (backward compatibility)
     temperature_celsius: float = 20.0,
     wind_speed_mps: float = 0.0,
     weather_condition: str = "clear",
@@ -434,15 +484,17 @@ def calculate_route_consumption(
     """
     V2.0: Tüm segmentler için tüketim hesapla (TEK KAYNAK).
     
-    RouteSegmenter'dan gelen segmentleri alır ve her biri için
-    MainCalculator kullanarak doğru tüketim hesaplar.
+    🔧 V2.0 YENİLİK: weather_checkpoints parametresi ile her segment
+    kendisine en yakın checkpoint'in hava durumunu kullanır.
+    Eski parametreler fallback olarak desteklenir.
     
     Args:
         vehicle: VehicleModel
         segments: RouteSegment listesi (route_segmenter_v2'den)
-        temperature_celsius: Ortalama sıcaklık (°C)
-        wind_speed_mps: Ortalama rüzgar hızı (m/s)
-        weather_condition: Hava durumu (clear, rain, snow, fog)
+        weather_checkpoints: [(WeatherCheckpoint, WeatherInfo), ...] - V2.0
+        temperature_celsius: Fallback sıcaklık (°C)
+        wind_speed_mps: Fallback rüzgar hızı (m/s)
+        weather_condition: Fallback hava durumu
         extra_load_kg: Ekstra yük (kg)
         passenger_count: Yetişkin yolcu sayısı
         child_count: Çocuk yolcu sayısı
@@ -452,36 +504,53 @@ def calculate_route_consumption(
     """
     from app.soc_simulator import SegmentWithConsumption
     
-    # Weather condition mapping
-    condition_map = {
-        "clear": WeatherCondition.CLEAR,
-        "rain": WeatherCondition.RAIN,
-        "snow": WeatherCondition.SNOW,
-        "fog": WeatherCondition.FOG,
-        "windy": WeatherCondition.WINDY
-    }
-    weather_cond = condition_map.get(weather_condition.lower(), WeatherCondition.CLEAR)
+    # V2.0: Checkpoint bazlı mı, fallback mı?
+    use_checkpoints = weather_checkpoints and len(weather_checkpoints) > 0
+    
+    if use_checkpoints:
+        logger.info(
+            f"🌦️ V2.0: Using {len(weather_checkpoints)} weather checkpoints for consumption calculation"
+        )
+    else:
+        logger.info(
+            f"Using fallback weather: temp={temperature_celsius}°C, wind={wind_speed_mps}m/s"
+        )
     
     results = []
     total_consumption = 0.0
     
-    logger.info(
-        f"Calculating consumption for {len(segments)} segments",
-        temperature=temperature_celsius,
-        weather=weather_condition,
-        passengers=passenger_count,
-        children=child_count,
-        extra_load=extra_load_kg
-    )
-    
     for segment in segments:
-        # Her segment için tüketim hesapla
+        # V2.0: Segment'e en yakın checkpoint'in havasını bul
+        if use_checkpoints:
+            segment_weather, wind_dir = _find_nearest_checkpoint_weather(
+                segment.cumulative_distance_km,
+                weather_checkpoints
+            )
+            if segment_weather:
+                seg_temp = segment_weather.temp_c
+                seg_wind = segment_weather.wind_speed_mps
+                seg_wind_dir = segment_weather.wind_direction_deg
+            else:
+                seg_temp = temperature_celsius
+                seg_wind = wind_speed_mps
+                seg_wind_dir = 0
+        else:
+            seg_temp = temperature_celsius
+            seg_wind = wind_speed_mps
+            seg_wind_dir = 0
+        
+        # Her segment için tüketim hesapla (V2.0: Rüzgar dahil)
         consumption_kwh = calculate_segment_consumption_kwh(
             vehicle=vehicle,
             segment_distance_km=segment.distance_km,
             segment_elevation_gain_m=segment.elevation_gain_m,
             segment_elevation_loss_m=segment.elevation_loss_m,
-            temperature_celsius=temperature_celsius,
+            temperature_celsius=seg_temp,
+            wind_speed_mps=seg_wind,           # 🔧 V2.0: Checkpoint rüzgar hızı
+            wind_direction_deg=seg_wind_dir,   # 🔧 V2.0: Checkpoint rüzgar yönü
+            weather_condition=segment_weather.condition.value if (use_checkpoints and segment_weather) else "clear",
+            start_point=segment.start_point,   # 🔧 V2.0: Bearing hesabı için
+            end_point=segment.end_point,       # 🔧 V2.0: Bearing hesabı için
             extra_load_kg=extra_load_kg,
             passenger_count=passenger_count,
             child_count=child_count
@@ -495,12 +564,13 @@ def calculate_route_consumption(
         results.append(seg_with_cons)
         total_consumption += consumption_kwh
         
-        logger.debug(
-            f"Segment {segment.index}: "
-            f"distance={segment.distance_km}km, "
-            f"elevation=+{segment.elevation_gain_m}/-{segment.elevation_loss_m}m, "
-            f"consumption={consumption_kwh:.2f}kWh"
-        )
+        if use_checkpoints:
+            logger.debug(
+                f"Segment {segment.index}: "
+                f"cumulative={segment.cumulative_distance_km}km, "
+                f"temp={seg_temp:.1f}°C, wind={seg_wind:.1f}m/s, "
+                f"consumption={consumption_kwh:.2f}kWh"
+            )
     
     logger.info(
         f"Route consumption calculated: "

@@ -28,10 +28,11 @@ from app.models import (
     PlugType,
     ChargerType,
     WeatherInfo,
+    WeatherCondition,  # 🔧 V2.0: Weather checkpoint fallback için
     RouteStrategy  # 🔧 V3.0: Rota stratejisi
 )
 
-from app.route_segmenter import RouteSegmenter, RouteSegment
+from app.route_segmenter import RouteSegmenter, RouteSegment, WeatherCheckpoint
 from app.soc_simulator import (
     SOCSimulator, 
     ChargeHotspot, 
@@ -695,67 +696,68 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             except Exception as e:
                 logger.warning(f"Elevation API failed: {e}")
         
-        # STEP 4: Hava durumu al
-        # 🔧 V2.7: Başlangıç için current, varış için forecast (ETA bazlı)
-        avg_weather = None
-        start_weather = None
-        end_weather = None
-        try:
-            # Başlangıç: Current weather (şimdi çıkıyorsun)
-            start_weather = await weather_service.get_weather_at_point(
-                request.start_location.lat, request.start_location.lon
-            )
-            
-            # Varış: Forecast (ETA sonra varıyorsun)
-            end_forecast = await weather_service.get_forecast_for_point(
-                request.end_location.lat, request.end_location.lon
-            )
-            end_weather = _extract_weather_from_forecast(end_forecast, eta_minutes=route_duration_min)
-            
-            # Forecast başarısız olursa current'a fallback
-            if not end_weather:
-                end_weather = await weather_service.get_weather_at_point(
-                    request.end_location.lat, request.end_location.lon
-                )
-                logger.debug("End weather: fallback to current (forecast failed)")
-            else:
-                logger.debug(f"End weather: forecast for ETA={route_duration_min:.0f}min")
-            
-            if start_weather and end_weather:
-                avg_temp = (start_weather.temp_c + end_weather.temp_c) / 2
-                avg_wind = (start_weather.wind_speed_mps + end_weather.wind_speed_mps) / 2
-                avg_weather = WeatherInfo(
-                    temp_c=avg_temp,
-                    condition=start_weather.condition,
-                    wind_speed_mps=avg_wind,
-                    wind_direction_deg=0,
-                    precipitation_prob=0.0
-                )
-                logger.info(f"Weather: start={start_weather.temp_c:.1f}C, end(forecast)={end_weather.temp_c:.1f}C, avg={avg_temp:.1f}C")
-        except Exception as e:
-            logger.warning(f"Weather API failed: {e}")
-        
-        # STEP 5: Varsayılanları Çöz (yolcu, yük)
+        # STEP 4: Varsayılanları Çöz (yolcu, yük)
         passenger_count, child_count, extra_load_kg = _resolve_defaults(request)
         logger.info(f"Resolved defaults: passengers={passenger_count}, children={child_count}, load={extra_load_kg}kg")
         
-        # STEP 6: Route Segmenter - Geometrik segmentasyon
+        # STEP 5: Route Segmenter - Geometrik segmentasyon
         segmenter = RouteSegmenter(segment_length_km=10.0)
         segments = segmenter.create_segments(
             polyline=polyline,
             total_elevation_gain_m=elevation_gain_m,
             total_elevation_loss_m=elevation_loss_m
         )
-        
         logger.info(f"Segments created: {len(segments)} segments")
         
-        # STEP 7: Main Calculator - Her segment için tüketim (TEK KAYNAK)
+        # STEP 6: 🌦️ V2.0 Dynamic Weather - Her 100km'de bir checkpoint
+        weather_checkpoints: List[WeatherCheckpoint] = []
+        checkpoint_weather: List[tuple] = []  # (WeatherCheckpoint, WeatherInfo)
+        
+        try:
+            # 6a. Weather checkpoint'leri oluştur
+            weather_checkpoints = segmenter.create_weather_checkpoints(
+                total_duration_minutes=route_duration_min,
+                checkpoint_interval_km=100.0
+            )
+            logger.info(f"Weather checkpoints created: {len(weather_checkpoints)} points")
+            
+            # 6b. Tüm checkpoint'ler için paralel forecast çağrısı
+            if weather_checkpoints:
+                forecast_tasks = [
+                    weather_service.get_forecast_for_point(cp.lat, cp.lon)
+                    for cp in weather_checkpoints
+                ]
+                forecasts = await asyncio.gather(*forecast_tasks, return_exceptions=True)
+                
+                # 6c. Her checkpoint için ETA-matched weather çıkar
+                for cp, forecast in zip(weather_checkpoints, forecasts):
+                    if isinstance(forecast, Exception):
+                        logger.warning(f"Forecast failed for checkpoint {cp.cumulative_km}km: {forecast}")
+                        weather = None
+                    else:
+                        weather = _extract_weather_from_forecast(forecast, eta_minutes=cp.eta_minutes)
+                    
+                    # Fallback: varsayılan hava durumu
+                    if not weather:
+                        weather = WeatherInfo(
+                            temp_c=DEFAULT_TEMPERATURE_C,
+                            condition=WeatherCondition.CLEAR,
+                            wind_speed_mps=0.0,
+                            wind_direction_deg=0,
+                            precipitation_prob=0.0
+                        )
+                    
+                    checkpoint_weather.append((cp, weather))
+                
+                logger.info(f"Weather data fetched for {len(checkpoint_weather)} checkpoints")
+        except Exception as e:
+            logger.warning(f"Weather checkpoint system failed: {e}, using defaults")
+        
+        # STEP 7: Main Calculator - Her segment için tüketim (V2: Checkpoint bazlı hava durumu)
         segments_with_consumption = calculate_route_consumption(
             vehicle=vehicle,
             segments=segments,
-            temperature_celsius=avg_weather.temp_c if avg_weather else DEFAULT_TEMPERATURE_C,
-            wind_speed_mps=avg_weather.wind_speed_mps if avg_weather else 0.0,
-            weather_condition=avg_weather.condition.value if avg_weather else "clear",
+            weather_checkpoints=checkpoint_weather,  # 🔧 V2.0: Checkpoint bazlı hava durumu
             extra_load_kg=extra_load_kg,
             passenger_count=passenger_count,
             child_count=child_count

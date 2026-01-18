@@ -63,6 +63,23 @@ class RouteSegment:
     elevation_loss_m: float = 0.0
 
 
+@dataclass
+class WeatherCheckpoint:
+    """
+    V2.0: Hava durumu checkpoint'i (her 100km'de bir).
+    
+    Attributes:
+        lat: Enlem
+        lon: Boylam
+        eta_minutes: Bu noktaya tahmini varış süresi (dakika)
+        cumulative_km: Başlangıçtan itibaren mesafe (km)
+    """
+    lat: float
+    lon: float
+    eta_minutes: float
+    cumulative_km: float
+
+
 # =============================================================================
 # POLYLINE DECODER
 # =============================================================================
@@ -291,6 +308,71 @@ class RouteSegmenter:
         interpolated_lon = segment.start_point.lon + ratio * (segment.end_point.lon - segment.start_point.lon)
         
         return GeoPoint(lat=interpolated_lat, lon=interpolated_lon)
+    
+    def create_weather_checkpoints(
+        self,
+        total_duration_minutes: float,
+        checkpoint_interval_km: float = 100.0
+    ) -> List[WeatherCheckpoint]:
+        """
+        V2.0: Her 100km'de bir hava durumu checkpoint'i oluşturur.
+        
+        KULLANIM: create_segments() çağrıldıktan SONRA çağrılmalıdır.
+        
+        Args:
+            total_duration_minutes: Toplam rota süresi (dakika)
+            checkpoint_interval_km: Checkpoint aralığı (default 100km)
+            
+        Returns:
+            WeatherCheckpoint listesi (başlangıç + ara noktalar + varış)
+        """
+        if not self.segments:
+            logger.warning("No segments available, run create_segments() first")
+            return []
+        
+        checkpoints: List[WeatherCheckpoint] = []
+        
+        # Ortalama hız hesapla (ETA için)
+        avg_speed_kmh = (self.total_distance_km / total_duration_minutes) * 60 if total_duration_minutes > 0 else 60.0
+        
+        # Başlangıç noktası (ETA = 0)
+        start_point = self.segments[0].start_point
+        checkpoints.append(WeatherCheckpoint(
+            lat=start_point.lat,
+            lon=start_point.lon,
+            eta_minutes=0.0,
+            cumulative_km=0.0
+        ))
+        
+        # Ara checkpoint'ler (her 100km'de bir)
+        current_km = checkpoint_interval_km
+        while current_km < self.total_distance_km:
+            coord = self.get_coordinates_at_distance(current_km)
+            if coord:
+                eta_minutes = (current_km / avg_speed_kmh) * 60
+                checkpoints.append(WeatherCheckpoint(
+                    lat=coord.lat,
+                    lon=coord.lon,
+                    eta_minutes=round(eta_minutes, 1),
+                    cumulative_km=round(current_km, 1)
+                ))
+            current_km += checkpoint_interval_km
+        
+        # Varış noktası
+        end_point = self.segments[-1].end_point
+        checkpoints.append(WeatherCheckpoint(
+            lat=end_point.lat,
+            lon=end_point.lon,
+            eta_minutes=round(total_duration_minutes, 1),
+            cumulative_km=round(self.total_distance_km, 1)
+        ))
+        
+        logger.info(
+            f"Weather checkpoints created: count={len(checkpoints)}, "
+            f"interval={checkpoint_interval_km}km, total_distance={round(self.total_distance_km, 1)}km"
+        )
+        
+        return checkpoints
 
 
 # =============================================================================
