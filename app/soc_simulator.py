@@ -28,12 +28,14 @@ Kullanım:
     hotspots = simulator.simulate_and_find_hotspots(segments_with_consumption)
 """
 
+import math
 from typing import List, Optional
 from dataclasses import dataclass
 from app.models import GeoPoint
 from app.route_segmenter import RouteSegment
 from app.utils.logger import get_logger
 from app.charging_model import calculate_charge_time, apply_high_soc_penalty
+from app.services.station_logic.filter import calculate_bearing
 from app.constants import (
     HARD_MIN_SOC,
     TARGET_MIN_SOC,
@@ -285,13 +287,10 @@ class SOCSimulator:
                 # 🔧 V2.9: Rota yönünü hesapla (istasyon yön filtresi için)
                 route_bearing = 0.0
                 if segment.start_point and segment.end_point:
-                    import math
-                    lat1 = math.radians(segment.start_point.lat)
-                    lat2 = math.radians(segment.end_point.lat)
-                    dlon = math.radians(segment.end_point.lon - segment.start_point.lon)
-                    y = math.sin(dlon) * math.cos(lat2)
-                    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-                    route_bearing = (math.degrees(math.atan2(y, x)) + 360) % 360
+                    route_bearing = calculate_bearing(
+                        segment.start_point.lat, segment.start_point.lon,
+                        segment.end_point.lat, segment.end_point.lon
+                    )
                 
                 hotspot = ChargeHotspot(
                     segment_index=max(0, segment.index - 1),  # Önceki segment

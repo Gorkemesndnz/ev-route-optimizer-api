@@ -21,6 +21,7 @@ Kullanım:
     segments = segmenter.create_segments(polyline, elevation_gain, elevation_loss)
 """
 
+import math
 from typing import List, Tuple
 from dataclasses import dataclass
 from app.models import GeoPoint
@@ -135,8 +136,6 @@ def calculate_distance_km(point1: Tuple[float, float], point2: Tuple[float, floa
     """
     İki koordinat arası Haversine mesafesi (km).
     """
-    import math
-    
     lat1, lon1 = point1
     lat2, lon2 = point2
     

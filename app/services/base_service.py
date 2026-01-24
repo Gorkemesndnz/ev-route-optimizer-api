@@ -2,6 +2,7 @@ import httpx
 import asyncio
 from typing import Any, Optional
 from app.utils.logger import get_logger
+from app.utils.helpers import sanitize_params
 
 logger = get_logger("BaseService")
 
@@ -91,8 +92,8 @@ class BaseService:
                     logger.error(
                         f"{self.name} responded with error",
                         status=response.status_code,
-                        detail=detail,
-                        url=str(response.request.url),
+                        detail=detail[:200],  # Truncate long error messages
+                        params=sanitize_params(params or {}),
                         attempt=attempt
                     )
 
@@ -109,8 +110,9 @@ class BaseService:
                 except Exception:
                     logger.error(
                         f"{self.name} JSON parse error",
-                        url=str(response.request.url),
-                        body=response.text
+                        endpoint=endpoint,
+                        params=sanitize_params(params or {}),
+                        body_preview=response.text[:100] if response.text else None
                     )
                     raise ExternalAPIError(
                         self.name,

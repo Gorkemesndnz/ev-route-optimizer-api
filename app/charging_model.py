@@ -39,7 +39,7 @@ PHASE2_END_SOC = 80.0   # Lineer düşüş sonu
 MIN_CHARGE_POWER_KW = 5.0  # Minimum şarj gücü
 
 # Hava durumu - Modern EV'lerin kabul edilebilir aralığı
-OPTIMAL_TEMP_MIN_C = 10.0   # Optimal şarj sıcaklığı alt (10°C)
+OPTIMAL_TEMP_MIN_C = 15.0   # Optimal şarj sıcaklığı alt (15°C)
 OPTIMAL_TEMP_MAX_C = 40.0   # Optimal şarj sıcaklığı üst (40°C)
 
 # Planner penaltıları
@@ -85,10 +85,9 @@ class WeatherImpact:
             0.4 - 1.0 arası çarpan (1.0 = optimal, tam güç)
         
         Örnekler:
-            -20°C → 0.40 (çok yavaş)
-            -10°C → 0.60
-              0°C → 0.80
-             10°C → 1.00 (optimal)
+            -15°C → 0.50 (çok yavaş)
+              0°C → 0.75
+             15°C → 1.00 (optimal)
              40°C → 1.00 (optimal)
              50°C → 0.80 (termal throttling)
         """
@@ -99,12 +98,12 @@ class WeatherImpact:
         if OPTIMAL_TEMP_MIN_C <= temperature_c <= OPTIMAL_TEMP_MAX_C:
             return 1.0
         
-        # Soğuk: Daha sert düşüş (10°C altında)
-        # -20°C'de %40, 10°C'de %100
+        # Soğuk: Lineer düşüş (15°C altında)
+        # -15°C'de %50, 15°C'de %100
         if temperature_c < OPTIMAL_TEMP_MIN_C:
-            # Her 1°C düşüşte %2 kayıp (daha sert)
-            factor = 0.4 + ((temperature_c + 20) / 50.0)
-            return max(0.4, min(1.0, factor))
+            # Elektrolit akışkanlığı azalır, iç direnç artar
+            factor = 0.5 + ((temperature_c + 15) / 60.0)
+            return max(0.5, min(1.0, factor))
         
         # Sıcak: Termal kısma (40°C üzerinde)
         # 40°C'de %100, 60°C'de %60
