@@ -231,12 +231,10 @@ async def optimize_route(request: RouteRequest) -> MultiStopRouteResponse:
     )
     
     try:
-        # Request validation
-        if request.current_soc_percent <= 0:
-            raise ValueError("initial_soc_percent must be greater than 0")
-        
-        if request.current_soc_percent > 100:
-            raise ValueError("initial_soc_percent must be less than or equal to 100")
+        # Not: SOC validation Pydantic tarafından yapılır (ge=0, le=100 → 422)
+        # Burada sadece iş mantığı kontrolü: SOC=0 ile rota planlamak anlamsız
+        if request.current_soc_percent == 0:
+            raise ValueError("Batarya tamamen boş (SOC=0) ile rota planlanamaz")
         
         # Route planning
         logger.debug(
@@ -349,7 +347,7 @@ async def optimize_route(request: RouteRequest) -> MultiStopRouteResponse:
 async def test_endpoint():
     """Development test endpoint - sistem durumu hakkında detaylı bilgi (sadece development)"""
     if not config.is_debug():
-        raise HTTPException(status_code=404, detail="Test endpoint not available in production")
+        raise HTTPException(status_code=403, detail="Test endpoint sadece development modunda kullanılabilir")
     
     try:
         # Test route planning with sample data
@@ -390,7 +388,7 @@ async def test_endpoint():
 async def debug_info():
     """Debug bilgileri - sadece development modunda"""
     if not config.is_debug():
-        raise HTTPException(status_code=404, detail="Debug mode not enabled")
+        raise HTTPException(status_code=403, detail="Debug endpoint sadece development modunda kullanılabilir")
     
     return {
         "debug_info": {
@@ -417,7 +415,7 @@ async def debug_info():
 async def validate_vehicle(vehicle_id: str):
     """Vehicle model validation endpoint (sadece development)"""
     if not config.is_debug():
-        raise HTTPException(status_code=404, detail="Validate endpoint not available in production")
+        raise HTTPException(status_code=403, detail="Validate endpoint sadece development modunda kullanılabilir")
     
     try:
         vehicle = get_vehicle_model(vehicle_id)
@@ -483,10 +481,14 @@ async def geocode_address(address: str):
 
 @app.get("/vehicles/brands", tags=["Vehicles"])
 async def list_vehicle_brands():
-    return {
-        "status": "success",
-        "brands": vehicle_catalog.get_all_brands(),
-    }
+    try:
+        return {
+            "status": "success",
+            "brands": vehicle_catalog.get_all_brands(),
+        }
+    except Exception as e:
+        logger.error("Vehicle brands endpoint failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Marka listesi alınamadı: {str(e)}")
 
 
 @app.get("/vehicles/by_brand", tags=["Vehicles"])
@@ -494,21 +496,25 @@ async def list_vehicles_by_brand(
     brand: str = Query(..., min_length=1),
     limit: int = Query(500, ge=1, le=5000),
 ):
-    vehicles = vehicle_catalog.search(brand=brand, limit=limit)
-    return {
-        "status": "success",
-        "brand": brand,
-        "vehicles": [
-            {
-                "id": v.id,
-                "display_name": v.display_name,
-                "year": v.year,
-                "battery_kwh": v.battery_capacity_kwh,
-                "dc_max_kw": v.dc_max_kw,
-            }
-            for v in vehicles
-        ],
-    }
+    try:
+        vehicles = vehicle_catalog.search(brand=brand, limit=limit)
+        return {
+            "status": "success",
+            "brand": brand,
+            "vehicles": [
+                {
+                    "id": v.id,
+                    "display_name": v.display_name,
+                    "year": v.year,
+                    "battery_kwh": v.battery_capacity_kwh,
+                    "dc_max_kw": v.dc_max_kw,
+                }
+                for v in vehicles
+            ],
+        }
+    except Exception as e:
+        logger.error("Vehicles by brand endpoint failed", error=str(e), brand=brand)
+        raise HTTPException(status_code=500, detail=f"Araç listesi alınamadı: {str(e)}")
 
 
 @app.get("/vehicles/search", tags=["Vehicles"])
@@ -516,22 +522,26 @@ async def search_vehicles(
     query: str = Query("", min_length=0),
     limit: int = Query(50, ge=1, le=500),
 ):
-    vehicles = vehicle_catalog.search(query=query, limit=limit)
-    return {
-        "status": "success",
-        "query": query,
-        "vehicles": [
-            {
-                "id": v.id,
-                "display_name": v.display_name,
-                "brand": v.brand,
-                "model": v.model,
-                "variant": v.variant,
-                "year": v.year,
-            }
-            for v in vehicles
-        ],
-    }
+    try:
+        vehicles = vehicle_catalog.search(query=query, limit=limit)
+        return {
+            "status": "success",
+            "query": query,
+            "vehicles": [
+                {
+                    "id": v.id,
+                    "display_name": v.display_name,
+                    "brand": v.brand,
+                    "model": v.model,
+                    "variant": v.variant,
+                    "year": v.year,
+                }
+                for v in vehicles
+            ],
+        }
+    except Exception as e:
+        logger.error("Vehicle search endpoint failed", error=str(e), query=query)
+        raise HTTPException(status_code=500, detail=f"Araç araması başarısız: {str(e)}")
 
 
 # =============================================================================
@@ -626,15 +636,11 @@ async def station_feedback(request: StationFeedbackRequest) -> RecalculateRespon
 @app.post("/switch_station", response_model=RecalculateResponse, tags=["Feedback"])
 async def switch_station(request: SwitchStationRequest) -> RecalculateResponse:
     """
-    🔧 V3.1: İstasyon değiştirme ve etki analizi.
+    🔧 V3.3: İstasyon değiştirme — her zaman tam rota yeniden hesaplama.
     
-    Kullanıcı alternatif istasyonlardan birini seçtiğinde:
-    
-    Senaryo A (Sorunsuz): Yeni istasyondan sonraki durağa ulaşılabiliyorsa
-    → Sadece o bacağı güncelle, rotanın geri kalanına dokunma
-    
-    Senaryo B (Kritik): Yeni istasyon seçimi sonraki durağa varmayı imkansız kılıyorsa
-    → O noktadan itibaren tüm rotayı yeniden hesapla
+    Kullanıcı alternatif istasyonlardan birini seçtiğinde,
+    mevcut konumdan varışa kadar tüm rota yeniden hesaplanır.
+    Eski istasyon blacklist'e alınarak yeni planda dışlanır.
     """
     request_id = f"switch_{int(time.time() * 1000)}"
     
@@ -646,82 +652,38 @@ async def switch_station(request: SwitchStationRequest) -> RecalculateResponse:
     )
     
     try:
-        vehicle = get_vehicle_model(request.vehicle_model_id)
-        battery_kwh = request.battery_capacity_kwh
+        # Eski istasyonu blacklist'e al
+        if request.original_station_id:
+            user_id = request_id
+            await feedback_manager.report_station(
+                station_id=request.original_station_id,
+                user_id=user_id,
+                reason="user_switched"
+            )
         
-        # Yeni istasyona gidiş için tahmini tüketim hesapla
-        # Basit hesap: Haversine mesafe * ortalama tüketim
-        from app.station_finder import haversine_km
-        
-        distance_to_new = haversine_km(
-            request.current_location.lat, request.current_location.lon,
-            request.new_station.location.lat, request.new_station.location.lon
+        # Mevcut konumdan varışa tam rota yeniden hesapla
+        new_route_request = RouteRequest(
+            start_location=request.current_location,
+            end_location=request.destination,
+            vehicle_model_id=request.vehicle_model_id,
+            current_soc_percent=request.current_soc_percent
         )
         
-        # Ortalama tüketim: Wh/km -> kWh
-        avg_consumption_kwh_per_km = vehicle.base_consumption_wh_km / 1000
-        estimated_consumption = distance_to_new * avg_consumption_kwh_per_km
+        new_route = await plan_route(new_route_request)
         
-        # Yeni istasyona vardığında tahmini SOC
-        soc_at_new_station = request.current_soc_percent - (estimated_consumption / battery_kwh * 100)
+        logger.info(
+            f"[{request_id}] Route recalculated after station switch",
+            charge_stops=new_route.charge_stops,
+            total_distance=new_route.total_distance_km
+        )
         
-        # Senaryo kontrolü: Sonraki durağa ulaşılabilir mi?
-        can_reach_next = True
-        
-        if request.next_station_location:
-            distance_to_next = haversine_km(
-                request.new_station.location.lat, request.new_station.location.lon,
-                request.next_station_location.lat, request.next_station_location.lon
-            )
-            
-            # Şarj sonrası tahmini SOC (80% hedef varsayalım)
-            soc_after_charge = 80.0
-            consumption_to_next = distance_to_next * avg_consumption_kwh_per_km
-            soc_at_next = soc_after_charge - (consumption_to_next / battery_kwh * 100)
-            
-            # Minimum güvenli SOC: 15%
-            can_reach_next = soc_at_next >= 15.0
-            
-            logger.debug(
-                f"[{request_id}] Reach analysis",
-                soc_after_charge=soc_after_charge,
-                consumption_to_next=consumption_to_next,
-                soc_at_next=soc_at_next,
-                can_reach=can_reach_next
-            )
-        
-        if can_reach_next:
-            # Senaryo A: Sadece tek bacak güncellemesi
-            logger.info(f"[{request_id}] Scenario A: Single leg update")
-            
-            return RecalculateResponse(
-                status="success",
-                message="İstasyon değiştirildi. Sonraki durağa ulaşılabilir.",
-                recalculate_type="single_leg",
-                route=None,  # Frontend sadece o bacağı güncelleyecek
-                affected_legs=[request.leg_index]
-            )
-        else:
-            # Senaryo B: Tam rota yeniden hesaplama
-            logger.info(f"[{request_id}] Scenario B: Full route recalculation needed")
-            
-            # Yeni rota hesapla (yeni istasyondan sonra)
-            new_route_request = RouteRequest(
-                start_location=request.new_station.location,
-                end_location=request.destination,
-                vehicle_model_id=request.vehicle_model_id,
-                current_soc_percent=80.0  # Şarj sonrası varsayılan
-            )
-            
-            new_route = await plan_route(new_route_request)
-            
-            return RecalculateResponse(
-                status="full_recalculate",
-                message="İstasyon değişti ve sonraki durağa ulaşılamıyor. Rota yeniden hesaplandı.",
-                recalculate_type="full_route",
-                route=new_route,
-                affected_legs=list(range(request.leg_index, request.leg_index + len(new_route.legs) + 1))
-            )
+        return RecalculateResponse(
+            status="success",
+            message=f"İstasyon değiştirildi ve rota yeniden hesaplandı.",
+            recalculate_type="full_route",
+            route=new_route,
+            affected_legs=list(range(len(new_route.legs)))
+        )
         
     except Exception as e:
         logger.error(f"[{request_id}] Station switch failed", error=str(e))
@@ -732,6 +694,7 @@ async def switch_station(request: SwitchStationRequest) -> RecalculateResponse:
             route=None,
             affected_legs=[]
         )
+
 
 
 if __name__ == "__main__":
