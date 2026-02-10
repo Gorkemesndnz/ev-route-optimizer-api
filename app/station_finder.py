@@ -41,7 +41,7 @@ from app.soc_simulator import ChargeHotspot
 from app.services.ocm_service import ocm_service
 from app.services.google_service import google_maps
 from app.services.weather_service import weather_service
-from app.consumption_engine.vehicle_models import get_vehicle_model, VehicleModel
+from app.infrastructure.vehicle_catalog import get_vehicle_model, VehicleSpec as VehicleModel
 from app.utils.config_manager import config
 from app.utils.logger import get_logger
 from app.utils.charging_estimator import estimate_dc_charging_power

@@ -39,8 +39,7 @@ from app.services.base_service import ExternalAPIError, close_global_client
 from app.services.google_service import google_maps
 from app.utils.logger import get_logger
 from app.utils.config_manager import config
-from app.consumption_engine.vehicle_models import get_vehicle_model, VEHICLE_DB
-from app.infrastructure.vehicle_catalog import FileVehicleCatalog
+from app.infrastructure.vehicle_catalog import FileVehicleCatalog, get_vehicle_model
 from app.services.feedback_service import feedback_manager
 
 
@@ -66,8 +65,7 @@ async def lifespan(app: FastAPI):
     # Log available vehicles
     logger.info(
         "Available vehicle models",
-        vehicle_count=len(VEHICLE_DB),
-        vehicle_ids=list(VEHICLE_DB.keys())
+        vehicle_count=vehicle_catalog.get_vehicle_count(),
     )
     
     yield
@@ -179,7 +177,7 @@ async def api_info():
             "test": "GET /test",
             "debug": "GET /debug"
         },
-        "available_vehicles": list(VEHICLE_DB.keys())
+        "available_vehicles": sorted(v.id for v in vehicle_catalog.search(limit=20))
     }
 
 
@@ -187,8 +185,11 @@ async def api_info():
 async def health():
     """Detaylı sağlık kontrolü"""
     try:
-        # Test vehicle model loading
-        test_vehicle = get_vehicle_model("mg4_51kwh")
+        # Test vehicle model loading — katalogdan ilk aracı çek
+        all_vehicles = vehicle_catalog.search(limit=1)
+        if not all_vehicles:
+            raise RuntimeError("No vehicles loaded in catalog")
+        test_vehicle = all_vehicles[0]
         
         return {
             "status": "ok",
@@ -202,8 +203,9 @@ async def health():
                 "logger": "ok",
                 "config_manager": "ok"
             },
+            "vehicle_catalog_count": vehicle_catalog.get_vehicle_count(),
             "test_vehicle": {
-                "model": test_vehicle.model_name,
+                "model": test_vehicle.display_name,
                 "battery_kwh": test_vehicle.battery_capacity_kwh
             }
         }
@@ -364,12 +366,12 @@ async def test_endpoint():
             "environment": config.get_environment(),
             "debug_mode": config.is_debug(),
             "available_vehicles": {
-                vid: {
-                    "model": vehicle.model_name,
-                    "battery_kwh": vehicle.battery_capacity_kwh,
-                    "consumption_wh_km": vehicle.base_consumption_wh_km
+                v.id: {
+                    "model": v.display_name,
+                    "battery_kwh": v.battery_capacity_kwh,
+                    "consumption_wh_km": v.base_consumption_wh_km
                 }
-                for vid, vehicle in VEHICLE_DB.items()
+                for v in vehicle_catalog.search(limit=20)
             },
             "sample_request": sample_request.model_dump(),
             "api_keys_configured": {
@@ -398,7 +400,7 @@ async def debug_info():
                 "level": "DEBUG",
                 "structured_logging": True
             },
-            "vehicle_database": VEHICLE_DB,
+            "vehicle_database_count": vehicle_catalog.get_vehicle_count(),
             "api_endpoints": [
                 {"method": "GET", "path": "/", "description": "Web interface (index.html)"},
                 {"method": "GET", "path": "/api/info", "description": "API info (JSON)"},
@@ -422,7 +424,7 @@ async def validate_vehicle(vehicle_id: str):
         return {
             "status": "valid",
             "vehicle": {
-                "model": vehicle.model_name,
+                "model": vehicle.display_name,
                 "battery_kwh": vehicle.battery_capacity_kwh,
                 "consumption_wh_km": vehicle.base_consumption_wh_km,
                 "curb_weight_kg": vehicle.curb_weight_kg,
@@ -433,7 +435,7 @@ async def validate_vehicle(vehicle_id: str):
         return {
             "status": "invalid",
             "error": str(e),
-            "available_vehicles": list(VEHICLE_DB.keys())
+            "available_vehicles": sorted(v.id for v in vehicle_catalog.search(limit=20))
         }
 
 

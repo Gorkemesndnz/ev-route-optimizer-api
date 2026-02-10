@@ -1,7 +1,7 @@
 import math
 from typing import Optional, Dict
 from app.models import DriveLeg, WeatherInfo, GeoPoint, WeatherCondition
-from app.consumption_engine.vehicle_models import VehicleModel as VehiclePhysicsProfile
+from app.infrastructure.vehicle_catalog import VehicleSpec as VehiclePhysicsProfile
 from app.consumption_engine.v1_rule_based.load_layer import LoadEffectCalculator
 from app.consumption_engine.v1_rule_based.elevation_layer import ElevationEffectCalculator
 from app.consumption_engine.v1_rule_based.weather_layer import WeatherEffectCalculator

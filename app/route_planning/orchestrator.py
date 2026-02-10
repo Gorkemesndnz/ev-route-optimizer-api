@@ -36,7 +36,7 @@ from app.soc_simulator import (
     ChargePlanOptimizer,
 )
 from app.consumption_engine.main_calculator import calculate_route_consumption
-from app.consumption_engine.vehicle_models import get_vehicle_model
+from app.infrastructure.vehicle_catalog import get_vehicle_model
 from app.route_selector import find_best_route
 from app.services.weather_service import WeatherService
 from app.services.google_service import google_maps

@@ -28,7 +28,7 @@ from typing import Dict, Any, List, Union, Optional
 from app.models import GeoPoint, RouteStrategy
 from app.services.google_service import google_maps
 from app.services.pricing_service import pricing_service, DEFAULT_PRICE_PER_KWH
-from app.consumption_engine.vehicle_models import get_vehicle_model
+from app.infrastructure.vehicle_catalog import get_vehicle_model
 from app.utils.config_manager import config
 from app.utils.logger import get_logger
 
