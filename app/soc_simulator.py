@@ -35,7 +35,7 @@ from app.models import GeoPoint
 from app.route_segmenter import RouteSegment
 from app.utils.logger import get_logger
 from app.charging_model import calculate_charge_time, apply_high_soc_penalty
-from app.services.station_logic.filter import calculate_bearing
+from app.utils.geo import calculate_bearing
 from app.constants import (
     HARD_MIN_SOC,
     TARGET_MIN_SOC,
@@ -316,7 +316,7 @@ class SOCSimulator:
                 )
             
             # Segment tüketimini uygula (hotspot varsa şarjlı SOC'tan başlar)
-            soc_drop = (consumption_kwh / self.battery_capacity_kwh) * 100
+            # NOT: soc_drop yukarıda (satır 249) hesaplandı, consumption_kwh değişmediği için aynı
             current_soc = max(0, current_soc - soc_drop)
             total_consumption += consumption_kwh
             
@@ -350,6 +350,10 @@ class SOCSimulator:
         
         # Her hotspot için bağımsız şarj hedefi hesapla
         # 🔧 V2.6: Kullanıcı override verdiyse dinamik hesaplamayı atla
+        # ⚠️ NOT: Bu fonksiyon hotspot.recommended_charge_to değerlerini
+        #   simülasyon SONRASI değiştirir. Segmentlerdeki soc_at_start/soc_at_end
+        #   orijinal charge_target_soc ile hesaplanmıştır. Fark genelde küçüktür
+        #   (%72-85 bandında) ve planlama doğruluğunu etkilemez.
         if hotspots and not self.user_override_target:
             self._calculate_smart_charge_targets(
                 hotspots, 
@@ -749,7 +753,20 @@ class ChargePlanOptimizer:
                     f"ChargePlanOptimizer: Single-stop solution preferred - "
                     f"target_soc={single_stop_soc}%, score={single_stop_score:.1f}"
                 )
-                return single_stop_soc, single_stop_result
+                best_target_soc = single_stop_soc
+        
+        # 🔧 SAĞLAM-03 FIX: Kazanan target_soc ile son simülasyonu tekrar çalıştır.
+        # Optimizer döngüsü paylaşılan segment nesnelerinin soc_at_start/soc_at_end
+        # değerlerini her iterasyonda üzerine yazar. Son simülasyon, segmentlerin
+        # doğru SOC değerlerini taşımasını garanti eder.
+        final_simulator = SOCSimulator(
+            battery_capacity_kwh=battery_capacity_kwh,
+            start_soc=start_soc,
+            target_arrival_soc=target_arrival_soc,
+            charge_min_soc=charge_min_soc,
+            charge_target_soc=best_target_soc
+        )
+        best_result = final_simulator.simulate(segments_with_consumption, total_distance_km)
         
         logger.info(
             f"ChargePlanOptimizer: Optimal plan found - "

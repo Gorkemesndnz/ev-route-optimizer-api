@@ -47,7 +47,7 @@ from app.utils.logger import get_logger
 from app.utils.charging_estimator import estimate_dc_charging_power
 from app.services.feedback_service import feedback_manager
 from app.services.station_logic import StationScorer, StationFilter
-from app.services.station_logic.filter import haversine_km, calculate_bearing
+from app.utils.geo import haversine_km, calculate_bearing
 from app.services.station_logic.scorer import (
     WEIGHT_DEVIATION, WEIGHT_POWER, WEIGHT_RATING, WEIGHT_AMENITIES, WEIGHT_POPULARITY,
     GREEDY_WEIGHT_POWER, GREEDY_WEIGHT_DEVIATION, GREEDY_WEIGHT_RATING,
@@ -145,44 +145,7 @@ class CorridorSearchResult:
 
 # =============================================================================
 # HELPER FUNCTIONS
-# =============================================================================
 
-def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """
-    İki koordinat arasındaki mesafeyi Haversine formülü ile km olarak hesaplar.
-    """
-    R = 6371.0
-    
-    lat1_rad = math.radians(lat1)
-    lon1_rad = math.radians(lon1)
-    lat2_rad = math.radians(lat2)
-    lon2_rad = math.radians(lon2)
-    
-    dlat = lat2_rad - lat1_rad
-    dlon = lon2_rad - lon1_rad
-    
-    a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    
-    return R * c
-
-
-def _calculate_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """
-    İki nokta arasındaki pusula yönünü (bearing) hesaplar.
-    
-    Returns:
-        0-360 derece arası bearing (0=Kuzey, 90=Doğu, 180=Güney, 270=Batı)
-    """
-    lat1_rad = math.radians(lat1)
-    lat2_rad = math.radians(lat2)
-    dlon = math.radians(lon2 - lon1)
-    
-    y = math.sin(dlon) * math.cos(lat2_rad)
-    x = math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(dlon)
-    
-    bearing = (math.degrees(math.atan2(y, x)) + 360) % 360
-    return bearing
 
 
 def _is_station_on_route_side(

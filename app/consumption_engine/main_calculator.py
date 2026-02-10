@@ -5,6 +5,7 @@ from app.consumption_engine.vehicle_models import VehicleModel as VehiclePhysics
 from app.consumption_engine.v1_rule_based.load_layer import LoadEffectCalculator
 from app.consumption_engine.v1_rule_based.elevation_layer import ElevationEffectCalculator
 from app.consumption_engine.v1_rule_based.weather_layer import WeatherEffectCalculator
+from app.utils.geo import calculate_bearing
 from app.utils.logger import get_logger
 
 logger = get_logger("ConsumptionEngine")
@@ -75,20 +76,8 @@ class MainCalculator:
         logger.warning("Vehicle base consumption not found, using 18 kWh/100km default")
         return 0.18
 
-    @staticmethod
-    def _calculate_bearing(start: GeoPoint, end: GeoPoint) -> float:
-        """Pusula yönü hesaplama (0-360°)"""
-        lat1 = math.radians(start.lat)
-        lon1 = math.radians(start.lon)
-        lat2 = math.radians(end.lat)
-        lon2 = math.radians(end.lon)
+    # NOT: Bearing hesaplama app/utils/geo.py'e taşındı → from app.utils.geo import calculate_bearing
 
-        d_lon = lon2 - lon1
-        y = math.sin(d_lon) * math.cos(lat2)
-        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(d_lon)
-
-        bearing = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
-        return bearing
 
     @staticmethod
     def _compute_total_mass(
@@ -251,7 +240,20 @@ class MainCalculator:
         # ---------------------------------------------------
         # start_point veya end_point None ise heading=0 varsay (wrapper için)
         if segment.start_point is not None and segment.end_point is not None:
-            heading = MainCalculator._calculate_bearing(segment.start_point, segment.end_point)
+            # start_point/end_point Union[GeoPoint, str] olabilir
+            sp = segment.start_point
+            ep = segment.end_point
+            if isinstance(sp, str):
+                parts = sp.split(",")
+                sp_lat, sp_lon = float(parts[0]), float(parts[1])
+            else:
+                sp_lat, sp_lon = sp.lat, sp.lon
+            if isinstance(ep, str):
+                parts = ep.split(",")
+                ep_lat, ep_lon = float(parts[0]), float(parts[1])
+            else:
+                ep_lat, ep_lon = ep.lat, ep.lon
+            heading = calculate_bearing(sp_lat, sp_lon, ep_lat, ep_lon)
         else:
             heading = 0.0  # Varsayılan heading (rüzgar etkisi nötr)
         
@@ -416,7 +418,8 @@ def calculate_segment_consumption_kwh(
             self.distance_km = segment_distance_km
             self.elevation_gain_m = segment_elevation_gain_m
             self.elevation_loss_m = segment_elevation_loss_m
-            self.duration_minutes = (segment_distance_km / 60) * 60  # Tahmini 60 km/h
+            assumed_speed_kmh = 60.0
+            self.duration_minutes = (segment_distance_km / assumed_speed_kmh) * 60.0  # Tahmini 60 km/h
             self.start_point = start_point  # 🔧 V2.0: Bearing için
             self.end_point = end_point      # 🔧 V2.0: Bearing için
             self.weather_context = WeatherInfo(
@@ -572,10 +575,11 @@ def calculate_route_consumption(
                 f"consumption={consumption_kwh:.2f}kWh"
             )
     
+    avg_consumption = round(total_consumption / len(segments), 2) if len(segments) > 0 else 0.0
     logger.info(
         f"Route consumption calculated: "
         f"total={round(total_consumption, 2)}kWh, "
-        f"avg={round(total_consumption/len(segments), 2)}kWh/segment"
+        f"avg={avg_consumption}kWh/segment"
     )
     
     return results
