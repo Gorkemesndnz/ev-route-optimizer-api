@@ -39,7 +39,7 @@ logger = get_logger("route_selector")
 # =============================================================================
 OPTIMAL_WEIGHT_TIME = 0.4
 OPTIMAL_WEIGHT_ENERGY = 0.4
-OPTIMAL_WEIGHT_COST = 0.2  # Cheapest hazır olunca aktif olacak
+OPTIMAL_WEIGHT_COST = 0.2  # ⚠️ Henüz kullanılmıyor — maliyet entegre edilince skora eklenecek (toplam 0.8 → 1.0)
 
 def _parse_geopoint(location: Union[GeoPoint, str]) -> GeoPoint:
     """

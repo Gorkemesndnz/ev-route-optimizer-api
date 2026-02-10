@@ -82,9 +82,10 @@ class WeatherImpact:
             temperature_c: Hava sıcaklığı (°C), None ise optimal varsayılır
         
         Returns:
-            0.4 - 1.0 arası çarpan (1.0 = optimal, tam güç)
+            0.50 - 1.0 arası çarpan (1.0 = optimal, tam güç)
         
         Örnekler:
+            -20°C ve altı → 0.50 (sabit taban, daha fazla düşmez)
             -15°C → 0.50 (çok yavaş)
               0°C → 0.75
              15°C → 1.00 (optimal)
@@ -94,15 +95,16 @@ class WeatherImpact:
         if temperature_c is None:
             return 1.0
         
-        # Optimal aralık: 15-30°C → tam güç
+        # Optimal aralık: 15-40°C → tam güç
         if OPTIMAL_TEMP_MIN_C <= temperature_c <= OPTIMAL_TEMP_MAX_C:
             return 1.0
         
         # Soğuk: Lineer düşüş (15°C altında)
-        # -15°C'de %50, 15°C'de %100
+        # -15°C ve altında %50 sabit taban (clamp)
+        # 15°C'de %100, -15°C'de %50
         if temperature_c < OPTIMAL_TEMP_MIN_C:
             # Elektrolit akışkanlığı azalır, iç direnç artar
-            factor = 0.5 + ((temperature_c + 15) / 60.0)
+            factor = 0.5 + ((temperature_c - (-15.0)) / (OPTIMAL_TEMP_MIN_C - (-15.0))) * 0.5
             return max(0.5, min(1.0, factor))
         
         # Sıcak: Termal kısma (40°C üzerinde)
@@ -383,12 +385,15 @@ def convert_soc_to_kwh(soc: float, battery_capacity_kwh: float) -> float:
     SOC → kWh dönüşümü.
     
     Args:
-        soc: SOC yüzdesi (0-100)
+        soc: SOC yüzdesi (0-100 aralığına clamp edilir)
         battery_capacity_kwh: Batarya kapasitesi (kWh)
     
     Returns:
-        Enerji miktarı (kWh)
+        Enerji miktarı (kWh), capacity ≤ 0 ise 0.0
     """
+    if battery_capacity_kwh <= 0:
+        return 0.0
+    soc = max(0.0, min(100.0, soc))
     return (soc / 100.0) * battery_capacity_kwh
 
 

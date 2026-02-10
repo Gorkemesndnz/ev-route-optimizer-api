@@ -17,6 +17,18 @@ class WeatherEffectCalculator:
     # -----------------------------
     @staticmethod
     def temperature_factor(temp_c: float) -> float:
+        """
+        Sıcaklık → aerodinamik/yuvarlanma direnç faktörü.
+        
+        Düşük → yüksek sırayla:
+            ≤ -10°C : 1.40 (çok soğuk — lastik sert, yağ yoğun)
+            ≤   0°C : 1.25 (soğuk)
+            ≤  10°C : 1.15 (serin)
+            ≤  18°C : 1.05 (serin-ılık geçiş)
+            ≤  27°C : 1.00 (optimal aralık)
+            ≤  39°C : 1.10 (sıcak — klima yükü artar)
+            ≥  40°C : 1.20 (aşırı sıcak)
+        """
         if temp_c <= -10:
             return 1.40
         elif temp_c <= 0:
@@ -25,11 +37,12 @@ class WeatherEffectCalculator:
             return 1.15
         elif temp_c <= 18:
             return 1.05
-        elif temp_c >= 40:
-            return 1.20
-        elif temp_c >= 28:
-            return 1.10
-        return 1.00
+        elif temp_c <= 27:
+            return 1.00  # optimal aralık: 19-27°C
+        elif temp_c <= 39:
+            return 1.10  # sıcak: 28-39°C
+        else:
+            return 1.20  # aşırı sıcak: 40°C+
 
     # -----------------------------
     # 2) Rüzgar Yönü + Hızı Faktörü
