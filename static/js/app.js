@@ -1199,7 +1199,7 @@ async function submitFeedback(feedbackType) {
         if (data.status === 'success' && data.route) {
             // Yeni rotayı göster
             storeRouteData(data.route);
-            displayRouteResults(data.route);
+            showResults(data.route);
             showSuccessToast('Rota yeniden hesaplandı!');
         } else {
             showErrorToast(data.message || 'Rota hesaplanamadı');
@@ -1346,17 +1346,11 @@ async function selectAlternativeStation(legIndex, newStationId, newStation) {
         const data = await response.json();
         hideLoading();
 
-        if (data.status === 'success' || data.status === 'full_recalculate') {
-            if (data.route) {
-                // Tam rota yeniden hesaplandı
-                storeRouteData(data.route);
-                showResults(data.route);
-                showSuccessToast(`Rota güncellendi! ${stationData.name}`);
-            } else {
-                // Tek bacak güncellendi - mevcut rotada sadece istasyonu değiştir
-                updateSingleLegStation(legIndex, stationData);
-                showSuccessToast(`İstasyon değiştirildi: ${stationData.name}`);
-            }
+        if (data.status === 'success' && data.route) {
+            // Tam rota yeniden hesaplandı
+            storeRouteData(data.route);
+            showResults(data.route);
+            showSuccessToast(`Rota güncellendi! ${stationData.name}`);
         } else {
             showErrorToast('İstasyon değiştirilemedi: ' + (data.message || 'Bilinmeyen hata'));
         }
@@ -1366,18 +1360,6 @@ async function selectAlternativeStation(legIndex, newStationId, newStation) {
     }
 }
 
-/**
- * 🔧 V3.2: Tek bacaktaki istasyonu güncelle (UI only)
- */
-function updateSingleLegStation(legIndex, newStation) {
-    if (!currentRouteData || !currentRouteData.legs[legIndex]) return;
-
-    // Mevcut rotadaki istasyonu güncelle
-    currentRouteData.legs[legIndex].station = newStation;
-
-    // UI'ı yeniden render et
-    showResults(currentRouteData);
-}
 
 /**
  * Form verilerini topla (yeniden planlama için) - async geocoding dahil
