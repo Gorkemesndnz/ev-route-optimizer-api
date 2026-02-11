@@ -139,6 +139,12 @@ async function renderRouteOnMap(data) {
 
             // Bounds'u genişlet
             path.forEach(p => bounds.extend(p));
+
+            // 🔧 Hava Durumu Marker'ı (Drive Leg Ortası)
+            if (leg.weather_context) {
+                const midPoint = path[Math.floor(path.length / 2)];
+                addWeatherMarker(midPoint, leg.weather_context, bounds);
+            }
         }
     });
 
@@ -280,6 +286,66 @@ function addAlternativeMarker(position, station, legIndex, bounds) {
     });
     markers.push(marker);
     // Bounds'u genişletmiyoruz ki ana rota odakta kalsın, alternatifler için zoom out gerekebilir
+}
+
+function addWeatherMarker(position, weather, bounds) {
+    if (!weather) return;
+
+    let emoji = '🌤️';
+    let label = 'Açık';
+    const cond = (weather.condition || '').toLowerCase();
+
+    if (cond.includes('rain')) { emoji = '🌧️'; label = 'Yağmurlu'; }
+    else if (cond.includes('snow')) { emoji = '❄️'; label = 'Karlı'; }
+    else if (cond.includes('fog')) { emoji = '🌫️'; label = 'Sisli'; }
+    else if (cond.includes('wind')) { emoji = '💨'; label = 'Rüzgarlı'; }
+    else if (cond.includes('cloud')) { emoji = '☁️'; label = 'Bulutlu'; }
+    else if (cond.includes('storm')) { emoji = '⛈️'; label = 'Fırtına'; }
+
+    const temp = weather.temp_c?.toFixed(1) || '?';
+
+    // Sıcaklığa göre basit renk (Opsiyonel, şimdilik emoji yeterli)
+
+    const marker = new google.maps.Marker({
+        position: position,
+        map: map,
+        title: `${label} (${temp}°C)`,
+        zIndex: 80, // Hava durumu markerları en altta olabilir
+        icon: {
+            url: `data:image/svg+xml,${encodeURIComponent(createWeatherSVG(emoji, temp))}`,
+            scaledSize: new google.maps.Size(40, 40),
+            anchor: new google.maps.Point(20, 20),
+        }
+    });
+
+    const infoContent = `
+        <div style="font-family:Inter,sans-serif;padding:6px;min-width:140px">
+            <div style="font-weight:600;font-size:13px;margin-bottom:4px;display:flex;align-items:center;gap:4px">
+                <span style="font-size:16px">${emoji}</span> ${label}
+            </div>
+            <div style="font-size:12px;color:#64748b;line-height:1.4">
+                Sıcaklık: <strong style="color:#0f172a">${temp}°C</strong><br>
+                Rüzgar: <strong>${weather.wind_speed_mps?.toFixed(1) || 0} m/s</strong> (Yön: ${weather.wind_direction_deg || 0}°)<br>
+                Yağış: <strong>%${((weather.precipitation_prob || 0) * 100).toFixed(0)}</strong>
+            </div>
+        </div>
+    `;
+
+    const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+
+    marker.addListener('click', () => {
+        infoWindow.open(map, marker);
+    });
+    markers.push(marker);
+}
+
+function createWeatherSVG(emoji, temp) {
+    // Emoji ve sıcaklığı içeren SVG
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+        <circle cx="20" cy="20" r="18" fill="white" stroke="#e2e8f0" stroke-width="2" fill-opacity="0.9"/>
+        <text x="20" y="20" text-anchor="middle" font-size="16" dy="0">${emoji}</text>
+        <text x="20" y="34" text-anchor="middle" font-size="9" fill="#64748b" font-weight="bold">${temp}°</text>
+    </svg>`;
 }
 
 

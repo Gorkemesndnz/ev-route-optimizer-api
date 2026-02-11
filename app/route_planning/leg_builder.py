@@ -250,7 +250,9 @@ def build_multi_legs(
             consumption_kwh=round(total_consumption_kwh, 2),
             start_soc_percent=round(start_soc, 1),
             end_soc_percent=round(final_soc, 1),
-            polyline=polyline
+
+            polyline=polyline,
+            weather_context=weather_info.model_dump() if weather_info else None
         ))
         return legs, []
     
@@ -301,7 +303,8 @@ def build_multi_legs(
             avg_speed_kmh=round(avg_speed, 1),
             consumption_kwh=round(max(0, leg_consumption), 2),
             start_soc_percent=round(current_soc, 1),
-            end_soc_percent=round(max(0, end_soc), 1)
+
+            weather_context=weather_info.model_dump() if i == 0 and weather_info else None  # İlk bacak için start weather
         ))
         
         # 2. ChargeLeg
@@ -352,7 +355,7 @@ def build_multi_legs(
             target_soc_percent=round(hotspot_target_soc, 1),
             energy_added_kwh=round(kwh_to_add, 2),
             duration_minutes=round(max(10, charge_duration), 1),
-            weather_context=charge_weather,
+            weather_context=charge_weather.model_dump() if charge_weather else None,
             alternative_stations=alternative_station_infos,
             price_per_kwh=price_per_kwh,
             estimated_cost=estimated_charge_cost
@@ -387,7 +390,8 @@ def build_multi_legs(
             avg_speed_kmh=round(avg_speed, 1),
             consumption_kwh=round(max(0, final_leg_consumption), 2),
             start_soc_percent=round(current_soc, 1),
-            end_soc_percent=round(max(0, final_soc), 1)
+
+            weather_context=charge_weather.model_dump() if 'charge_weather' in locals() and charge_weather else None
         ))
     
     logger.info(f"Multi-leg built: {len(legs)} legs (drive + charge)")
