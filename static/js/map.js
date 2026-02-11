@@ -153,14 +153,28 @@ async function renderRouteOnMap(data) {
 
     // ── Şarj İstasyonu Marker'ları ──
     let chargeIndex = 1;
-    legs.forEach((leg) => {
-        if (leg.type === 'charge' && leg.station && leg.station.location) {
-            const loc = leg.station.location;
-            const pos = { lat: loc.lat, lng: loc.lon || loc.lng };
-            const label = `⚡ ${leg.station.name || 'İstasyon ' + chargeIndex}`;
-            const detail = `${leg.arrival_soc_percent?.toFixed(0)}% → ${leg.target_soc_percent?.toFixed(0)}% | ${leg.duration_minutes?.toFixed(0)} dk`;
+    legs.forEach((leg, legIndex) => {
+        if (leg.type === 'charge') {
+            // Ana istasyon
+            if (leg.station && leg.station.location) {
+                const loc = leg.station.location;
+                const pos = { lat: loc.lat, lng: loc.lon || loc.lng };
+                const label = `⚡ ${leg.station.name || 'İstasyon ' + chargeIndex}`;
+                const detail = `${leg.arrival_soc_percent?.toFixed(0)}% → ${leg.target_soc_percent?.toFixed(0)}% | ${leg.duration_minutes?.toFixed(0)} dk`;
 
-            addStationMarker(pos, chargeIndex, label, detail, bounds);
+                addStationMarker(pos, chargeIndex, label, detail, bounds);
+            }
+
+            // 🔧 Alternatif İstasyonlar (Varsa)
+            if (leg.alternative_stations && leg.alternative_stations.length > 0) {
+                leg.alternative_stations.forEach(alt => {
+                    if (alt.location) {
+                        const altPos = { lat: alt.location.lat, lng: alt.location.lon || alt.location.lng };
+                        addAlternativeMarker(altPos, alt, legIndex, bounds);
+                    }
+                });
+            }
+
             chargeIndex++;
         }
     });
@@ -204,8 +218,9 @@ function addStationMarker(position, index, title, detail, bounds) {
         position: position,
         map: map,
         title: title,
+        zIndex: 100, // Ana istasyonlar önde
         icon: {
-            url: `data:image/svg+xml,${encodeURIComponent(createChargeSVG(index))}`,
+            url: `data:image/svg+xml,${encodeURIComponent(createChargeSVG(index, '#22c55e'))}`, // Yeşil
             scaledSize: new google.maps.Size(36, 36),
             anchor: new google.maps.Point(18, 18),
         }
@@ -218,16 +233,61 @@ function addStationMarker(position, index, title, detail, bounds) {
         </div>`
     });
 
-    marker.addListener('click', () => infoWindow.open(map, marker));
+    marker.addListener('click', () => {
+        // Diğer infowindow'ları kapat (Global yönetilebilir ama şimdilik basit tutuyoruz)
+        infoWindow.open(map, marker);
+    });
     markers.push(marker);
     bounds.extend(position);
 }
 
-function createChargeSVG(index) {
+function addAlternativeMarker(position, station, legIndex, bounds) {
+    const marker = new google.maps.Marker({
+        position: position,
+        map: map,
+        title: station.name + ' (Alternatif)',
+        zIndex: 90, // Alternatifler arkada
+        icon: {
+            url: `data:image/svg+xml,${encodeURIComponent(createChargeSVG('?', '#94a3b8'))}`, // Gri
+            scaledSize: new google.maps.Size(28, 28), // Biraz daha küçük
+            anchor: new google.maps.Point(14, 14),
+        }
+    });
+
+    // İstasyon verisini güvenli stringe çevir
+    const safeStationStr = JSON.stringify(station).replace(/"/g, '&quot;');
+    const power = station.connectors?.[0]?.power_kw || '?';
+
+    const infoContent = `
+        <div style="font-family:Inter,sans-serif;padding:6px;max-width:200px">
+            <div style="font-weight:600;font-size:13px;margin-bottom:4px">🔄 ${station.name}</div>
+            <div style="font-size:12px;color:#64748b;margin-bottom:8px">
+                ${station.operator || 'Bilinmiyor'} • ${power} kW
+                <br>
+                Rotadan sapma: ${station.distance_from_route_km?.toFixed(1) || 0} km
+            </div>
+            <button onclick="selectAlternativeStation(${legIndex}, '${station.id}', ${safeStationStr})" 
+                style="background:#22c55e;color:white;border:none;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer;width:100%">
+                Bu İstasyonu Seç
+            </button>
+        </div>
+    `;
+
+    const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+
+    marker.addListener('click', () => {
+        infoWindow.open(map, marker);
+    });
+    markers.push(marker);
+    // Bounds'u genişletmiyoruz ki ana rota odakta kalsın, alternatifler için zoom out gerekebilir
+}
+
+
+function createChargeSVG(label, color) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
-        <circle cx="18" cy="18" r="16" fill="#22c55e" stroke="white" stroke-width="2"/>
+        <circle cx="18" cy="18" r="16" fill="${color}" stroke="white" stroke-width="2"/>
         <text x="18" y="13" text-anchor="middle" fill="white" font-size="9" font-weight="bold">⚡</text>
-        <text x="18" y="26" text-anchor="middle" fill="white" font-size="11" font-weight="bold">${index}</text>
+        <text x="18" y="26" text-anchor="middle" fill="white" font-size="11" font-weight="bold">${label}</text>
     </svg>`;
 }
 
