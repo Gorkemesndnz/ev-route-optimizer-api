@@ -155,10 +155,17 @@ def _extract_request_details(request: RouteRequest) -> Dict[str, Any]:
         "departure_time": request.departure_time_iso
     }
 
-
 # =============================================================================
 # MAIN ENDPOINTS
 # =============================================================================
+
+@app.get("/api/maps-key", tags=["Info"])
+async def maps_key():
+    """Frontend Google Maps JS yüklemesi için API key döner."""
+    key = config.get_google_api_key()
+    if not key:
+        raise HTTPException(status_code=500, detail="Google API key not configured")
+    return {"key": key}
 
 @app.get("/api/info", tags=["Info"])
 async def api_info():

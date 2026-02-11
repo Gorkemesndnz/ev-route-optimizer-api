@@ -494,6 +494,11 @@ function showResults(data) {
 
     resultsDiv.innerHTML = html;
     document.getElementById('resultCard').style.display = 'block';
+
+    // 🗺️ Google Maps: Rotayı haritada göster
+    if (typeof renderRouteOnMap === 'function') {
+        renderRouteOnMap(data).catch(err => console.warn('Harita render hatası:', err));
+    }
 }
 
 /**
