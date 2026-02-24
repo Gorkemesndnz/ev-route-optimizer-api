@@ -490,6 +490,9 @@ function showResults(data) {
         
         <!-- Efficiency Metrics -->
         ${renderEfficiencyMetrics(data.total_co2_savings_kg)}
+
+        <!-- 🧠 V3.5: Akıllı Seyahat Asistanı - Detaylar Butonu -->
+        ${data.insights && data.insights.length > 0 ? renderInsightsToggle(data.insights) : ''}
     `;
 
     resultsDiv.innerHTML = html;
@@ -1042,6 +1045,130 @@ function renderEfficiencyMetrics(co2Savings) {
             </p>
         </div>
     `;
+}
+
+// ============================================
+// 🧠 V3.5: SMART TRAVEL INSIGHTS
+// ============================================
+
+/**
+ * Insights toggle butonu ve gizli panel
+ */
+function renderInsightsToggle(insights) {
+    const insightCards = insights.map(renderInsightCard).join('');
+    const insightCount = insights.length;
+    
+    // Önem sırasına göre özet oluştur
+    const warningCount = insights.filter(i => i.type === 'warning').length;
+    const tipCount = insights.filter(i => i.type === 'tip').length;
+    const summaryParts = [];
+    if (warningCount > 0) summaryParts.push(`${warningCount} uyarı`);
+    if (tipCount > 0) summaryParts.push(`${tipCount} ipuçu`);
+    const savingCount = insights.filter(i => i.type === 'saving').length;
+    if (savingCount > 0) summaryParts.push(`${savingCount} tasarruf`);
+    const infoCount = insights.filter(i => i.type === 'info').length;
+    if (infoCount > 0) summaryParts.push(`${infoCount} bilgi`);
+    const summaryText = summaryParts.length > 0 ? summaryParts.join(', ') : `${insightCount} bilgi`;
+
+    return `
+        <div class="mt-6">
+            <!-- Toggle Button -->
+            <button 
+                id="insightsToggleBtn"
+                onclick="toggleInsightsPanel()"
+                class="w-full flex items-center justify-between p-4 bg-gradient-to-r from-purple-500/10 to-indigo-500/10 rounded-xl border border-purple-500/20 hover:border-purple-500/40 transition-all cursor-pointer group"
+            >
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 bg-purple-500/20 rounded-full flex items-center justify-center group-hover:bg-purple-500/30 transition-colors">
+                        <span class="text-lg">🧠</span>
+                    </div>
+                    <div class="text-left">
+                        <p class="text-white font-medium text-sm">Akıllı Seyahat Asistanı</p>
+                        <p class="text-gray-400 text-xs">${summaryText}</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="bg-purple-500/20 text-purple-400 text-xs font-medium px-2 py-1 rounded-full">${insightCount}</span>
+                    <svg id="insightsChevron" class="w-5 h-5 text-gray-400 group-hover:text-purple-400 transition-all transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                </div>
+            </button>
+            
+            <!-- Hidden Insights Panel -->
+            <div id="insightsPanel" class="hidden mt-3 space-y-3 animate-fadeIn">
+                ${insightCards}
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Tek insight kartı render
+ */
+function renderInsightCard(insight) {
+    const typeConfig = {
+        'warning': { 
+            gradient: 'from-red-500/10 to-orange-500/10', 
+            border: 'border-red-500/20',
+            badge: 'bg-red-500/20 text-red-400',
+            badgeText: 'Uyarı'
+        },
+        'info': { 
+            gradient: 'from-blue-500/10 to-cyan-500/10', 
+            border: 'border-blue-500/20',
+            badge: 'bg-blue-500/20 text-blue-400',
+            badgeText: 'Bilgi'
+        },
+        'tip': { 
+            gradient: 'from-yellow-500/10 to-amber-500/10', 
+            border: 'border-yellow-500/20',
+            badge: 'bg-yellow-500/20 text-yellow-400',
+            badgeText: 'İpucu'
+        },
+        'saving': { 
+            gradient: 'from-green-500/10 to-emerald-500/10', 
+            border: 'border-green-500/20',
+            badge: 'bg-green-500/20 text-green-400',
+            badgeText: 'Tasarruf'
+        }
+    };
+    
+    const config = typeConfig[insight.type] || typeConfig['info'];
+    
+    return `
+        <div class="bg-gradient-to-r ${config.gradient} rounded-xl p-4 border ${config.border}">
+            <div class="flex items-start gap-3">
+                <span class="text-xl mt-0.5">${insight.icon}</span>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-white font-medium text-sm">${insight.title}</span>
+                        <span class="${config.badge} text-xs px-1.5 py-0.5 rounded-full">${config.badgeText}</span>
+                    </div>
+                    <p class="text-gray-300 text-sm leading-relaxed">${insight.message}</p>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Insights panel toggle
+ */
+function toggleInsightsPanel() {
+    const panel = document.getElementById('insightsPanel');
+    const chevron = document.getElementById('insightsChevron');
+    const btn = document.getElementById('insightsToggleBtn');
+    
+    if (panel.classList.contains('hidden')) {
+        panel.classList.remove('hidden');
+        chevron.style.transform = 'rotate(180deg)';
+        btn.classList.add('border-purple-500/40');
+    } else {
+        panel.classList.add('hidden');
+        chevron.style.transform = 'rotate(0deg)';
+        btn.classList.remove('border-purple-500/40');
+    }
 }
 
 // ============================================

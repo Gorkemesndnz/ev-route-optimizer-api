@@ -75,6 +75,7 @@ from app.route_planning.response_builder import (
     build_route_response,
     log_training_data,
 )
+from app.services.insight_service import insight_engine
 
 logger = get_logger("route_planner")
 weather_service = WeatherService()
@@ -431,6 +432,28 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             missing_station_warnings=missing_station_warnings,
         )
         
+        # 🧠 STEP 12.5: Akıllı Seyahat Asistanı — Insight Engine
+        insights = insight_engine.analyze(
+            route_distance_km=route_distance_km,
+            route_duration_min=route_duration_min,
+            elevation_gain_m=elevation_gain_m,
+            elevation_loss_m=elevation_loss_m,
+            total_consumption_kwh=total_consumption,
+            start_soc=request.current_soc_percent,
+            end_soc=end_soc,
+            charge_stops=charge_stops,
+            battery_kwh=battery_kwh,
+            start_weather=start_weather,
+            end_weather=end_weather,
+            avg_weather=avg_weather,
+            legs=legs,
+            co2_savings_kg=co2_savings,
+            total_charging_cost=sum(
+                getattr(l, 'estimated_cost', 0) or 0 for l in legs
+                if hasattr(l, 'estimated_cost')
+            ),
+        )
+        
         # Final response
         return build_route_response(
             route_distance_km=route_distance_km,
@@ -447,6 +470,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             end_weather=end_weather,
             missing_station_warnings=missing_station_warnings,
             warning_messages=warning_messages,
+            insights=insights,
         )
         
     except Exception as e:

@@ -31,6 +31,14 @@ class WeatherCondition(str, Enum):
     CLOUDY = "cloudy"
 
 
+class InsightType(str, Enum):
+    """Akıllı seyahat insight tipleri."""
+    WARN = "warning"
+    INFO = "info"
+    TIP = "tip"
+    SAVING = "saving"
+
+
 class AmenityType(str, Enum):
     """Kullanıcının talep edebileceği imkan tipleri."""
     TOILET = "toilet"
@@ -346,6 +354,18 @@ class RouteResponse(BaseModel):
 # 8. MULTI-STOP RESPONSE (Basitleştirilmiş V1.3)
 # ======================================================
 
+class RouteInsight(BaseModel):
+    """
+    🧠 V3.5: Akıllı Seyahat Asistanı insight modeli.
+    Rota analizi sonucu üretilen kural-tabanlı bilgilendirme kartları.
+    """
+    type: InsightType = Field(..., description="Insight tipi: warning, info, tip, saving")
+    title: str = Field(..., description="Kısa başlık")
+    message: str = Field(..., description="Açıklama mesajı")
+    icon: str = Field(..., description="Emoji ikon")
+    relevance_score: float = Field(0.5, ge=0.0, le=1.0, description="Önem sırası (1.0 = en önemli)")
+
+
 class MultiStopRouteResponse(BaseModel):
     """
     V3.0 Çok duraklı rota planı response modeli.
@@ -373,6 +393,8 @@ class MultiStopRouteResponse(BaseModel):
     total_regen_recovered_kwh: float = Field(0.0, description="Toplam rejeneratif frenleme ile geri kazanılan enerji (kWh)")
     total_charging_cost: float = Field(0.0, description="Toplam şarj maliyeti (TRY)")
     warning_messages: List[str] = Field(default_factory=list, description="Kullanıcı için uyarı mesajları")
+    # 🧠 V3.5: Akıllı Seyahat Asistanı
+    insights: List[RouteInsight] = Field(default_factory=list, description="Akıllı seyahat ipuçları ve uyarıları")
     debug_info: Optional[dict] = Field(
         default=None, 
         description="Debug bilgileri (sadece development modunda)"

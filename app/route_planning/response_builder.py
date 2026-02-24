@@ -10,7 +10,7 @@ Orijinal: route_planner.py → STEP 12-13 ve response oluşturma
 from typing import List, Optional
 
 from app.models import (
-    MultiStopRouteResponse, RouteRequest, WeatherInfo
+    MultiStopRouteResponse, RouteRequest, WeatherInfo, RouteInsight
 )
 from app.sustainability_calculator import calculate_co2_savings
 from app.utils.logger import get_logger
@@ -169,6 +169,7 @@ def build_route_response(
     end_weather: Optional[WeatherInfo],
     missing_station_warnings: List[str],
     warning_messages: List[str],
+    insights: List[RouteInsight] = None,
 ) -> MultiStopRouteResponse:
     """Final MultiStopRouteResponse oluştur."""
     # Trafiksiz süre
@@ -199,5 +200,6 @@ def build_route_response(
         end_weather=end_weather,
         total_regen_recovered_kwh=round(total_regen_kwh, 2),
         total_charging_cost=round(total_charging_cost, 2),
-        warning_messages=warning_messages
+        warning_messages=warning_messages,
+        insights=insights or [],
     )
