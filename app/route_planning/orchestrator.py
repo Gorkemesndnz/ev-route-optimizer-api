@@ -446,6 +446,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             start_weather=start_weather,
             end_weather=end_weather,
             avg_weather=avg_weather,
+            checkpoint_weather=checkpoint_weather,
             legs=legs,
             co2_savings_kg=co2_savings,
             total_charging_cost=sum(

@@ -19,7 +19,7 @@ Kural Kategorileri:
 6. 🌱 Çevre — CO2 tasarruf bilgisi
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from app.models import RouteInsight, InsightType, WeatherInfo, WeatherCondition
 from app.utils.logger import get_logger
 
@@ -49,6 +49,7 @@ class InsightEngine:
         start_weather: Optional[WeatherInfo] = None,
         end_weather: Optional[WeatherInfo] = None,
         avg_weather: Optional[WeatherInfo] = None,
+        checkpoint_weather: Optional[List] = None,
         legs: Optional[List] = None,
         co2_savings_kg: float = 0.0,
         total_charging_cost: float = 0.0,
@@ -71,10 +72,11 @@ class InsightEngine:
                 end_soc, route_distance_km
             ))
             
-            # 2. Hava durumu kuralları
+            # 2. Hava durumu kuralları (checkpoint verisi dahil)
             insights.extend(self._check_weather(
                 start_weather, end_weather, avg_weather,
-                route_distance_km, total_consumption_kwh, battery_kwh
+                route_distance_km, total_consumption_kwh, battery_kwh,
+                checkpoint_weather=checkpoint_weather,
             ))
             
             # 3. Şarj stratejisi kuralları
@@ -178,6 +180,7 @@ class InsightEngine:
         distance_km: float,
         consumption_kwh: float,
         battery_kwh: float,
+        checkpoint_weather: Optional[List] = None,
     ) -> List[RouteInsight]:
         insights = []
         
@@ -196,7 +199,7 @@ class InsightEngine:
                 type=InsightType.WARN,
                 title="Soğuk Hava Uyarısı",
                 message=(
-                    f"Rota boyunca sıcaklık {temp:.0f}°C. Soğuk havada batarya "
+                    f"Rota boyunca ortalama sıcaklık {temp:.0f}°C. Soğuk havada batarya "
                     f"verimliliği yaklaşık %{efficiency_loss:.0f} düşebilir. "
                     f"Menzil tahminleri buna göre ayarlanmıştır. "
                     f"Isıtmayı ekonomik modda kullanmanızı öneririz."
@@ -211,7 +214,7 @@ class InsightEngine:
                 type=InsightType.INFO,
                 title="Sıcak Hava Bilgisi",
                 message=(
-                    f"Rota boyunca sıcaklık {temp:.0f}°C. Yüksek sıcaklıkta "
+                    f"Rota boyunca ortalama sıcaklık {temp:.0f}°C. Yüksek sıcaklıkta "
                     f"klima kullanımı enerji tüketimini artırabilir. "
                     f"Şarj hızı da yüksek batarya sıcaklığında düşebilir."
                 ),
@@ -219,7 +222,7 @@ class InsightEngine:
                 relevance_score=0.55,
             ))
         
-        # Kural 2.3: Yağmur/Kar
+        # Kural 2.3: Yağmur/Kar (ortalama condition)
         if condition == WeatherCondition.RAIN:
             insights.append(RouteInsight(
                 type=InsightType.WARN,
@@ -275,6 +278,115 @@ class InsightEngine:
                     ),
                     icon="🌡️",
                     relevance_score=0.45,
+                ))
+        
+        # 🌡️ Kural 2.6: Checkpoint bazlı hava durumu analizi
+        # Rota boyunca her 100km'de bir alınan gerçek veriler
+        if checkpoint_weather and len(checkpoint_weather) > 0:
+            insights.extend(self._check_checkpoint_weather(checkpoint_weather))
+        
+        return insights
+    
+    def _check_checkpoint_weather(
+        self,
+        checkpoint_weather: List,
+    ) -> List[RouteInsight]:
+        """
+        Rota boyunca checkpoint bazlı hava durumu değişimlerini analiz et.
+        checkpoint_weather: [(WeatherCheckpoint, WeatherInfo), ...] listesi
+        """
+        insights = []
+        
+        if not checkpoint_weather:
+            return insights
+        
+        # Checkpoint'lerden weather verilerini çıkar
+        temps = []
+        conditions = []
+        winds = []
+        
+        for item in checkpoint_weather:
+            try:
+                # (WeatherCheckpoint, WeatherInfo) tuple
+                cp, weather = item
+                if weather:
+                    temps.append((getattr(cp, 'cumulative_km', 0), weather.temp_c))
+                    conditions.append((getattr(cp, 'cumulative_km', 0), weather.condition))
+                    winds.append((getattr(cp, 'cumulative_km', 0), weather.wind_speed_mps))
+            except (ValueError, TypeError):
+                continue
+        
+        if not temps:
+            return insights
+        
+        # 2.6.1: Rota ortasında yağmur/kar (başlangıç/son temiz ama orta kısımda kötü)
+        rain_points = [(km, c) for km, c in conditions if c == WeatherCondition.RAIN]
+        snow_points = [(km, c) for km, c in conditions if c == WeatherCondition.SNOW]
+        
+        if snow_points and len(snow_points) < len(conditions):
+            # Kar sadece bazı bölgelerde
+            snow_kms = [f"{km:.0f}km" for km, _ in snow_points]
+            insights.append(RouteInsight(
+                type=InsightType.WARN,
+                title="Bölgesel Kar Uyarısı",
+                message=(
+                    f"Rota üzerinde {', '.join(snow_kms)} civarında kar yağışı "
+                    f"tespit edildi. Diğer bölgelerde hava daha iyi. "
+                    f"Bu bölgelerde dikkatli sürüş yapın."
+                ),
+                icon="⚠️",
+                relevance_score=0.88,
+            ))
+        elif rain_points and len(rain_points) < len(conditions):
+            rain_kms = [f"{km:.0f}km" for km, _ in rain_points]
+            insights.append(RouteInsight(
+                type=InsightType.INFO,
+                title="Bölgesel Yağış",
+                message=(
+                    f"Rota üzerinde {', '.join(rain_kms)} civarında yağış "
+                    f"bekleniyor. Diğer bölgelerde hava açık/bulutlu."
+                ),
+                icon="🌦️",
+                relevance_score=0.55,
+            ))
+        
+        # 2.6.2: Büyük sıcaklık değişimi rota boyunca
+        if len(temps) >= 2:
+            temp_values = [t for _, t in temps]
+            min_temp = min(temp_values)
+            max_temp = max(temp_values)
+            temp_range = max_temp - min_temp
+            
+            if temp_range > 10:
+                min_km = [km for km, t in temps if t == min_temp][0]
+                max_km = [km for km, t in temps if t == max_temp][0]
+                insights.append(RouteInsight(
+                    type=InsightType.INFO,
+                    title="Rota Boyunca Sıcaklık Değişimi",
+                    message=(
+                        f"Rota üzerinde sıcaklık {min_temp:.0f}°C ile {max_temp:.0f}°C "
+                        f"arasında değişiyor ({temp_range:.0f}°C fark). "
+                        f"En soğuk: ~{min_km:.0f}km, en sıcak: ~{max_km:.0f}km. "
+                        f"Tüketim hesaplamaları her bölgenin kendi havasına göre yapılmıştır."
+                    ),
+                    icon="🌡️",
+                    relevance_score=0.50,
+                ))
+            
+            # 2.6.3: Bazı checkpoint'lerde soğuk (<5°C) ama ortalama değil
+            cold_points = [(km, t) for km, t in temps if t < 5]
+            if cold_points and min_temp < 5 and (max_temp + min_temp) / 2 >= 5:
+                cold_kms = [f"{km:.0f}km ({t:.0f}°C)" for km, t in cold_points]
+                insights.append(RouteInsight(
+                    type=InsightType.WARN,
+                    title="Bölgesel Soğuk Noktalar",
+                    message=(
+                        f"Rota üzerinde bazı bölgelerde sıcaklık 5°C'nin altına "
+                        f"düşüyor: {', '.join(cold_kms)}. "
+                        f"Bu bölgelerde batarya verimliliği geçici olarak düşebilir."
+                    ),
+                    icon="❄️",
+                    relevance_score=0.60,
                 ))
         
         return insights
