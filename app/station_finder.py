@@ -402,7 +402,7 @@ class CorridorSearcher:
         
         logger.info(
             "CorridorSearcher initialized",
-            vehicle=self.vehicle.model_name,
+            vehicle=self.vehicle.display_name,
             connector=self.vehicle.connector_type,
             corridor_length=corridor_length_km
         )
@@ -1310,7 +1310,7 @@ async def find_best_station(
             "Station search started (legacy)",
             lat=latitude,
             lon=longitude,
-            vehicle=vehicle.model_name
+            vehicle=vehicle.display_name
         )
         
         # Paralel veri çekimi

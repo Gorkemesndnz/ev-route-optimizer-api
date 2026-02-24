@@ -304,6 +304,7 @@ def build_multi_legs(
             consumption_kwh=round(max(0, leg_consumption), 2),
             start_soc_percent=round(current_soc, 1),
 
+            end_soc_percent=round(max(0, end_soc), 1),
             weather_context=weather_info.model_dump() if i == 0 and weather_info else None  # İlk bacak için start weather
         ))
         
@@ -391,6 +392,7 @@ def build_multi_legs(
             consumption_kwh=round(max(0, final_leg_consumption), 2),
             start_soc_percent=round(current_soc, 1),
 
+            end_soc_percent=round(max(0, final_soc), 1),
             weather_context=charge_weather.model_dump() if 'charge_weather' in locals() and charge_weather else None
         ))
     
