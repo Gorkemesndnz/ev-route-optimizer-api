@@ -179,10 +179,131 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     initVehicleCatalogUI();
+    initAddressAutocompleteUI();
 
     // Sayfa ilk açılışta AI toggle varsayılanı açıksa kilitleri hemen uygula
     toggleAiMode();
 });
+
+/**
+ * Adres Autocomplete UI'sini başlatır
+ */
+function initAddressAutocompleteUI() {
+    setupAutocomplete('startLocation', 'startLocationResults');
+    setupAutocomplete('endLocation', 'endLocationResults');
+}
+
+/**
+ * Input ve Sonuç kutusu için Autocomplete olaylarını bağlar
+ */
+function setupAutocomplete(inputId, resultsId) {
+    const inputEl = document.getElementById(inputId);
+    const resultsEl = document.getElementById(resultsId);
+
+    if (!inputEl || !resultsEl) return;
+
+    let debounceTimer = null;
+
+    const hideResults = () => {
+        resultsEl.classList.add('hidden');
+        resultsEl.innerHTML = '';
+    };
+
+    const runSearch = async () => {
+        const q = (inputEl.value || '').trim();
+        if (q.length < 3) {
+            hideResults();
+            return;
+        }
+
+        try {
+            // geocoding.js içinde tanımlı
+            const predictions = await fetchAutocomplete(q);
+
+            resultsEl.innerHTML = '';
+
+            if (!predictions || predictions.length === 0) {
+                hideResults();
+                return;
+            }
+
+            resultsEl.classList.remove('hidden');
+
+            predictions.forEach(item => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'w-full text-left px-4 py-3 border-b border-white/5 last:border-0 hover:bg-white/10 transition-colors flex items-start gap-3';
+
+                // İkon
+                const iconDiv = document.createElement('div');
+                iconDiv.className = 'mt-0.5 text-gray-400 flex-shrink-0';
+                iconDiv.innerHTML = `
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    </svg>
+                `;
+
+                // Metin (eşleşen kısımları bold yapma)
+                const textDiv = document.createElement('div');
+                textDiv.className = 'flex-1 text-sm text-gray-300';
+
+                let desc = item.description;
+                // Eşleşen kısımları kalınlaştır
+                if (item.matched_substrings && item.matched_substrings.length > 0) {
+                    // Tersten değiştir ki indexler kaymasın
+                    const matches = [...item.matched_substrings].sort((a, b) => b.offset - a.offset);
+                    matches.forEach(m => {
+                        const start = m.offset;
+                        const len = m.length;
+                        desc = desc.substring(0, start) +
+                            '<strong class="text-white font-semibold">' + desc.substring(start, start + len) + '</strong>' +
+                            desc.substring(start + len);
+                    });
+                }
+
+                textDiv.innerHTML = desc;
+
+                btn.appendChild(iconDiv);
+                btn.appendChild(textDiv);
+
+                btn.addEventListener('click', () => {
+                    inputEl.value = item.description;
+                    hideResults();
+                });
+
+                resultsEl.appendChild(btn);
+            });
+
+        } catch (e) {
+            console.error("Autocomplete search error:", e);
+            hideResults();
+        }
+    };
+
+    inputEl.addEventListener('input', () => {
+        if (debounceTimer) window.clearTimeout(debounceTimer);
+        debounceTimer = window.setTimeout(runSearch, 300);
+    });
+
+    inputEl.addEventListener('focus', () => {
+        if (inputEl.value && inputEl.value.trim().length >= 3) {
+            runSearch();
+        }
+    });
+
+    document.addEventListener('click', (evt) => {
+        if (!inputEl.contains(evt.target) && !resultsEl.contains(evt.target)) {
+            hideResults();
+        }
+    });
+
+    inputEl.addEventListener('keydown', (evt) => {
+        if (evt.key === 'Escape') {
+            hideResults();
+        }
+    });
+}
 
 async function initVehicleCatalogUI() {
     const brandEl = document.getElementById('vehicleBrand');
@@ -1057,7 +1178,7 @@ function renderEfficiencyMetrics(co2Savings) {
 function renderInsightsToggle(insights) {
     const insightCards = insights.map(renderInsightCard).join('');
     const insightCount = insights.length;
-    
+
     // Önem sırasına göre özet oluştur
     const warningCount = insights.filter(i => i.type === 'warning').length;
     const tipCount = insights.filter(i => i.type === 'tip').length;
@@ -1108,34 +1229,34 @@ function renderInsightsToggle(insights) {
  */
 function renderInsightCard(insight) {
     const typeConfig = {
-        'warning': { 
-            gradient: 'from-red-500/10 to-orange-500/10', 
+        'warning': {
+            gradient: 'from-red-500/10 to-orange-500/10',
             border: 'border-red-500/20',
             badge: 'bg-red-500/20 text-red-400',
             badgeText: 'Uyarı'
         },
-        'info': { 
-            gradient: 'from-blue-500/10 to-cyan-500/10', 
+        'info': {
+            gradient: 'from-blue-500/10 to-cyan-500/10',
             border: 'border-blue-500/20',
             badge: 'bg-blue-500/20 text-blue-400',
             badgeText: 'Bilgi'
         },
-        'tip': { 
-            gradient: 'from-yellow-500/10 to-amber-500/10', 
+        'tip': {
+            gradient: 'from-yellow-500/10 to-amber-500/10',
             border: 'border-yellow-500/20',
             badge: 'bg-yellow-500/20 text-yellow-400',
             badgeText: 'İpucu'
         },
-        'saving': { 
-            gradient: 'from-green-500/10 to-emerald-500/10', 
+        'saving': {
+            gradient: 'from-green-500/10 to-emerald-500/10',
             border: 'border-green-500/20',
             badge: 'bg-green-500/20 text-green-400',
             badgeText: 'Tasarruf'
         }
     };
-    
+
     const config = typeConfig[insight.type] || typeConfig['info'];
-    
+
     return `
         <div class="bg-gradient-to-r ${config.gradient} rounded-xl p-4 border ${config.border}">
             <div class="flex items-start gap-3">
@@ -1159,7 +1280,7 @@ function toggleInsightsPanel() {
     const panel = document.getElementById('insightsPanel');
     const chevron = document.getElementById('insightsChevron');
     const btn = document.getElementById('insightsToggleBtn');
-    
+
     if (panel.classList.contains('hidden')) {
         panel.classList.remove('hidden');
         chevron.style.transform = 'rotate(180deg)';

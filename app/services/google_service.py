@@ -543,5 +543,38 @@ class GoogleMapsService(BaseService):
         return GeoPoint(lat=location["lat"], lon=location["lng"])
 
 
+    # ============================================================
+    # 8) PLACES AUTOCOMPLETE API → Adres tamamlama önerileri sunar
+    # ============================================================
+    @cacheable(prefix="google_autocomplete", ttl_seconds=86400)
+    async def get_place_autocomplete(self, query: str) -> list:
+        """
+        Kullanıcının girdiği metne göre adres tamamlama önerileri getirir.
+        
+        Args:
+            query: Aranacak adres metni
+            
+        Returns:
+            list: Önerilen adreslerin listesi (description, place_id, matched_substrings vb.)
+        """
+        params = {
+            "input": query,
+            "components": "country:tr",  # Sadece Türkiye'den sonuç getir
+            "language": "tr",
+            "key": self.api_key
+        }
+
+        data = await self.request(
+            method="GET",
+            endpoint="/place/autocomplete/json",
+            params=params
+        )
+
+        status = data.get("status")
+        if status not in ("OK", "ZERO_RESULTS"):
+            raise ExternalAPIError("GoogleAutocomplete", 200, f"status={status}, query={query}")
+
+        return data.get("predictions", [])
+
 # Tek instance
 google_maps = GoogleMapsService()

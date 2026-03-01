@@ -111,7 +111,7 @@
 
                         <form id="routeForm" class="space-y-5">
                             <!-- Start Location -->
-                            <div>
+                            <div class="relative">
                                 <label class="block text-gray-400 text-sm mb-2">
                                     <span class="flex items-center gap-2">
                                         <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 20 20">
@@ -124,11 +124,15 @@
                                 </label>
                                 <input type="text" id="startLocation"
                                     class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 input-glow transition-all"
-                                    placeholder="Örn: İstanbul, Türkiye" value="İstanbul, Türkiye" required>
+                                    placeholder="Örn: İstanbul, Türkiye" required autocomplete="off">
+                                <!-- Autocomplete Results Container -->
+                                <div id="startLocationResults"
+                                    class="hidden absolute left-0 right-0 mt-2 bg-slate-800 border border-white/10 rounded-xl overflow-hidden shadow-2xl z-[100] max-h-60 overflow-y-auto w-full origin-top transform transition-all duration-200">
+                                </div>
                             </div>
 
                             <!-- End Location -->
-                            <div>
+                            <div class="relative">
                                 <label class="block text-gray-400 text-sm mb-2">
                                     <span class="flex items-center gap-2">
                                         <svg class="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 20 20">
@@ -141,7 +145,11 @@
                                 </label>
                                 <input type="text" id="endLocation"
                                     class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 input-glow transition-all"
-                                    placeholder="Örn: Ankara, Türkiye" value="Ankara, Türkiye" required>
+                                    placeholder="Örn: Ankara, Türkiye" required autocomplete="off">
+                                <!-- Autocomplete Results Container -->
+                                <div id="endLocationResults"
+                                    class="hidden absolute left-0 right-0 mt-2 bg-slate-800 border border-white/10 rounded-xl overflow-hidden shadow-2xl z-[100] max-h-60 overflow-y-auto w-full origin-top transform transition-all duration-200">
+                                </div>
                             </div>
 
                             <!-- Vehicle Model -->
@@ -494,7 +502,9 @@
                                 </div>
                             </div>
                             <!-- Google Maps -->
-                            <div id="routeMap" style="display:none; width:100%; height:350px; border-bottom: 1px solid rgba(255,255,255,0.1);"></div>
+                            <div id="routeMap"
+                                style="display:none; width:100%; height:350px; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                            </div>
                             <div class="p-6">
                                 <div id="routeResults"></div>
                             </div>
@@ -591,10 +601,10 @@
     <!-- ============================================
          JAVASCRIPT FILES
          ============================================ -->
-    <script src="/static/js/ui.js"></script>
-    <script src="/static/js/geocoding.js"></script>
-    <script src="/static/js/map.js?v=1.0"></script>
-    <script src="/static/js/app.js?v=3.2.0"></script>
+    <script src="/static/js/ui.js?v=1.6"></script>
+    <script src="/static/js/geocoding.js?v=1.6"></script>
+    <script src="/static/js/map.js?v=1.6"></script>
+    <script src="/static/js/app.js?v=3.3.0"></script>
 
     <!-- Particle Animation -->
     <script>

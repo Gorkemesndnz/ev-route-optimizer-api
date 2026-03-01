@@ -34,3 +34,26 @@ async function geocodeAddress(address) {
 async function geocodeMultiple(addresses) {
     return Promise.all(addresses.map(addr => geocodeAddress(addr)));
 }
+
+
+/**
+ * Adres önerileri (autocomplete) için API çağrısı
+ * @param {string} query - Aranacak metin
+ * @returns {Promise<Array<Object>>} Öneriler listesi
+ */
+async function fetchAutocomplete(query) {
+    if (!query || query.length < 3) return [];
+    
+    try {
+        const response = await fetch(`/autocomplete?query=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            return data.predictions || [];
+        }
+        return [];
+    } catch (error) {
+        console.error("Autocomplete fetch error:", error);
+        return [];
+    }
+}

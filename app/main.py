@@ -483,10 +483,42 @@ async def geocode_address(address: str):
         )
 
 
+@app.get("/autocomplete", tags=["Utilities"])
+async def autocomplete_address(query: str):
+    """
+    Kullanıcının girdiği metne göre adres önerileri sunar.
+    
+    Args:
+        query: Aranacak adres metni (örn: "Düzce")
+        
+    Returns:
+        Kullanıcıya gösterilecek adres önerileri listesi
+    """
+    if len(query) < 3:
+        return {"status": "success", "predictions": []}
+        
+    try:
+        predictions = await google_maps.get_place_autocomplete(query)
+        return {
+            "status": "success",
+            "predictions": predictions
+        }
+    except ExternalAPIError as e:
+        logger.error(f"Autocomplete failed for query: {query}", error=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail="Otomatik tamamlama hatası"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected autocomplete error: {query}", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail="Sunucu hatası"
+        )
+
 # =============================================================================
 # VEHICLE CATALOG ENDPOINTS (UI Support)
 # =============================================================================
-
 
 @app.get("/vehicles/brands", tags=["Vehicles"])
 async def list_vehicle_brands():
