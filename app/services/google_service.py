@@ -171,6 +171,8 @@ class GoogleMapsService(BaseService):
             traffic_model=traffic_model
         )
 
+
+
     # ============================================================
     # 2) ELEVATION API → path + samples = rota boyunca tırmanış
     # ============================================================

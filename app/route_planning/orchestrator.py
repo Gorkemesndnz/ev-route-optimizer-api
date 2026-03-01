@@ -367,6 +367,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             except Exception as e:
                 logger.warning(f"Pass 2 weather refinement failed: {e}")
         
+
         # STEP 11: Multi-Leg Builder
         legs, missing_station_warnings = build_multi_legs(
             start_point=GeoPoint(lat=start_coords["lat"], lon=start_coords["lng"]),
