@@ -303,8 +303,8 @@ def build_multi_legs(
             avg_speed_kmh=round(avg_speed, 1),
             consumption_kwh=round(max(0, leg_consumption), 2),
             start_soc_percent=round(current_soc, 1),
-
             end_soc_percent=round(max(0, end_soc), 1),
+            polyline=polyline if i == 0 else "",
             weather_context=weather_info.model_dump() if i == 0 and weather_info else None  # İlk bacak için start weather
         ))
         
