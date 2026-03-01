@@ -129,8 +129,8 @@ async function renderRouteOnMap(data) {
                         path: path,
                         geodesic: false,        // Geodesic kapalı, düz render
                         strokeColor: '#4285F4', // Google Blue
-                        strokeOpacity: 1.0,     // Tam opak
-                        strokeWeight: 8,        // Daha da kalın çizgi
+                        strokeOpacity: 0.7,     // Tam kapatmasın, altı görünsün (1.0 -> 0.7)
+                        strokeWeight: 6,        // Daha ince çizgi (8 -> 6)
                         zIndex: 999,            // En üstte
                         map: map,
                         clickable: false        // Tıklamaları engellememesi için
