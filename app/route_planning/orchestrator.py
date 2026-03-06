@@ -225,6 +225,30 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             weather_service=weather_service,
         )
         
+        # STEP 4.7: Safe Harbor — Varış noktası şarj istasyonu kontrolü
+        from app.route_planning.safe_harbor import calculate_safe_harbor_soc
+        
+        safe_harbor_result = None
+        try:
+            safe_harbor_result = await calculate_safe_harbor_soc(
+                destination=request.end_location,
+                vehicle=vehicle,
+                battery_capacity_kwh=battery_kwh,
+                passenger_count=passenger_count,
+                extra_load_kg=extra_load_kg,
+                child_count=child_count,
+                temperature_celsius=avg_weather.temp_c if avg_weather else 20.0,
+                selected_place_id=request.selected_rescue_place_id,
+            )
+            if not safe_harbor_result.is_destination_covered:
+                logger.warning(
+                    f"🏠 Safe Harbor ACTIVE: dynamic_arrival_soc="
+                    f"{safe_harbor_result.dynamic_min_arrival_soc:.1f}%, "
+                    f"rescue_stations={len(safe_harbor_result.rescue_stations)}"
+                )
+        except Exception as e:
+            logger.warning(f"Safe Harbor check failed (continuing without): {e}")
+        
         # STEP 5: Route Segmenter - Geometrik segmentasyon
         segmenter = RouteSegmenter(segment_length_km=10.0)
         segments = segmenter.create_segments(
@@ -254,13 +278,14 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         total_consumption = sum(s.consumption_kwh for s in segments_with_consumption)
         logger.info(f"Total consumption calculated: {round(total_consumption, 2)}kWh")
         
-        # STEP 8: Temel SOC Parametreleri
+        # STEP 8: Temel SOC Parametreleri (+ Safe Harbor enjeksiyonu)
         charge_min_soc, user_target_soc_override, arrival_soc = calculate_base_soc_params(
             battery_kwh=battery_kwh,
             start_soc=request.current_soc_percent,
             total_consumption_kwh=total_consumption,
             route_distance_km=route_distance_km,
-            request=request
+            request=request,
+            safe_harbor_result=safe_harbor_result,
         )
         
         # STEP 9: SOC Simülasyonu + Optimizasyon (Pass 1)
@@ -433,6 +458,10 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             missing_station_warnings=missing_station_warnings,
         )
         
+        # 🏠 Safe Harbor uyarılarını ekle
+        if safe_harbor_result and safe_harbor_result.warning_message:
+            warning_messages.insert(0, safe_harbor_result.warning_message)
+        
         # 🧠 STEP 12.5: Akıllı Seyahat Asistanı — Insight Engine
         insights = insight_engine.analyze(
             route_distance_km=route_distance_km,
@@ -456,8 +485,38 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             ),
         )
         
+        # 🏠 Safe Harbor bilgisini response'a ekle (V2 — per-station SOC)
+        safe_harbor_info = None
+        if safe_harbor_result and not safe_harbor_result.is_destination_covered:
+            safe_harbor_info = {
+                "active": True,
+                "selected_station_index": safe_harbor_result.selected_station_index,
+                "dynamic_min_arrival_soc_percent": safe_harbor_result.dynamic_min_arrival_soc,
+                "search_radius_used_km": safe_harbor_result.search_radius_used_km,
+                "rescue_stations": [
+                    {
+                        "name": rs.name,
+                        "place_id": rs.place_id,
+                        "location": {"lat": rs.location.lat, "lon": rs.location.lon},
+                        "distance_km": rs.distance_km,
+                        "route_distance_km": rs.route_distance_km,
+                        "max_power_kw": rs.max_power_kw,
+                        "rating": rs.rating,
+                        "return_consumption_kwh": rs.return_consumption_kwh,
+                        "return_soc_needed_percent": rs.return_soc_needed,
+                        "required_arrival_soc_percent": rs.required_arrival_soc,
+                        "is_selected": rs.is_selected,
+                        "elevation": {
+                            "gain_m": rs.elevation_gain_m,
+                            "loss_m": rs.elevation_loss_m,
+                        },
+                    }
+                    for rs in safe_harbor_result.rescue_stations
+                ],
+            }
+        
         # Final response
-        return build_route_response(
+        response = build_route_response(
             route_distance_km=route_distance_km,
             route_duration_min=route_duration_min,
             co2_savings=co2_savings,
@@ -474,6 +533,12 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             warning_messages=warning_messages,
             insights=insights,
         )
+        
+        # Safe Harbor bilgisini enjekte et
+        if safe_harbor_info:
+            response.safe_harbor_info = safe_harbor_info
+        
+        return response
         
     except Exception as e:
         logger.exception(f"Route planning failed: {e}")

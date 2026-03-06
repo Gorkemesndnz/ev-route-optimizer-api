@@ -42,15 +42,19 @@ def calculate_base_soc_params(
     start_soc: float,
     total_consumption_kwh: float,
     route_distance_km: float,
-    request: RouteRequest
+    request: RouteRequest,
+    safe_harbor_result=None,
 ) -> tuple:
     """
     🔧 V3.5: Dinamik SOC parametreleri - gereksiz durak önleme.
+    🔧 V4.0: Safe Harbor entegrasyonu - uzak varış noktaları için
+              dinamik minimum varış SOC.
     
     MANTIK:
     1. HARD_MIN_SOC (8%) = Mutlak minimum, bunun altına düşmemeli
     2. TARGET_ARRIVAL_SOC (15%) = Tercih edilen, ama zorunlu değil
     3. Eğer HARD_MIN_SOC üzerinde varabiliyorsak, şarj ATLANIR
+    4. Safe Harbor aktifse, arrival_soc = dynamic_min_arrival_soc
     
     Returns:
         (charge_min_soc, user_target_soc_override, arrival_soc)
@@ -80,6 +84,18 @@ def calculate_base_soc_params(
             logger.info(f"Can reach destination without charging! arrival_soc={arrival_soc:.1f}%")
         else:
             arrival_soc = TARGET_ARRIVAL_SOC
+    
+    # 🔧 V4.0: Safe Harbor Override — Uzak varış noktalarında minimum varış SOC'u yükselt
+    if safe_harbor_result and not safe_harbor_result.is_destination_covered:
+        safe_harbor_soc = safe_harbor_result.dynamic_min_arrival_soc
+        if safe_harbor_soc > arrival_soc:
+            logger.info(
+                f"🏠 Safe Harbor OVERRIDE: arrival_soc {arrival_soc:.1f}% → "
+                f"{safe_harbor_soc:.1f}% (return trip: "
+                f"{safe_harbor_result.return_soc_needed:.1f}% + "
+                f"buffer {safe_harbor_result.dynamic_min_arrival_soc - safe_harbor_result.return_soc_needed:.1f}%)"
+            )
+            arrival_soc = safe_harbor_soc
     
     # 2. Şarj Eşiği (charge_min_soc) - 🔧 V3.5: Bacak uzunluğuna göre esnek
     if request.charge_min_soc_percent is not None:

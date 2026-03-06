@@ -223,7 +223,7 @@ class RouteRequest(BaseModel):
     vehicle_model_id: str = Field(..., description="vehicle_models.py içindeki ID")
     current_soc_percent: float = Field(..., ge=0, le=100)
     target_arrival_soc_percent: Optional[float] = Field(
-        None, ge=5, le=50,
+        None, ge=5, le=80,
         description="Varışta hedef batarya yüzdesi. None ise otomatik hesaplanır (10-25%)"
     )
     charge_min_soc_percent: Optional[float] = Field(
@@ -246,6 +246,12 @@ class RouteRequest(BaseModel):
         description="Rota seçim stratejisi: fastest, efficient, optimal, cheapest, renewable"
     )
     preferences: RoutePreferences = Field(default_factory=RoutePreferences)
+    
+    # 🏠 Safe Harbor: Kullanıcı belirli bir istasyonu seçtiyse
+    selected_rescue_place_id: Optional[str] = Field(
+        None, 
+        description="Safe Harbor durumunda kullanıcının seçtiği kurtarıcı istasyon ID'si."
+    )
 
     @field_validator("current_soc_percent")
     @classmethod
@@ -398,6 +404,11 @@ class MultiStopRouteResponse(BaseModel):
     debug_info: Optional[dict] = Field(
         default=None, 
         description="Debug bilgileri (sadece development modunda)"
+    )
+    # 🏠 V4.0: Safe Harbor bilgisi
+    safe_harbor_info: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Varışta şarj istasyonu yoksa Safe Harbor bilgisi (dönüş tüketimi, kurtarıcı istasyonlar vb.)"
     )
 
 

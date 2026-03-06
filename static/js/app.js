@@ -612,6 +612,9 @@ function showResults(data) {
         <!-- Efficiency Metrics -->
         ${renderEfficiencyMetrics(data.total_co2_savings_kg)}
 
+        <!-- 🏠 V4.0: Safe Harbor Bilgisi (Seçim Kartları) -->
+        ${data.safe_harbor_info ? renderSafeHarborInfo(data.safe_harbor_info) : ''}
+
         <!-- 🧠 V3.5: Akıllı Seyahat Asistanı - Detaylar Butonu -->
         ${data.insights && data.insights.length > 0 ? renderInsightsToggle(data.insights) : ''}
     `;
@@ -1678,4 +1681,147 @@ function showToast(message, color) {
     document.body.appendChild(toast);
 
     setTimeout(() => toast.remove(), 3000);
+}
+
+/**
+ * 🏠 V4.0: Safe Harbor Bilgisi Render
+ */
+function renderSafeHarborInfo(shInfo) {
+    if (!shInfo || shInfo.is_destination_covered) return '';
+
+    const stations = shInfo.rescue_stations || [];
+    const selectedIndex = shInfo.selected_station_index || 0;
+
+    const stationCards = stations.map((s, i) => {
+        const isSelected = i === selectedIndex;
+        // Border colors: Blue for selected, subtle white for others
+        const borderClass = isSelected ? 'border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/20' : 'border-white/10 bg-white/5 hover:bg-white/10';
+        const badge = isSelected ? '<span class="bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded-full uppercase font-bold">Seçili</span>' : '';
+
+        return `
+            <div class="p-4 rounded-xl border-2 ${borderClass} transition-all animate-fadeIn" style="animation-delay: ${i * 100}ms">
+                <div class="flex justify-between items-start mb-2">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2">
+                            <h5 class="text-white font-semibold text-sm truncate max-w-[150px]" title="${s.name}">${s.name}</h5>
+                            ${badge}
+                        </div>
+                        <p class="text-gray-400 text-xs">${s.distance_km} km • ${s.max_power_kw} kW</p>
+                    </div>
+                    <div class="text-yellow-400 text-xs font-bold">⭐ ${s.rating || '5.0'}</div>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-2 mt-3 mb-4">
+                    <div class="bg-black/20 rounded p-2 text-center">
+                        <p class="text-gray-500 text-[10px] uppercase font-medium">Gerekli Varış</p>
+                        <p class="text-blue-400 font-bold text-lg">%${s.required_arrival_soc}</p>
+                    </div>
+                    <div class="bg-black/20 rounded p-2 text-center">
+                        <p class="text-gray-500 text-[10px] uppercase font-medium">Dönüş Yükü</p>
+                        <p class="text-yellow-400 font-bold text-lg">${s.return_consumption_kwh} <span class="text-[9px]">kWh</span></p>
+                    </div>
+                </div>
+                
+                <div class="flex items-center justify-center text-[11px] text-gray-500 mb-4 gap-4 bg-white/5 py-1 rounded">
+                    <span title="Tırmanış">⛰️ +${s.elevation_gain_m?.toFixed(0)}m</span>
+                    <span title="İniş">📉 -${s.elevation_loss_m?.toFixed(0)}m</span>
+                </div>
+
+                ${!isSelected ? `
+                    <button 
+                        onclick="replanWithSafeHarborStation('${s.place_id}', ${s.required_arrival_soc})"
+                        class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all shadow-lg active:scale-95"
+                    >
+                        Bu İstasyonla Planla
+                    </button>
+                ` : `
+                    <div class="w-full py-2 bg-green-500/20 text-green-400 text-xs font-bold rounded-lg text-center border border-green-500/30">
+                        ✓ Rota Buna Göre Planlandı
+                    </div>
+                `}
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="mt-8 mb-10 animate-fadeIn">
+            <!-- Header Section -->
+            <div class="flex items-center gap-4 mb-5">
+                <div class="w-12 h-12 bg-orange-500/20 rounded-2xl flex items-center justify-center border border-orange-500/30 shadow-lg shadow-orange-900/10">
+                    <span class="text-2xl">🛟</span>
+                </div>
+                <div>
+                    <h3 class="text-white font-bold text-xl">Güvenli Liman (Safe Harbor)</h3>
+                    <p class="text-gray-400 text-sm">Varış noktasında şarj istasyonu yok. Dönüş için seçim yapın.</p>
+                </div>
+            </div>
+            
+            <!-- Content Card -->
+            <div class="bg-orange-500/10 border border-orange-500/20 rounded-3xl p-6 mb-6 shadow-xl backdrop-blur-sm">
+                <div class="flex items-start gap-3 mb-6 bg-orange-500/10 p-4 rounded-xl border border-orange-500/10">
+                    <span class="text-xl">💡</span>
+                    <p class="text-orange-200/90 text-sm leading-relaxed">
+                        Varış noktanızın 10km çevresinde istasyon bulunmadığı için <strong>Safe Harbor</strong> modu aktive edildi. 
+                        Aşağıdaki kurtarıcı istasyonlardan birini seçebilirsiniz. Rota otomatik olarak o istasyona yetecek 
+                        batarya ile varacak şekilde yeniden hesaplanacaktır.
+                    </p>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    ${stationCards}
+                </div>
+                
+                <div class="mt-6 pt-4 border-t border-orange-500/10 text-center">
+                    <p class="text-orange-400/60 text-[11px] italic">
+                        * Hesaplamalar araç yükü, hava durumu ve gerçek yol eğimi (elevation) verilerine dayanmaktadır.
+                    </p>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Belirli bir Safe Harbor istasyonuna göre rotayı yeniden hesapla
+ */
+async function replanWithSafeHarborStation(placeId, requiredSoc) {
+    showLoading();
+    showInfoToast('Kurtarıcı istasyon değişti, rota yeniden planlanıyor...');
+
+    try {
+        const formData = await getFormDataAsync();
+        
+        // Safe Harbor seçimini ekle
+        formData.selected_rescue_place_id = placeId;
+        // User explicitly sets this, let backend handle it
+        formData.target_arrival_soc_percent = Math.ceil(requiredSoc); 
+
+        console.log('🔄 Re-planning with Safe Harbor station:', placeId, 'Required SOC:', requiredSoc);
+
+        const response = await fetch('/optimize_route', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+        });
+
+        const data = await response.json();
+        hideLoading();
+
+        if (data.status === 'success') {
+            showResults(data);
+            showSuccessToast('Güvenli Liman planı güncellendi.');
+            
+            // Scroll to results
+            const resultCard = document.getElementById('resultCard');
+            if (resultCard) {
+                resultCard.scrollIntoView({ behavior: 'smooth' });
+            }
+        } else {
+            showError(data);
+        }
+    } catch (error) {
+        hideLoading();
+        console.error('Safe Harbor replan error:', error);
+        showError({ status: 'error', message: error.message });
+    }
 }

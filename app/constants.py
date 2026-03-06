@@ -87,3 +87,23 @@ FINAL_STOP_TARGET_MAX = 85  # Son durak için maksimum hedef
 # Varış SOC hedefi (uzun rotalarda düşük tutulmalı)
 DEFAULT_ARRIVAL_SOC = 20.0  # Varsayılan varış hedefi %20
 LONG_ROUTE_ARRIVAL_SOC = 15.0  # Uzun rotalarda %15 yeterli
+
+
+# =============================================================================
+# SAFE HARBOR (GÜVENLİ LİMAN) PARAMETRELERİ
+# =============================================================================
+
+# Varışta "yakın istasyon var mı?" kontrolü için başlangıç yarıçapı
+SAFE_HARBOR_NEARBY_RADIUS_KM = 10.0  # 10 km = kısa sürüş mesafesi
+
+# Kademeli arama yarıçapları — en yakın kurtarıcı istasyonu bulmak için
+SAFE_HARBOR_SEARCH_RADII_KM = [10, 25, 50, 80, 120]  # km
+
+# Dönüş tüketimine ek güvenlik payı
+SAFE_HARBOR_BUFFER_PERCENT = 5.0  # %5 güvenlik
+
+# Maksimum dönüş mesafesi (aşılırsa uyarı)
+SAFE_HARBOR_MAX_RETURN_KM = 120.0
+
+# Kaç kurtarıcı istasyon hedeflenmeli (tek istasyon bağımlılığı olmasın)
+SAFE_HARBOR_MIN_RESCUE_STATIONS = 3  # En az 2-3 istasyona yetecek batarya
