@@ -370,8 +370,16 @@ def build_multi_legs(
     
     # Son DriveLeg: Son şarj istasyonu → Varış
     if remaining_distance > 0:
-        final_soc_drop = current_soc - final_soc
-        final_leg_consumption = (final_soc_drop / 100) * battery_capacity_kwh
+        if len(legs) == 0:
+            # 🔧 V2.9 FIX: Tüm şarj istasyonları atlandıysa (bulunamadıysa), 
+            # simülasyonun (şarj var sayarak hesapladığı) final_soc'u kullanmak yanlıştır.
+            # Fiziksel değer olan toplam tüketimi kullanmalıyız.
+            final_leg_consumption = total_consumption_kwh
+            final_soc = current_soc - (total_consumption_kwh / battery_capacity_kwh * 100)
+        else:
+            final_soc_drop = current_soc - final_soc
+            final_leg_consumption = (final_soc_drop / 100) * battery_capacity_kwh
+            
         final_leg_distance = remaining_distance
         final_leg_duration = remaining_duration
         
