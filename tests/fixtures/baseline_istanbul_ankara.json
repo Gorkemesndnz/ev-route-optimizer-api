@@ -1,0 +1,42 @@
+{
+  "_meta": {
+    "captured_at": "2026-03-06T05:54:00",
+    "api_status": "success"
+  },
+  "total_distance_km": 444.6,
+  "total_duration_minutes": 274.5,
+  "consumption_kwh": 107.5,
+  "total_co2_savings_kg": 28.02,
+  "charge_stops": 1,
+  "total_regen_recovered_kwh": 0.0,
+  "total_charging_cost": 387.29,
+  "drive_soc_profile": [
+    {
+      "leg_index": 0,
+      "soc_start": 85.0,
+      "soc_end": 20.5,
+      "distance_km": 245.8,
+      "consumption_kwh": 32.77
+    },
+    {
+      "leg_index": 1,
+      "soc_start": 85.0,
+      "soc_end": 16.7,
+      "distance_km": 198.8,
+      "consumption_kwh": 34.7
+    }
+  ],
+  "charge_profile": [
+    {
+      "leg_index": 0,
+      "station_name": "Trugo Charging Station",
+      "station_id": "ChIJ8T6EIDs_nUARYD5G60dlePA",
+      "soc_start": 20.5,
+      "soc_end": 85.0,
+      "charge_duration_minutes": 36.3,
+      "power_kw": 180.0
+    }
+  ],
+  "warning_count": 1,
+  "safe_harbor_active": false
+}

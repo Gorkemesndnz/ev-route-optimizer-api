@@ -1,0 +1,317 @@
+{
+  "status": "success",
+  "total_distance_km": 444.6,
+  "total_duration_minutes": 274.5,
+  "total_co2_savings_kg": 28.02,
+  "consumption_kwh": 107.5,
+  "legs": [
+    {
+      "type": "drive",
+      "start_point": {
+        "lat": 41.0097079,
+        "lon": 28.9784044,
+        "address": null
+      },
+      "end_point": {
+        "lat": 40.735006999999996,
+        "lon": 31.631143800000004,
+        "address": null
+      },
+      "distance_km": 245.8,
+      "duration_minutes": 151.7,
+      "avg_speed_kmh": 97.2,
+      "consumption_kwh": 32.77,
+      "start_soc_percent": 85.0,
+      "end_soc_percent": 20.5,
+      "elevation_gain_m": 0.0,
+      "elevation_loss_m": 0.0,
+      "polyline": "",
+      "route_polyline": null,
+      "weather_context": null,
+      "arrival_soc_percent": null
+    },
+    {
+      "type": "charge",
+      "station": {
+        "id": "ChIJ8T6EIDs_nUARYD5G60dlePA",
+        "name": "Trugo Charging Station",
+        "operator": null,
+        "location": {
+          "lat": 40.735006999999996,
+          "lon": 31.631143800000004,
+          "address": null
+        },
+        "rating": 4.0,
+        "user_ratings_total": 6,
+        "connectors": [
+          {
+            "plug_type": "CCS2",
+            "charger_type": "DC",
+            "power_kw": 180.0,
+            "status": "Unknown",
+            "price_per_kwh": null,
+            "currency": "TRY"
+          }
+        ],
+        "amenities": {
+          "has_toilet": false,
+          "has_food": false,
+          "has_wifi": false,
+          "has_shopping": false,
+          "has_parking": false,
+          "is_24_7": false
+        },
+        "distance_from_route_km": 3.41,
+        "data_source": "google",
+        "place_id": "ChIJ8T6EIDs_nUARYD5G60dlePA",
+        "vicinity": "Çıkınlar, Zinde Sk. No:5, 14200 Bolu Merkez/Bolu, Türkiye",
+        "is_open_now": null
+      },
+      "arrival_soc_percent": 20.5,
+      "target_soc_percent": 85.0,
+      "energy_added_kwh": 32.77,
+      "duration_minutes": 36.3,
+      "price_per_kwh": 11.82,
+      "estimated_cost": 387.29,
+      "currency": "TRY",
+      "weather_context": {
+        "temp_c": 1.57,
+        "condition": "snow",
+        "wind_speed_mps": 1.09,
+        "wind_direction_deg": 269,
+        "precipitation_prob": 0.6
+      },
+      "alternative_stations": [
+        {
+          "id": "ChIJr-tuQ6o_nUAREy_2aCymjXc",
+          "name": "Zes Charging Station",
+          "operator": null,
+          "location": {
+            "lat": 40.7663624,
+            "lon": 31.638734499999998,
+            "address": null
+          },
+          "rating": 3.6,
+          "user_ratings_total": null,
+          "connectors": [
+            {
+              "plug_type": "CCS2",
+              "charger_type": "DC",
+              "power_kw": 22.0,
+              "status": "Unknown",
+              "price_per_kwh": null,
+              "currency": "TRY"
+            }
+          ],
+          "amenities": {
+            "has_toilet": false,
+            "has_food": false,
+            "has_wifi": false,
+            "has_shopping": false,
+            "has_parking": false,
+            "is_24_7": false
+          },
+          "distance_from_route_km": 0.37,
+          "data_source": "google",
+          "place_id": null,
+          "vicinity": null,
+          "is_open_now": null
+        },
+        {
+          "id": "ChIJ0VrgwY0-nUAR_NNSdg5n4OY",
+          "name": "ZES Charging Station",
+          "operator": null,
+          "location": {
+            "lat": 40.765357699999996,
+            "lon": 31.638706199999998,
+            "address": null
+          },
+          "rating": 3.3,
+          "user_ratings_total": null,
+          "connectors": [
+            {
+              "plug_type": "CCS2",
+              "charger_type": "DC",
+              "power_kw": 22.0,
+              "status": "Unknown",
+              "price_per_kwh": null,
+              "currency": "TRY"
+            }
+          ],
+          "amenities": {
+            "has_toilet": false,
+            "has_food": false,
+            "has_wifi": false,
+            "has_shopping": false,
+            "has_parking": false,
+            "is_24_7": false
+          },
+          "distance_from_route_km": 0.36,
+          "data_source": "google",
+          "place_id": null,
+          "vicinity": null,
+          "is_open_now": null
+        },
+        {
+          "id": "ChIJxZMzEIk_nUAR1a0msvTgb7E",
+          "name": "Zes Charging Station",
+          "operator": null,
+          "location": {
+            "lat": 40.7316661,
+            "lon": 31.563529099999997,
+            "address": null
+          },
+          "rating": 3.7,
+          "user_ratings_total": null,
+          "connectors": [
+            {
+              "plug_type": "CCS2",
+              "charger_type": "DC",
+              "power_kw": 22.0,
+              "status": "Unknown",
+              "price_per_kwh": null,
+              "currency": "TRY"
+            }
+          ],
+          "amenities": {
+            "has_toilet": false,
+            "has_food": false,
+            "has_wifi": false,
+            "has_shopping": true,
+            "has_parking": false,
+            "is_24_7": false
+          },
+          "distance_from_route_km": 7.07,
+          "data_source": "google",
+          "place_id": null,
+          "vicinity": null,
+          "is_open_now": null
+        }
+      ]
+    },
+    {
+      "type": "drive",
+      "start_point": {
+        "lat": 40.735006999999996,
+        "lon": 31.631143800000004,
+        "address": null
+      },
+      "end_point": {
+        "lat": 39.9333847,
+        "lon": 32.8597027,
+        "address": null
+      },
+      "distance_km": 198.8,
+      "duration_minutes": 122.8,
+      "avg_speed_kmh": 97.2,
+      "consumption_kwh": 34.7,
+      "start_soc_percent": 85.0,
+      "end_soc_percent": 16.7,
+      "elevation_gain_m": 0.0,
+      "elevation_loss_m": 0.0,
+      "polyline": "",
+      "route_polyline": null,
+      "weather_context": {
+        "temp_c": 1.57,
+        "condition": "snow",
+        "wind_speed_mps": 1.09,
+        "wind_direction_deg": 269,
+        "precipitation_prob": 0.6
+      },
+      "arrival_soc_percent": null
+    }
+  ],
+  "message": "1 şarj durağı gerekli (hedef: %65)",
+  "charge_stops": 1,
+  "route_strategy": "optimal",
+  "traffic_ratio": 0.95,
+  "duration_without_traffic_minutes": 287.6,
+  "start_weather": {
+    "temp_c": 8.78,
+    "condition": "fog",
+    "wind_speed_mps": 0.0,
+    "wind_direction_deg": 0,
+    "precipitation_prob": 0.2
+  },
+  "end_weather": {
+    "temp_c": 2.29,
+    "condition": "cloudy",
+    "wind_speed_mps": 1.71,
+    "wind_direction_deg": 327,
+    "precipitation_prob": 0.0
+  },
+  "total_regen_recovered_kwh": 0.0,
+  "total_charging_cost": 387.29,
+  "warning_messages": [
+    "⚠️ 143. km'de şarj durağı gerekiyor (SOC: %16) ancak yakında uygun istasyon bulunamadı. Rotanız eksik olabilir, manuel şarj planlaması önerilir."
+  ],
+  "insights": [
+    {
+      "type": "warning",
+      "title": "Dik Tırmanış Uyarısı",
+      "message": "Rotanızda toplam 3102m yükselti var. Tırmanış sırasında batarya normalden daha hızlı tükenecek. Ancak inişlerde rejeneratif frenleme ile enerji geri kazanılacak.",
+      "icon": "🏔️",
+      "relevance_score": 0.9
+    },
+    {
+      "type": "warning",
+      "title": "Bölgesel Kar Uyarısı",
+      "message": "Rota üzerinde 300km civarında kar yağışı tespit edildi. Diğer bölgelerde hava daha iyi. Bu bölgelerde dikkatli sürüş yapın.",
+      "icon": "⚠️",
+      "relevance_score": 0.88
+    },
+    {
+      "type": "warning",
+      "title": "Yükselti + Düşük Batarya Uyarısı",
+      "message": "Rotanızda 852m net yükselti var ve varışta batarya %17'e düşecek. Güvenli bir seyahat için şarj durağında biraz daha fazla şarj etmeyi düşünebilirsiniz.",
+      "icon": "⛰️",
+      "relevance_score": 0.85
+    },
+    {
+      "type": "warning",
+      "title": "Soğuk Hava Uyarısı",
+      "message": "Rota boyunca ortalama sıcaklık 4°C. Soğuk havada batarya verimliliği yaklaşık %5 düşebilir. Menzil tahminleri buna göre ayarlanmıştır. Isıtmayı ekonomik modda kullanmanızı öneririz.",
+      "icon": "❄️",
+      "relevance_score": 0.8
+    },
+    {
+      "type": "info",
+      "title": "Şarj Maliyeti",
+      "message": "Toplam tahmini şarj maliyeti: 387.29 ₺ (1 durak, ortalama 387.29 ₺/durak). Gerçek fiyatlar istasyon operatörüne göre değişebilir.",
+      "icon": "💰",
+      "relevance_score": 0.5
+    },
+    {
+      "type": "tip",
+      "title": "Uzun Yol İpucu",
+      "message": "445 km'lik bu yolculukta tahmini ~4.9 saat sürüş yapacaksınız. Her 2 saatte bir mola vermeniz önerilir. Molalarınızı şarj durakları ile eşleştirin.",
+      "icon": "🛣️",
+      "relevance_score": 0.35
+    },
+    {
+      "type": "saving",
+      "title": "Çevre Katkınız",
+      "message": "Bu yolculukta 28.0 kg CO2 tasarrufu sağladınız. Bu, yaklaşık 1.3 ağacın yıllık CO2 absorpsiyonuna eşdeğer!",
+      "icon": "🌱",
+      "relevance_score": 0.35
+    }
+  ],
+  "debug_info": {
+    "request_id": "req_1772765628786",
+    "processing_time_ms": 11673.3,
+    "request_details": {
+      "start": "41.0082,28.9784",
+      "end": "39.9334,32.8597",
+      "vehicle": "mg_mg4_electric_51_kwh_2022",
+      "initial_soc": 85.0,
+      "extra_load": null,
+      "passengers": null,
+      "departure_time": null
+    },
+    "vehicle_info": {
+      "model": "mg_mg4_electric_51_kwh_2022",
+      "battery_kwh": 50.8
+    }
+  },
+  "safe_harbor_info": null
+}
