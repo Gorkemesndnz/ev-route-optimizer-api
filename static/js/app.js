@@ -1714,7 +1714,7 @@ function renderSafeHarborInfo(shInfo) {
                 <div class="grid grid-cols-2 gap-2 mt-3 mb-4">
                     <div class="bg-black/20 rounded p-2 text-center">
                         <p class="text-gray-500 text-[10px] uppercase font-medium">Gerekli Varış</p>
-                        <p class="text-blue-400 font-bold text-lg">%${s.required_arrival_soc}</p>
+                        <p class="text-blue-400 font-bold text-lg">%${s.required_arrival_soc_percent}</p>
                     </div>
                     <div class="bg-black/20 rounded p-2 text-center">
                         <p class="text-gray-500 text-[10px] uppercase font-medium">Dönüş Yükü</p>
@@ -1723,13 +1723,13 @@ function renderSafeHarborInfo(shInfo) {
                 </div>
                 
                 <div class="flex items-center justify-center text-[11px] text-gray-500 mb-4 gap-4 bg-white/5 py-1 rounded">
-                    <span title="Tırmanış">⛰️ +${s.elevation_gain_m?.toFixed(0)}m</span>
-                    <span title="İniş">📉 -${s.elevation_loss_m?.toFixed(0)}m</span>
+                    <span title="Tırmanış">⛰️ +${s.elevation?.gain_m?.toFixed(0) || 0}m</span>
+                    <span title="İniş">📉 -${s.elevation?.loss_m?.toFixed(0) || 0}m</span>
                 </div>
 
                 ${!isSelected ? `
                     <button 
-                        onclick="replanWithSafeHarborStation('${s.place_id}', ${s.required_arrival_soc})"
+                        onclick="replanWithSafeHarborStation('${s.place_id}')"
                         class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg transition-all shadow-lg active:scale-95"
                     >
                         Bu İstasyonla Planla
@@ -1784,19 +1784,17 @@ function renderSafeHarborInfo(shInfo) {
 /**
  * Belirli bir Safe Harbor istasyonuna göre rotayı yeniden hesapla
  */
-async function replanWithSafeHarborStation(placeId, requiredSoc) {
+async function replanWithSafeHarborStation(placeId) {
     showLoading();
     showInfoToast('Kurtarıcı istasyon değişti, rota yeniden planlanıyor...');
 
     try {
         const formData = await getFormDataAsync();
-        
-        // Safe Harbor seçimini ekle
-        formData.selected_rescue_place_id = placeId;
-        // User explicitly sets this, let backend handle it
-        formData.target_arrival_soc_percent = Math.ceil(requiredSoc); 
 
-        console.log('🔄 Re-planning with Safe Harbor station:', placeId, 'Required SOC:', requiredSoc);
+        // Safe Harbor seçimini ekle — SOC hesabı backend'e bırakılır
+        formData.selected_rescue_place_id = placeId;
+
+        console.log('🔄 Re-planning with Safe Harbor station:', placeId);
 
         const response = await fetch('/optimize_route', {
             method: 'POST',
@@ -1810,7 +1808,7 @@ async function replanWithSafeHarborStation(placeId, requiredSoc) {
         if (data.status === 'success') {
             showResults(data);
             showSuccessToast('Güvenli Liman planı güncellendi.');
-            
+
             // Scroll to results
             const resultCard = document.getElementById('resultCard');
             if (resultCard) {

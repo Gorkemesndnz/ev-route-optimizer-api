@@ -308,6 +308,7 @@ async def calculate_safe_harbor_soc(
     # =========================================================================
     # Önce Adım A'da bulunan (ama yetersiz sayıda olan) istasyonları ekle
     rescue_stations: List[RescueStation] = []
+    search_radius_used = SAFE_HARBOR_NEARBY_RADIUS_KM  # Varsayılan
     
     for station in valid_nearby:
         loc = station.get("geometry", {}).get("location", {})
