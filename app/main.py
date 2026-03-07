@@ -597,6 +597,66 @@ from app.models import (
 )
 
 
+@app.get("/api/map_stations", response_model=list[StationInfo], tags=["Stations"])
+async def get_map_stations(
+    lat: float = Query(..., description="Harita Merkezi Enlem"),
+    lon: float = Query(..., description="Harita Merkezi Boylam"),
+    radius_km: float = Query(..., description="Görünüm Çapı (km)"),
+    zoom: int = Query(..., description="Harita Zoom Seviyesi")
+):
+    """
+    Dinamik Harita İstasyonları (Google Places Cached)
+    Frontend ekranı kaydırdıkça bu endpoint'e istek atılır.
+    Google Places API ile entegre, ancak bounding box ve zoom limitlerine göre optimize çalışır.
+    """
+    from app.services.google_service import google_maps
+    from app.models import StationInfo, GeoPoint, ConnectorInfo, PlugType, ChargerType
+    
+    try:
+        raw_places = await google_maps.get_map_stations(lat=lat, lon=lon, radius_km=radius_km, zoom=zoom)
+        
+        stations = []
+        for p in raw_places:
+            location = p.get("geometry", {}).get("location", {})
+            st_lat, st_lon = location.get("lat"), location.get("lng")
+            if not st_lat or not st_lon:
+                continue
+                
+            power_kw = p.get("max_power_kw", 0.0)
+            c_type = ChargerType.HPC if power_kw >= 150 else (ChargerType.DC if power_kw >= 50 else ChargerType.AC)
+            
+            # Veriyi Pydantic modeline MAP et
+            stations.append(
+                StationInfo(
+                    id=p.get("place_id", ""),
+                    name=p.get("name", "Bilinmeyen İstasyon"),
+                    operator="Google",
+                    location=GeoPoint(lat=st_lat, lon=st_lon),
+                    rating=p.get("rating", 0.0),
+                    user_ratings_total=p.get("user_ratings_total", 0),
+                    connectors=[
+                        ConnectorInfo(
+                            plug_type=PlugType.TYPE2, 
+                            charger_type=c_type,
+                            power_kw=power_kw,
+                            status="Available",
+                            price_per_kwh=None,
+                            currency="TRY"
+                        )
+                    ],
+                    distance_from_route_km=0.0,
+                    data_source="google",
+                    place_id=p.get("place_id", ""),
+                    vicinity=p.get("vicinity", ""),
+                    is_open_now=True
+                )
+            )
+        return stations
+    except Exception as e:
+        logger.error(f"Map Stations Error: {e}")
+        return []
+
+
 @app.post("/station_feedback", response_model=RecalculateResponse, tags=["Feedback"])
 async def station_feedback(request: StationFeedbackRequest) -> RecalculateResponse:
     """

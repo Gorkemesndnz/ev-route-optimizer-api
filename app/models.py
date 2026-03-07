@@ -96,7 +96,7 @@ class ConnectorInfo(BaseModel):
     """Bir soket ünitesinin bilgisi."""
     plug_type: PlugType
     charger_type: ChargerType
-    power_kw: float = Field(..., gt=0, description="Maksimum güç (kW)")
+    power_kw: float = Field(..., ge=0, description="Maksimum güç (kW) - Bilinmiyorsa 0.0")
     status: Literal["Available", "Occupied", "Unknown", "OutOfOrder"] = "Unknown"
     price_per_kwh: Optional[float] = Field(
         None,

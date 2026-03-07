@@ -1,6 +1,7 @@
 import urllib.parse
 import time
-from typing import List, Optional, Literal
+import math
+from typing import List, Optional, Literal, Dict, Any
 from app.services.base_service import BaseService, ExternalAPIError
 from app.utils.config_manager import config
 from app.utils.cache_manager import cacheable
@@ -11,6 +12,17 @@ logger = get_logger("GoogleMapsService")
 
 # Traffic model options for Google Directions API
 TrafficModel = Literal["best_guess", "pessimistic", "optimistic"]
+
+# Kendi Google Places önbelleğimiz (Backend Map Caching)
+GLOBAL_GOOGLE_STATIONS_CACHE: Dict[str, dict] = {}
+
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R = 6371.0 # Dünya yarıçapı (km)
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
 
 
 class GoogleMapsService(BaseService):
@@ -364,6 +376,11 @@ class GoogleMapsService(BaseService):
                     "max_power_kw": max_power_kw,
                     "connector_count": ev_options.get("connectorCount", 0)
                 }
+                
+                # Global Cache'e ekle (Map için)
+                if legacy_place["place_id"]:
+                    GLOBAL_GOOGLE_STATIONS_CACHE[legacy_place["place_id"]] = legacy_place
+                    
                 results.append(legacy_place)
             
             logger.info(
@@ -577,6 +594,54 @@ class GoogleMapsService(BaseService):
             raise ExternalAPIError("GoogleAutocomplete", 200, f"status={status}, query={query}")
 
         return data.get("predictions", [])
+
+
+    # ============================================================
+    # 9) GET MAP STATIONS (Dinamik Cache ve Filtreleme)
+    # ============================================================
+    async def get_map_stations(self, lat: float, lon: float, radius_km: float, zoom: int) -> List[dict]:
+        """
+        Harita pan/zoom etkinliklerine göre istasyonları döner.
+        Performanslı çalışması ve limitten kaçınması için kendi iç global cache'ini (Google'dan gelenleri) kullanır.
+        Eğer zoom >= 10 ise Google Places'ı pingleyerek o bölgeyi keşfeder.
+        Sonra cache'teki tüm uygun istasyonları döner.
+        """
+        # Yakın zoomlarda o anki konumu Google'a sor ve cache'i tazelet (arka planda sessizce veritabanını doldurur)
+        if zoom >= 10:
+            # Sadece 2 basamaklı sayıya yuvarlayıp hafif bir grid caching simüle edebiliriz
+            target_lat = round(lat, 2)
+            target_lon = round(lon, 2)
+            try:
+                # 20km içerisinde maksimum 20 sonucu cache'e alır
+                await self.search_ev_charging_stations_new(target_lat, target_lon, radius_m=20000, max_results=20)
+            except Exception as e:
+                logger.warning(f"Map fetch places api failed: {e}")
+
+        matched_stations = []
+        for place_id, st in GLOBAL_GOOGLE_STATIONS_CACHE.items():
+            loc = st.get("geometry", {}).get("location", {})
+            st_lat, st_lon = loc.get("lat"), loc.get("lng")
+            if st_lat is None or st_lon is None:
+                continue
+                
+            dist_km = haversine_distance(lat, lon, st_lat, st_lon)
+            if dist_km <= radius_km:
+                power = st.get("max_power_kw", 0)
+                
+                # Dinamik Zoom Görünürlük Mantığı
+                if zoom <= 7:
+                    # Sadece 150kW ve üzeri büyük istasyonları döner
+                    if power >= 150.0:
+                        matched_stations.append(st)
+                elif zoom <= 10:
+                    # Orta hızlılar (50kW+)
+                    if power >= 50.0:
+                        matched_stations.append(st)
+                else:
+                    # Zoom 11+ -> Sokak arası tüm prizler çıkabilir
+                    matched_stations.append(st)
+                    
+        return matched_stations
 
 # Tek instance
 google_maps = GoogleMapsService()
