@@ -1,0 +1,27 @@
+{
+  "istanbul_ankara": {
+    "hotspot_count": 2,
+    "hotspot_positions_km": [
+      131.7,
+      281.3
+    ],
+    "final_soc_pct": 28.8,
+    "total_charge_time_min": 71.7
+  },
+  "ankara_bolu": {
+    "hotspot_count": 1,
+    "hotspot_positions_km": [
+      104.8
+    ],
+    "final_soc_pct": 38.2,
+    "total_charge_time_min": 25.4
+  },
+  "izmir_antalya": {
+    "hotspot_count": 1,
+    "hotspot_positions_km": [
+      247.1
+    ],
+    "final_soc_pct": 20.7,
+    "total_charge_time_min": 37.9
+  }
+}
