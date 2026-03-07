@@ -29,6 +29,7 @@ Kullanım:
 """
 
 import math
+import copy
 from typing import List, Optional
 from dataclasses import dataclass
 from app.models import GeoPoint
@@ -248,7 +249,9 @@ class SOCSimulator:
             
             # Bu segment sonrası SOC ne olacak? (önceden hesapla)
             soc_drop = (consumption_kwh / self.battery_capacity_kwh) * 100
-            projected_soc_after = current_soc - soc_drop
+            
+            # 🔧 FAZ 3.5 FIX: SOC hiçbir zaman 0'ın altına düşemez.
+            projected_soc_after = max(0.0, current_soc - soc_drop)
             
             # 🔧 KRİTİK: Eğer tek segment tüketimi bataryayı aşıyorsa HEMEN hotspot oluştur
             if soc_drop > current_soc:
@@ -339,7 +342,7 @@ class SOCSimulator:
             
             # Segment tüketimini uygula (hotspot varsa şarjlı SOC'tan başlar)
             # NOT: soc_drop yukarıda (satır 249) hesaplandı, consumption_kwh değişmediği için aynı
-            current_soc = max(0, current_soc - soc_drop)
+            current_soc = max(0.0, current_soc - soc_drop)
             total_consumption += consumption_kwh
             
             # SOC bitiş değeri
@@ -729,6 +732,9 @@ class ChargePlanOptimizer:
         )
         
         for target_soc in target_soc_range:
+            # 🔧 FAZ 3 FIX: Sığ kopya ile `SegmentWithConsumption` mutation sızıntısını engelle
+            isolated_segments = [copy.copy(seg) for seg in segments_with_consumption]
+            
             # Bu target_soc ile simülasyon yap
             simulator = SOCSimulator(
                 battery_capacity_kwh=battery_capacity_kwh,
@@ -738,7 +744,7 @@ class ChargePlanOptimizer:
                 charge_target_soc=target_soc
             )
             
-            result = simulator.simulate(segments_with_consumption, total_distance_km)
+            result = simulator.simulate(isolated_segments, total_distance_km)
             
             # EARLY TERMINATION: Şarj gerekmiyorsa hemen dön
             if len(result.hotspots) == 0:
@@ -776,20 +782,9 @@ class ChargePlanOptimizer:
                     f"target_soc={single_stop_soc}%, score={single_stop_score:.1f}"
                 )
                 best_target_soc = single_stop_soc
-        
-        # 🔧 SAĞLAM-03 FIX: Kazanan target_soc ile son simülasyonu tekrar çalıştır.
-        # Optimizer döngüsü paylaşılan segment nesnelerinin soc_at_start/soc_at_end
-        # değerlerini her iterasyonda üzerine yazar. Son simülasyon, segmentlerin
-        # doğru SOC değerlerini taşımasını garanti eder.
-        final_simulator = SOCSimulator(
-            battery_capacity_kwh=battery_capacity_kwh,
-            start_soc=start_soc,
-            target_arrival_soc=target_arrival_soc,
-            charge_min_soc=charge_min_soc,
-            charge_target_soc=best_target_soc
-        )
-        best_result = final_simulator.simulate(segments_with_consumption, total_distance_km)
-        
+                
+        return best_target_soc, best_result
+
         logger.info(
             f"ChargePlanOptimizer: Optimal plan found - "
             f"target_soc={best_target_soc}%, stops={len(best_result.hotspots)}, "
