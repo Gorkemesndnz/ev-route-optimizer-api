@@ -1,0 +1,101 @@
+﻿
+==========================================================================================
+­şöğ G├ûREV 3: KOD B├£T├£NL├£─Ş├£ & DURUM KONTROL├£
+==========================================================================================
+
+­şôî Test 3a: ChargePlanOptimizer Segment ─░zolasyonu (Faz 3)
+[36m2026-03-07 04:30:11 | INFO     | ev_route_optimizer   | [N/A] | Logger ba┼şlat─▒ld─▒ | Environment: development | Format: TEXT[0m
+   Ô£à Shallow copy izolasyonu do─şruland─▒ ÔÇö SOC s─▒z─▒nt─▒s─▒ YOK
+
+­şôî Test 3b: ConsumptionEngine Factory Toggle
+   Ô£à USE_ML_ENGINE=False ÔåÆ PhysicsConsumptionEngine aktif
+
+­şôî Test 3c: SOC Floor Guard (Faz 3.5)
+   Ô£à SOC Floor Guard aktif ÔÇö max(0.0, ...) negatif de─şerleri engelliyor
+
+­şôî Test 3d: import copy dosya ba┼ş─▒nda m─▒?
+   Ô£à 'import copy' dosya ba┼ş─▒nda (pozisyon 761, s─▒n─▒ftan ├Ânce)
+
+==========================================================================================
+Ô£à T├£M KOD B├£T├£NL├£─Ş├£ TESTLER─░ BA┼ŞARILI
+==========================================================================================
+==========================================================================================
+­şôï G├ûREV 1: 10-ROTA STRES TEST─░
+==========================================================================================
+
+­şÜù [1/10] Istanbul-Ankara ÔÇö Bolu Ge├ğidi / Otoban
+   Ô£à 444.6km | 2 durak | Final SOC: 28.8% | 11.4s ÔåÆ ?, ?
+
+­şÜù [2/10] Ankara-Erzurum ÔÇö So─şuk ─░klim / Uzun Mesafe
+   Ô£à 860.8km | 2 durak | Final SOC: 56.0% | 23.2s ÔåÆ ?, ?
+
+­şÜù [3/10] Izmir-Antalya ÔÇö ┼Şarj ├ç├Âl├╝ / S─▒cak
+   Ô£à 466.9km | 1 durak | Final SOC: 20.7% | 12.7s ÔåÆ ?
+
+­şÜù [4/10] Istanbul-Izmir ÔÇö K─▒y─▒ Otoyolu
+   Ô£à 485.0km | 2 durak | Final SOC: 18.3% | 12.5s ÔåÆ ?, ?
+
+­şÜù [5/10] Ankara-Bolu ÔÇö Da─şl─▒k K─▒sa Rota
+   Ô£à 186.2km | 1 durak | Final SOC: 38.2% | 7.2s ÔåÆ ?
+
+­şÜù [6/10] Bursa-Eskisehir ÔÇö Orta Mesafe / D├╝z Ova
+   Ô£à 152.6km | 1 durak | Final SOC: 52.1% | 5.9s ÔåÆ ?
+
+­şÜù [7/10] Antalya-Konya ÔÇö Toros Da─şlar─▒ Ge├ği┼şi
+   Ô£à 302.9km | 1 durak | Final SOC: 33.4% | 9.6s ÔåÆ ?
+
+­şÜù [8/10] Istanbul-Trabzon ÔÇö En Uzun Rota / Karadeniz
+   Ô£à 1058.9km | 6 durak | Final SOC: 23.5% | 26.5s ÔåÆ ?, ?, ?, ?, ?, ?
+
+­şÜù [9/10] Ankara-Mersin ÔÇö G├╝ney Ge├ğidi / Toros ─░ni┼şi
+   Ô£à 508.0km | 2 durak | Final SOC: 27.5% | 15.7s ÔåÆ ?, ?
+
+­şÜù [10/10] Istanbul-Canakkale ÔÇö K─▒sa K─▒y─▒ Rotas─▒
+   Ô£à 307.0km | 1 durak | Final SOC: 30.8% | 12.7s ÔåÆ ?
+
+==========================================================================================
+Rota                        Mesafe  Durak  Final SOC   S├╝re
+------------------------------------------------------------------------------------------
+Istanbul-Ankara             444.6km     2x      28.8%  11.4s
+Ankara-Erzurum              860.8km     2x      56.0%  23.2s
+Izmir-Antalya               466.9km     1x      20.7%  12.7s
+Istanbul-Izmir              485.0km     2x      18.3%  12.5s
+Ankara-Bolu                 186.2km     1x      38.2%   7.2s
+Bursa-Eskisehir             152.6km     1x      52.1%   5.9s
+Antalya-Konya               302.9km     1x      33.4%   9.6s
+Istanbul-Trabzon           1058.9km     6x      23.5%  26.5s
+Ankara-Mersin               508.0km     2x      27.5%  15.7s
+Istanbul-Canakkale          307.0km     1x      30.8%  12.7s
+==========================================================================================
+
+==========================================================================================
+­şöı G├ûREV 2: ─░STANBUL-ANKARA BOLU SEGMENTI ─░STASYON SKOR DENET─░M─░
+==========================================================================================
+
+­şôè Rota ├ûzeti: 444.6km, 2 ┼şarj dura─ş─▒
+
+­şöî ┼ŞARJ DURA─ŞI #1:
+   ─░stasyon: ?
+   G├╝├ğ: ? kW
+   A─ş: ?
+   S├╝re: 34.0 dk
+   Giri┼ş SOC: ?%
+   Hedef SOC: 82.0%
+
+­şöî ┼ŞARJ DURA─ŞI #3:
+   ─░stasyon: ?
+   G├╝├ğ: ? kW
+   A─ş: ?
+   S├╝re: 37.7 dk
+   Giri┼ş SOC: ?%
+   Hedef SOC: 85.0%
+
+­şôı T├£M BACAKLAR (drive/charge s─▒ras─▒):
+   [0] ­şÜù S├£R├£┼Ş: 131.7km (toplam: 131.7km) | SOC: 85.0% ÔåÆ 18.8%
+   [1] ­şöî ┼ŞARJ: ? | ?% ÔåÆ 82.0% (34.0 dk)
+   [2] ­şÜù S├£R├£┼Ş: 149.6km (toplam: 281.3km) | SOC: 82.0% ÔåÆ 16.5%
+   [3] ­şöî ┼ŞARJ: ? | ?% ÔåÆ 85.0% (37.7 dk)
+   [4] ­şÜù S├£R├£┼Ş: 163.3km (toplam: 444.6km) | SOC: 85.0% ÔåÆ 28.8%
+
+
+­şÅü N─░HA─░ DENET─░M TAMAMLANDI
