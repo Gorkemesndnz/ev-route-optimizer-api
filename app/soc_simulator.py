@@ -39,7 +39,6 @@ from app.utils.geo import calculate_bearing
 from app.constants import (
     HARD_MIN_SOC,
     TARGET_MIN_SOC,
-    SAFETY_BUFFER_PERCENT,
     MIN_CHARGE_THRESHOLD_PERCENT,
     MIN_DISTANCE_BETWEEN_STOPS_KM,
     STOP_PENALTY_MINUTES,
@@ -49,7 +48,6 @@ from app.constants import (
     TARGET_SOC_MAX,
     TARGET_SOC_STEP,
     MAX_MIN_REQUIRED_SOC,
-    HOTSPOT_SOC_BUFFER,
     MULTI_STOP_TARGET_MIN,
     MULTI_STOP_TARGET_MAX,
     FINAL_STOP_TARGET_MIN,
@@ -57,6 +55,9 @@ from app.constants import (
     DEFAULT_ARRIVAL_SOC,
     LONG_ROUTE_ARRIVAL_SOC
 )
+
+# Faz 1: Dinamik Güvenlik Heuristiği
+from app.safety_heuristics import calculate_dynamic_reserve
 
 logger = get_logger("soc_simulator")
 
@@ -264,20 +265,41 @@ class SOCSimulator:
             remaining_consumption_kwh = remaining_consumption_suffix[segment.index + 1]
             
             # Minimum gerekli SOC hesapla (artık GERÇEK kalan tüketimle)
-            min_required_soc = self._calculate_min_required_soc(remaining_consumption_kwh)
+            # Faz 1: min_required_soc hesaplaması için reserve (safety buffer) gerekiyor.
+            # Fakat _calculate_min_required_soc'a paslamıyoruz, onu hotspot mantığında veya direkt _calculate_min_required_soc içinde halledebiliriz.
+            # _calculate_min_required_soc fonksiyonu imzasını dinamik yapmak yerine, onu çağırırken hesapladığımız rezervi iletelim.
+            
+            # 1. Segment bazlı rezervi hesapla
+            current_reserve = calculate_dynamic_reserve(
+                segment_distance_km=segment.distance_km,
+                elevation_gain_m=segment.elevation_gain_m,
+                distance_to_next_station_km=remaining_distance, # Şimdilik dist_to_next_station = remaining_dist (optimizasyon basitleştirmesi)
+                temperature_c=self.temperature_c if hasattr(self, 'temperature_c') else 20.0 # Temperature parametresini ekleyeceğiz
+            )
+            
+            # 2. _calculate_min_required_soc çağrısını rezerv değeriyle at
+            min_required_soc = self._calculate_min_required_soc(
+                remaining_consumption_kwh=remaining_consumption_kwh, 
+                reserve=current_reserve
+            )
+            
+            # Faz 3.5: SOC Tabandan Sekmesi (Floor Guard)
+            projected_soc_after_floored = max(0.0, projected_soc_after)
+
             
             # 🔧 DEBUG: Hotspot karar verme
             logger.debug(
                 f"[REQ] remaining={remaining_distance:.1f}km, remaining_kwh={remaining_consumption_kwh:.2f}, "
-                f"min_req={min_required_soc:.1f}%, projected_soc={projected_soc_after:.1f}%"
+                f"min_req={min_required_soc:.1f}%, projected_soc={projected_soc_after:.1f}%, (floored={projected_soc_after_floored:.1f}%)"
             )
             
             # 🔧 ERKEN HOTSPOT TESPİTİ: Segment SONRASI SOC çok düşecekse, ÖNCE şarj et
             should_create_hotspot = self._should_create_hotspot(
-                current_soc=projected_soc_after,  # Segment SONRASI SOC ile kontrol
+                current_soc=projected_soc_after_floored,  # Segment SONRASI SOC ile kontrol
                 min_required_soc=min_required_soc,
                 cumulative_km=segment.cumulative_distance_km,
-                last_hotspot_km=last_hotspot_km
+                last_hotspot_km=last_hotspot_km,
+                reserve=current_reserve # <--- Yeni güvenlik marjı
             )
             
             if should_create_hotspot:
@@ -445,7 +467,7 @@ class SOCSimulator:
                 # Hedef = varış SOC + kalan mesafe tüketimi + güvenlik
                 # 🔧 Uzun rotalarda varış hedefi daha düşük (%15-20)
                 arrival_target = LONG_ROUTE_ARRIVAL_SOC if is_long_route else self.target_arrival_soc
-                target = arrival_target + required_soc + SAFETY_BUFFER_PERCENT
+                target = arrival_target + required_soc + 5.0  # +5% base reserve
                 
                 if is_long_route:
                     # 🔧 UZUN ROTA: Son durak için daha düşük hedef (%60-85)
@@ -462,7 +484,7 @@ class SOCSimulator:
                 required_soc = (required_kwh / self.battery_capacity_kwh) * 100
                 
                 # 🔧 V2.3: Sonraki durağa %25 SOC ile varmayı hedefle (40 değil!)
-                target = 25.0 + required_soc + SAFETY_BUFFER_PERCENT
+                target = 25.0 + required_soc + 5.0
                 
                 # 🔧 UZUN ROTA: Ara duraklar için daha düşük bant (%72-82)
                 # ESKİ: max(80.0, min(95.0, target)) - çok yüksek!
@@ -485,12 +507,13 @@ class SOCSimulator:
                 f"({'SON DURAK' if is_last_stop else f'ARA DURAK - sonraki {distance_to_next:.0f}km'})"
             )
     
-    def _calculate_min_required_soc(self, remaining_consumption_kwh: float) -> float:
+    def _calculate_min_required_soc(self, remaining_consumption_kwh: float, reserve: float = 5.0) -> float:
         """
         🔧 V2.5: Kalan yol için gereken minimum SOC hesapla.
         
         Args:
             remaining_consumption_kwh: Kalan segmentlerin TOPLAM tüketimi (MainCalculator'dan)
+            reserve: Dinamik güvenlik marjı (Faz 1)
         
         Mantık:
         - MainCalculator'ın segment bazlı gerçek tüketimlerini kullan
@@ -500,8 +523,8 @@ class SOCSimulator:
         required_percent = (remaining_consumption_kwh / self.battery_capacity_kwh) * 100
         
         # Varışa ulaşmak için gereken minimum SOC
-        # = kalan yol tüketimi + varış hedefi + güvenlik
-        min_required = self.target_arrival_soc + required_percent + SAFETY_BUFFER_PERCENT
+        # = kalan yol tüketimi + varış hedefi + güvenlik (DINAMIK)
+        min_required = self.target_arrival_soc + required_percent + reserve
         
         # Eğer 100%'ü aşıyorsa, ara şarj kaçınılmaz
         if min_required > 100.0:
@@ -512,8 +535,8 @@ class SOCSimulator:
             if remaining_consumption_kwh > max_single_charge_kwh:
                 return max(50.0, self.charge_min_soc + 30)  # En az %50
             else:
-                # Tek şarjla bitirilecek - standart eşik
-                return max(35.0, self.charge_min_soc + SAFETY_BUFFER_PERCENT)
+                # Tek şarjla bitirilecek - dinamik eşik
+                return max(35.0, self.charge_min_soc + reserve)
         
         return max(MIN_CHARGE_THRESHOLD_PERCENT, min_required)
     
@@ -522,7 +545,8 @@ class SOCSimulator:
         current_soc: float,
         min_required_soc: float,
         cumulative_km: float,
-        last_hotspot_km: float
+        last_hotspot_km: float,
+        reserve: float = 5.0
     ) -> bool:
         """
         Bu noktada hotspot oluşturulmalı mı?
@@ -547,11 +571,9 @@ class SOCSimulator:
         # Kullanıcı eşiği
         if current_soc <= self.charge_min_soc:
             return True
-        
+            
         # 🔧 YUMUŞATILMIŞ: Dinamik eşik - BUFFER ile kontrol
-        # Eğer SOC, (min_required - buffer)'ın altına düştüyse hotspot oluştur
-        # Bu sayede %60 SOC'ta panikleyip hotspot üretmez
-        if current_soc < (capped_min_required - HOTSPOT_SOC_BUFFER):
+        if current_soc < (capped_min_required - 40.0):
             return True
         
         return False

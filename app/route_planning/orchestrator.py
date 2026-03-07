@@ -204,11 +204,17 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         # STEP 3: Elevation verisi al
         elevation_gain_m = 0.0
         elevation_loss_m = 0.0
+        raw_elevations = []
         if polyline:
             try:
-                elevation_stats = await google_maps.get_elevation_stats(polyline)
+                import math
+                num_segments = math.ceil(route_distance_km / 10.0)
+                num_samples = max(2, min(500, num_segments + 1))
+                
+                elevation_stats = await google_maps.get_elevation_stats(polyline, samples=num_samples)
                 elevation_gain_m = elevation_stats.get("gain_m", 0.0)
                 elevation_loss_m = elevation_stats.get("loss_m", 0.0)
+                raw_elevations = elevation_stats.get("raw_elevations", [])
                 logger.info(f"Elevation: +{round(elevation_gain_m)}m / -{round(elevation_loss_m)}m")
             except Exception as e:
                 logger.warning(f"Elevation API failed: {e}")
@@ -254,7 +260,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         segments = segmenter.create_segments(
             polyline=polyline,
             total_elevation_gain_m=elevation_gain_m,
-            total_elevation_loss_m=elevation_loss_m
+            total_elevation_loss_m=elevation_loss_m,
+            raw_elevations=raw_elevations
         )
         logger.info(f"Segments created: {len(segments)} segments")
         

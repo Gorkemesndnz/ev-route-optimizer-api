@@ -221,7 +221,7 @@ class GoogleMapsService(BaseService):
             else:
                 total_loss += abs(diff)
 
-        return {"gain_m": total_gain, "loss_m": total_loss}
+        return {"gain_m": total_gain, "loss_m": total_loss, "raw_elevations": elevations}
 
     # ============================================================
     # 3) DISTANCE MATRIX API → Metre ve süre bilgisi döner

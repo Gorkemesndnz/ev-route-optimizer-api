@@ -21,8 +21,8 @@ TARGET_ARRIVAL_SOC = 15.0  # Varışta tercih edilen
 TARGET_CHARGE_MIN_SOC = 12.0  # İstasyona varışta tercih edilen
 TARGET_MIN_SOC = 15.0  # Tercih edilen minimum (alias)
 
-# Güvenlik marjı
-SAFETY_BUFFER_PERCENT = 5.0  # Güvenlik marjı
+# Güvenlik marjı (Dinamikleşti - safety_heuristics.py kullanılıyor)
+# Artık statik SAFETY_BUFFER_PERCENT veya HOTSPOT_SOC_BUFFER kullanılmıyor.
 
 # Şarj limitleri
 MAX_CHARGE_LIMIT = 100.0  # Maksimum şarj seviyesi
@@ -70,8 +70,7 @@ TARGET_SOC_STEP = 5  # %5 aralıklarla dene (hız için)
 # =============================================================================
 
 MAX_MIN_REQUIRED_SOC = 50.0  # min_required_soc üst sınırı
-HOTSPOT_SOC_BUFFER = 40.0  # SOC tampon marjı (35→40 artırıldı = daha az hotspot)
-# Sonuç: Hotspot eşiği = 50-40 = %10 civarı
+# Sonuç: Yukarıdaki MAX_MIN_REQUIRED_SOC sınırı korunuyor, buffer dinamik
 
 
 # =============================================================================

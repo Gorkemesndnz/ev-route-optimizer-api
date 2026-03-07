@@ -1,0 +1,328 @@
+
+v3'te Güncellenen 3 Şey
+Önceki plana eklenen mühendislik kararları:
+
+
+
+
+⚠️  Kritik Mimari Kural — Look-Ahead API Tuzağı
+Bu kural ihlal edilirse sistem production'da çöker. Antigravity'ye gönderilecek prompt'ta da tekrarlanıyor.
+
+
+
+
+
+
+Hiçbir kod yazılmadan önce 3 rota ölçülüyor. Bu adım olmadan hangi fazın gerçekten işe yaradığını ispat etmek mümkün değil.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Inline testler her fazın kendi mantığını doğruladı. Bu faz tüm pipeline'ı uçtan uca koşuyor.
+
+
+
+
+Antigravity'ye Gönderilecek Nihai Prompt
+Aşağıdaki metni olduğu gibi kopyala-yapıştır. Hiçbir şey ekleme veya çıkarma.
+
+
+
+
+Rapordaki Sorunları Çözüyor muyuz?
+Analiz raporunun tespit ettiği her sorun ve planımızdaki karşılığı:
+
+
+
+
+TABLE:
+🔋 EV ROUTE OPTIMIZER
+NİHAİ GELİŞTİRME PLANI  v3
+Delta-Toleranslı Test · Inline Birim Testler · API Güvenli Look-ahead · safety_heuristics.py
+Mart 2026
+
+TABLE:
+1 — Regression Test Mantığı: Birebir Eşleşme → Delta Toleransı
+Faz 0.5 fizik motorunu değiştireceği için Faz 0 baseline'ı ile Faz 1 çıktısı doğal olarak farklılaşacak. "Birebir JSON diff" testi sürekli fail verir. Çözüm: Faz 0.5 tamamlanır tamamlanmaz yeni bir baseline (B1) alınır. Karşılaştırma metriği sayısal eşiklerle yapılır.
+• hotspot_count: ±1 tolerans  |  • hotspot_km: ±5 km sapma  |  • final_soc: ±3% sapma
+2 — Birim Testler Her Fazın İçine Taşındı
+TDD prensibi gereği her faz kendi inline testini içeriyor. Hata oluşursa hangi alt fazdan geldiği anında izole edilebilir. Ayrı bir test fazı kalmadı — Faz 5 artık entegrasyon testi fazı.
+3 — safety_heuristics.py Modülü Eklendi
+Dinamik buffer heuristikleri (sıcaklık, elevation, mesafe çarpanları) soc_simulator.py'nin 859 satırına gömülmüyor. Bunun yerine ayrı bir safety_heuristics.py modülü oluşturuluyor. SRP ihlali önleniyor, simülatör sade kalıyor.
+
+TABLE:
+❌  YANLIŞ — Her segmentte API çağrısı (50 segment = 50 network isteği):
+def should_charge_early(current_soc, ...):
+    best = find_best_station(search_radius=150)  # ← GOOGLE API — YAPMA!
+
+TABLE:
+✅  DOĞRU — preloaded_stations (belleğe alınmış corridor sonuçları):
+def should_charge_early(current_soc, preloaded_stations, segment, km_ahead=150):
+    reachable = [s for s in preloaded_stations if s.distance_km <= km_ahead]
+    if not reachable: return False
+    best     = min(reachable, key=lambda s: s.deviation_km)
+    energy   = calculate_energy_to(best)
+    reserve  = calculate_dynamic_reserve(segment, best.distance_km)  # safety_heuristics
+    return current_soc < (energy + reserve)
+
+TABLE:
+FAZ 0
+Benchmark Testi
+Temiz ölçüm noktası — değişiklik öncesi sistem fotoğrafı  |  Baseline B0
+
+TABLE:
+#	Görev / Açıklama	Dosya	Durum
+0.1	İstanbul→Ankara rotasını çalıştır — SOC eğrisi, hotspot sayısı ve km konumlarını kaydet	benchmark/B0.json	KRİTİK
+0.2	Ankara→Bolu (dağlık) — Elevation hatasının mevcut boyutunu gözlemle	benchmark/B0.json	KRİTİK
+0.3	İzmir→Antalya (uzun mesafe) — Charging desert senaryosu için hotspot dağılımını kaydet	benchmark/B0.json	KRİTİK
+0.4	Baseline B0 şema — JSON'a şu metrikleri kaydet:
+{ hotspot_count, hotspot_positions_km[], final_soc_pct, total_charge_time_min }
+Faz 0.5 sonrası bu dosyaya dokunulmaz. B1 adıyla yeni dosya açılır.	benchmark/B0.json	KRİTİK
+
+TABLE:
+⚠️  Önemli: Faz 0.5 fizik motorunu değiştireceği için B0 ile Faz 1 çıktısı birebir aynı olmayacak. Bu beklenen bir durum. B0 sadece "eski sistem neredeydi" sorusunu yanıtlamak için saklanıyor.
+
+TABLE:
+FAZ 0.5
+Elevation Dağılım Düzeltmesi
+Fizik motoru önce doğru çalışmalı — üstüne zeka gelir
+
+TABLE:
+SOC simülatörü, dinamik buffer ve look-ahead algoritmaları hepsi route_segmenter.py'den gelen elevation verisine bağımlı. Fizik yanlışsa üstüne yazılan her şey de yanlış çalışır.
+
+TABLE:
+#	Görev / Açıklama	Dosya	Durum
+0.5.1	Sil: gain_per_segment = total_elevation_gain_m / num_segments
+Google Elevation API nokta listesini segment sınırlarına göre böl:
+segment.elevation_gain = max(0, elev[end_idx] - elev[start_idx])
+segment.elevation_loss = max(0, elev[start_idx] - elev[end_idx])	route_segmenter.py	KRİTİK
+0.5.2	Ankara→Bolu benchmark'ını tekrar çalıştır. Dağlık segmentlerde SOC düşüşü artmalı, düz segmentlerde azalmalı.	benchmark/B1.json	KRİTİK
+0.5.3	Baseline B1 oluştur — Faz 1 ve sonrası bu baseline ile karşılaştırılacak:
+{ hotspot_count, hotspot_positions_km[], final_soc_pct, total_charge_time_min }
+Bu noktadan sonra diff "birebir eşleşme" değil, delta toleransı ile yapılır.	benchmark/B1.json	KRİTİK
+
+TABLE:
+🧪  Inline Test — Faz 0.5 — Elevation Dağılımı
+✔  5 segmentli mock rota, bilinen elevation profili → segment.elevation_gain toplamı, toplam tırmanışa eşit olmalı
+✔  Tırmanışın ilk 2 segmentte yoğun olduğu bir rotada, segment[0].elevation_gain > segment[4].elevation_gain
+✔  Eşit dağıtım artık olmamalı: hiçbir segmentte gain = total/N çıkmamalı
+
+TABLE:
+FAZ 1
+Dinamik Güvenlik Tamponları
+HOTSPOT_SOC_BUFFER=40 ve SAFETY_BUFFER=5 sabitlerini öldür  |  safety_heuristics.py
+
+TABLE:
+SRP Kararı: Heuristikler Simülatöre Gömülmüyor
+Dinamik buffer hesapları soc_simulator.py'nin (859 satır) içine yazılmıyor. Bunun yerine safety_heuristics.py adlı ayrı bir modül oluşturuluyor. Simülatör bu modülü import eder. SRP korunuyor, test edilebilirlik artıyor.
+
+TABLE:
+#	Görev / Açıklama	Dosya	Durum
+1.1	Yeni dosya oluştur: safety_heuristics.py
+def calculate_dynamic_reserve(segment, distance_to_next_km) -> float:
+    reserve = 5.0
+    if segment.elevation_gain > 200: reserve += 5.0
+    if distance_to_next_km > 80:    reserve += 5.0
+    if segment.temperature_c < 0:   reserve += 3.0
+    return min(reserve, 18.0)  # Tavan: %18	safety_heuristics.py	KRİTİK
+1.2	Aynı dosyaya ekle: safety_heuristics.py
+def calculate_dynamic_hotspot_buffer(remaining_km, elevation_gain, temp_c) -> float:
+    base = 25.0
+    if elevation_gain > 500: base += 10.0
+    if temp_c < 0:           base += 5.0
+    if remaining_km < 50:    base = max(10.0, base - 10.0)
+    return base
+constants.py'den HOTSPOT_SOC_BUFFER = 40 ve SAFETY_BUFFER_PERCENT = 5 satırlarını sil.	safety_heuristics.py
+constants.py	KRİTİK
+1.3	soc_simulator.py içinde:
+from safety_heuristics import calculate_dynamic_reserve, calculate_dynamic_hotspot_buffer
+Simülatör sadece bu iki fonksiyonu çağırır, hesap mantığını bilmez.	soc_simulator.py	YÜKSEK
+1.4	Benchmark — Delta Toleransı ile karşılaştır (B1 baseline):
+hotspot_count : ±1  |  hotspot_km : ±5  |  final_soc : ±3%
+Bu eşikler aşılırsa fazı tekrar incele. Birebir eşleşme beklenmez.	benchmark/run_1.json	YÜKSEK
+
+TABLE:
+🧪  Inline Test — Faz 1 — safety_heuristics.py
+calculate_dynamic_reserve: elevation_gain=300, distance=90 → reserve = 15.0 (5+5+5)
+calculate_dynamic_reserve: temp=-5, elevation=50, distance=30 → reserve = 8.0 (5+3)
+calculate_dynamic_reserve: tüm faktörler yüksek → tavan 18.0'ı geçmemeli
+calculate_dynamic_hotspot_buffer: remaining=30 → base max(10, 25-10) = 15.0
+calculate_dynamic_hotspot_buffer: elevation=600, temp=-3 → 25+10+5 = 40.0
+
+TABLE:
+FAZ 2
+Look-Ahead Şarj Kararı
+API çağrısı yok — preloaded_stations ile ileriye bak
+
+TABLE:
+Kural: Bu fonksiyon içinde kesinlikle Google Places veya OCM API çağrısı yapılmayacak. Sadece find_stations_for_hotspots() tarafından daha önce çekilmiş preloaded_stations listesine bakılacak.
+
+TABLE:
+#	Görev / Açıklama	Dosya	Durum
+2.1	# safety_heuristics.py'yi import et — hesap orada
+def should_charge_early(current_soc, preloaded_stations, segment, km_ahead=150):
+    reachable = [s for s in preloaded_stations if s.distance_km <= km_ahead]
+    if not reachable: return False
+    best    = min(reachable, key=lambda s: s.deviation_km)
+    energy  = calculate_energy_to(best)
+    reserve = calculate_dynamic_reserve(segment, best.distance_km)
+    return current_soc < (energy + reserve)	soc_simulator.py	KRİTİK
+2.2	SOC simülatörünün her segment döngüsünde preloaded_stations listesini parametre olarak aldığını doğrula. Corridor search sonuçları simülatöre geçirilmeden önce bu liste dolu olmalı.	soc_simulator.py	YÜKSEK
+2.3	Benchmark — B1 baseline ile delta toleransı:
+İzmir→Antalya'da (desert test) erken şarj kararının devreye girdiğini doğrula.
+hotspot_count : ±1  |  hotspot_km : ±5  |  final_soc : ±3%	benchmark/run_2.json	YÜKSEK
+
+TABLE:
+🧪  Inline Test — Faz 2 — Look-Ahead (3 senaryo)
+✔  SOC %80, ileride kolay ulaşılır istasyon (50 km) → False döndürmeli
+✔  SOC %40, 130 km ötede tek istasyon, enerji yetersiz → True döndürmeli
+✔  preloaded_stations boş → False döndürmeli, exception fırlatmamalı
+
+TABLE:
+FAZ 3
+Mutable State Düzeltmesi
+SAĞLAM-03 yamasını gereksiz kıl — shallow copy ile temiz çözüm
+
+TABLE:
+#	Görev / Açıklama	Dosya	Durum
+3.1	import copy
+for target_soc in range(65, 101, 5):
+    seg_copy = [copy.copy(s) for s in segments]  # shallow yeterli, deepcopy YAPMA
+    result = simulator.simulate(seg_copy, distance)	soc_simulator.py	YÜKSEK
+3.2	SAĞLAM-03 FIX bloğunu (satır 758-769) sil. Copy mekanizması bu korumayı artık sağlıyor.	soc_simulator.py	YÜKSEK
+
+TABLE:
+🧪  Inline Test — Faz 3 — Mutable State
+✔  8 iterasyon sonrasında orijinal segments[0].soc_at_start değeri başlangıç değerinde kalmalı (None veya ilk SOC)
+✔  simulate() çağrısı aynı segment listesiyle iki kez çalıştırıldığında aynı sonucu vermeli
+
+TABLE:
+FAZ 4
+ML Hazırlığı — ConsumptionEngine
+v1 çalışırken ML için interface kur, sisteme dokunma
+
+TABLE:
+#	Görev / Açıklama	Dosya	Durum
+4.1	# consumption_engine/base.py
+from abc import ABC, abstractmethod
+class ConsumptionEngine(ABC):
+    @abstractmethod
+    def estimate(self, segment, weather, vehicle) -> float: ...
+    @property
+    def engine_version(self) -> str: ...	consumption_engine/base.py	YÜKSEK
+4.2	Mevcut MainCalculator'ı PhysicsConsumptionEngine(ConsumptionEngine) olarak sarmal. İç mantık değişmiyor.	consumption_engine/v1_rule_based/engine.py	YÜKSEK
+4.3	MLConsumptionEngine stub — aynı interface, şimdilik PhysicsEngine'e proxy.	consumption_engine/v2_ml_model/engine.py	ORTA
+4.4	Orchestrator'da: USE_ML_ENGINE = False (varsayılan). Tek satır ile ML'e geçilebilir.	route_planning/orchestrator.py	ORTA
+
+TABLE:
+🧪  Inline Test — Faz 4 — ConsumptionEngine Interface
+PhysicsEngine ve MLStub aynı input için float döndürmeli, tip uyumsuzluğu olmamalı
+USE_ML_ENGINE = True yapıldığında orchestrator engine'i değiştirmeli, rota sonucu tutarlı kalmalı
+
+TABLE:
+FAZ 5
+Entegrasyon Testi
+Tüm fazları birlikte test et — silent regression'ları yakala
+
+TABLE:
+#	Görev / Açıklama	Dosya	Durum
+5.1	3 benchmark rotasını full pipeline ile çalıştır — B1 baseline vs son çıktı:
+hotspot_count : ±1  |  hotspot_km : ±5  |  final_soc : ±3%
+Bu eşiklerin dışına çıkan rota var mı? Varsa hangi faza ait olduğunu izole et.	tests/test_integration.py	YÜKSEK
+5.2	Mock API'ler ile tam pipeline (Google Places, OCM, Elevation hepsi mock). Network I/O yok, deterministik sonuç.	tests/test_integration.py	YÜKSEK
+5.3	İzmir→Antalya'da look-ahead kararı E2E doğrulaması: should_charge_early() doğru segmentte True döndürdü mü?	tests/test_integration.py	YÜKSEK
+5.4	Tüm fazların birim testlerini tek seferde koş (CI için): pytest tests/ -v	tests/	ORTA
+
+TABLE:
+📋  Kopyala-Yapıştır Promptu
+Role: Act as a Lead Software Architect executing a strict Tech Spec.
+
+Execution Rules:
+1. Execute phases IN ORDER. Do not skip ahead.
+2. NO Google Places / OCM API calls inside the SOC simulator loop.
+   Look-ahead MUST use preloaded_stations already fetched by find_stations_for_hotspots().
+3. Dynamic buffer heuristics go in a NEW file: safety_heuristics.py
+   soc_simulator.py imports from it. Do NOT embed heuristics inside the simulator.
+4. Use copy.copy() for segment cloning in ChargePlanOptimizer. Never deepcopy.
+5. Do NOT touch station_finder.py — intentional decision.
+6. Phase 5 (Charging Curve) is CANCELED. charging_model.py already handles CC-CV.
+
+PHASE 0.5 — Elevation Distribution Fix  →  route_segmenter.py
+  Delete: gain_per_segment = total_elevation_gain_m / num_segments
+  Add per-segment delta:
+    segment.elevation_gain = max(0, elev[end_idx] - elev[start_idx])
+    segment.elevation_loss = max(0, elev[start_idx] - elev[end_idx])
+
+PHASE 1 — Dynamic Safety Buffers  →  NEW safety_heuristics.py + constants.py
+  Create safety_heuristics.py with:
+    calculate_dynamic_reserve(segment, distance_to_next_km) -> float
+    calculate_dynamic_hotspot_buffer(remaining_km, elevation_gain, temp_c) -> float
+  Delete HOTSPOT_SOC_BUFFER = 40 and SAFETY_BUFFER_PERCENT = 5 from constants.py.
+
+Regression testing uses DELTA TOLERANCE, not exact JSON diff:
+  hotspot_count: ±1  |  hotspot_km: ±5  |  final_soc: ±3%
+After Phase 0.5 finishes, save new baseline B1 before continuing.
+
+Benchmark routes:
+  1. Istanbul -> Ankara  (standard highway)
+  2. Ankara -> Bolu      (mountain — validates Phase 0.5)
+  3. Izmir -> Antalya    (long distance / desert — validates Phase 2 look-ahead)
+
+Output PHASE 0.5 and PHASE 1 code now. I will test before proceeding to Phase 2.
+
+TABLE:
+Rapordaki Sorun	Şiddet	Plan Karşılığı	Sonuç
+Elevation eşit dağıtım — fizik hatası	🔴 Kritik	Faz 0.5	✅ TAM ÇÖZÜLDÜ
+HOTSPOT_SOC_BUFFER = 40 miyopluğu	🔴 Kritik	Faz 1	✅ TAM ÇÖZÜLDÜ
+SAFETY_BUFFER_PERCENT = 5 sabit	🔴 Kritik	Faz 1	✅ TAM ÇÖZÜLDÜ
+Look-ahead / ileriye görüş yok	🟠 Yüksek	Faz 2	✅ TAM ÇÖZÜLDÜ
+Mutable shared state / SAĞLAM-03	🟠 Yüksek	Faz 3	✅ TAM ÇÖZÜLDÜ
+ML interface / strateji eksikliği	🟡 Orta	Faz 4	✅ TAM ÇÖZÜLDÜ
+SRP ihlali — buffer hesabı simülatörde	🟡 Orta	Faz 1 (yeni)	✅ safety_heuristics.py
+Şarj eğrisi CC-CV eksikliği	🟡 Orta	İptal	✅ charging_model.py ZATEN VAR
+station_finder.py monolitik (1406 satır)	🔴 Yüksek	Kapsam dışı	🚫 BİLİNÇLİ KARAR
+Backtracking mekanizması yok	🟠 Yüksek	Kısmi	⚠️ Look-ahead azaltıyor, DP yok
+Runtime import / circular dependency	🟡 Orta	Kısmi	⚠️ Faz 4 ABC kısmen iyileştiriyor
+Global singleton (StationFilter vb.)	🟢 Düşük	Kapsam dışı	⚠️ ÇÖZÜLMÜYOR — öncelik düşük
+ChargePlanOptimizer brute-force O(K×N)	🟡 Orta	Kapsam dışı	⚠️ Perf kabul edilebilir
+SOC=0 rota tamamlanamaz kontrolü	🟠 Yüksek	Kapsam dışı	⚠️ İleride değerlendirilecek
+
+TABLE:
+Özet
+✅  Sistemi bozan fizik hatası, production güvenliğini tehdit eden 3 kritik sorun ve 3 yüksek öncelikli sorunun tamamı çözülüyor.
+⚠️   Tek önemli açık nokta: Backtracking yok. Look-ahead bu riski önemli ölçüde azaltıyor. DP tabanlı global optimizasyon bir sonraki büyük iterasyon konusu.
+🚫  station_finder.py bilinçli olarak kapsam dışı. Çalışıyor, regresyon riski sıfır.
+
+TABLE:
+EV Route Optimizer · Nihai Geliştirme Planı v3 · Mart 2026
+Faz 0 → 0.5 → 1 → 2 → 3 → 4 → 5  ·  Delta-Toleranslı Test  ·  API Güvenli  ·  SRP Korumalı
