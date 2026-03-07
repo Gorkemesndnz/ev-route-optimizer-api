@@ -764,12 +764,16 @@ class CorridorSearcher:
                 if not has_parking:
                     has_parking = any(kw in place_name or kw in vicinity for kw in ["otopark", "parking", "park"])
                 
-                # Mola tesisi genelde her şeyi içerir
-                is_rest_area = any(kw in place_name or kw in vicinity for kw in ["mola", "dinlenme", "rest area", "service area"])
+                # Mola tesisi / Highway dinlenme alanı genelde her şeyi içerir
+                is_rest_area = any(kw in place_name or kw in vicinity for kw in [
+                    "mola", "dinlenme", "rest area", "service area",
+                    "highway", "tesis", "hızlı şarj istasyonu"
+                ])
                 if is_rest_area:
                     has_toilet = True
                     has_food = True
                     has_parking = True
+                    has_shopping = True  # Highway tesisleri genellikle AVM/market içerir
                 
                 # is_open_now (Google Places opening_hours'dan)
                 opening_hours = station.get("opening_hours", {})
