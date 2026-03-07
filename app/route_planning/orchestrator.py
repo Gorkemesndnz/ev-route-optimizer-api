@@ -35,7 +35,7 @@ from app.soc_simulator import (
     SOCSimulator, 
     ChargePlanOptimizer,
 )
-from app.consumption_engine.main_calculator import calculate_route_consumption
+from app.consumption_engine import get_engine
 from app.infrastructure.vehicle_catalog import get_vehicle_model
 from app.route_selector import find_best_route
 from app.services.weather_service import WeatherService
@@ -272,8 +272,9 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             weather_service=weather_service,
         )
         
-        # STEP 7: Main Calculator - Her segment için tüketim
-        segments_with_consumption = calculate_route_consumption(
+        # STEP 7: ConsumptionEngine - Her segment için tüketim (Faz 4: ABC proxy)
+        engine = get_engine()
+        segments_with_consumption = engine.estimate(
             vehicle=vehicle,
             segments=segments,
             weather_checkpoints=checkpoint_weather,
@@ -353,8 +354,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                 if refined_weather:
                     logger.info("Pass 2: Re-calculating consumption with refined weather...")
                     
-                    # Tüketimi yeniden hesapla
-                    segments_with_consumption = calculate_route_consumption(
+                    # Tüketimi yeniden hesapla (Faz 4: ABC proxy)
+                    segments_with_consumption = engine.estimate(
                         vehicle=vehicle,
                         segments=segments,
                         temperature_celsius=refined_weather.temp_c,

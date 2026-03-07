@@ -106,3 +106,11 @@ SAFE_HARBOR_MAX_RETURN_KM = 120.0
 
 # Kaç kurtarıcı istasyon hedeflenmeli (tek istasyon bağımlılığı olmasın)
 SAFE_HARBOR_MIN_RESCUE_STATIONS = 3  # En az 2-3 istasyona yetecek batarya
+
+# =============================================================================
+# FAZ 4: ML MOTOR GEÇİŞ BAYRAĞI
+# =============================================================================
+
+# True yapıldığında MLConsumptionEngine aktif olur (şimdilik stub/proxy).
+# False iken PhysicsConsumptionEngine (MainCalculator) kullanılır.
+USE_ML_ENGINE = False
