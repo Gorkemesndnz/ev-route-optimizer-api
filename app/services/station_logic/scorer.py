@@ -22,12 +22,12 @@ logger = get_logger("StationScorer")
 # SCORING CONSTANTS
 # =============================================================================
 
-# Skorlama ağırlıkları (V2.9)
+# Skorlama ağırlıkları (V3.0 — Rating düşürüldü, Güç/Amenities artırıldı)
 WEIGHT_DEVIATION = 0.30
-WEIGHT_POWER = 0.20
-WEIGHT_RATING = 0.25
-WEIGHT_AMENITIES = 0.15
-WEIGHT_POPULARITY = 0.10
+WEIGHT_POWER = 0.25      # %20 → %25 (hızlı şarj öncelikli)
+WEIGHT_RATING = 0.15     # %25 → %15 (istasyonlarda az yorum var, güvenilirlik düşük)
+WEIGHT_AMENITIES = 0.18  # %15 → %18 (highway tesisleri ödüllendirilmeli)
+WEIGHT_POPULARITY = 0.12 # %10 → %12 (yüksek yorumlu yerler = güvenilir)
 
 # Greedy selection ağırlıkları
 GREEDY_WEIGHT_POWER = 0.30
