@@ -25,6 +25,7 @@ Kullanım:
 
 import time
 from typing import Dict, Any, List, Union, Optional
+import polyline
 from app.models import GeoPoint, RouteStrategy, RoadAvoidances
 from app.services.google_service import google_maps
 from app.services.pricing_service import pricing_service, DEFAULT_PRICE_PER_KWH
