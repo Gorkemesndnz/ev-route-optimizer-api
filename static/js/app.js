@@ -22,6 +22,7 @@ function toggleAiMode() {
     const batterySettings = document.getElementById('batterySettings');
     const passengerLoadCard = document.getElementById('passengerLoadCard');
     const stationPreferencesCard = document.getElementById('stationPreferencesCard');
+    const aiManagedSettings = document.getElementById('aiManagedSettings');
 
     if (aiMode) {
         // --- AI MODU AÇIK: Kartları GİZLE ---
@@ -31,9 +32,9 @@ function toggleAiMode() {
             batterySettings.style.display = 'none';
         }
 
-        // 2. Yolcu ve Yük kartını tamamen gizle
-        if (passengerLoadCard) {
-            passengerLoadCard.style.display = 'none';
+        // 2. Akıllı Yönetilen Ayarları (Sıklık, Hız, Klima) gizle
+        if (aiManagedSettings) {
+            aiManagedSettings.style.display = 'none';
         }
 
         // 3. İstasyon tercihleri kartını tamamen gizle
@@ -49,19 +50,21 @@ function toggleAiMode() {
     } else {
         // --- AI MODU KAPALI: Kartları GÖSTER ---
 
-        // Varsayılan görünüm neyse (block, flex, grid) ona geri döndürür.
-        // Genelde 'block' veya boş string '' işe yarar.
-
         if (batterySettings) {
             batterySettings.style.display = 'block';
         }
 
-        if (passengerLoadCard) {
-            passengerLoadCard.style.display = 'block';
+        if (aiManagedSettings) {
+            aiManagedSettings.style.display = 'block';
         }
 
         if (stationPreferencesCard) {
             stationPreferencesCard.style.display = 'block';
+        }
+
+        // Yolcu kartı her zaman görünür kalsın istiyoruz genelde
+        if (passengerLoadCard) {
+            passengerLoadCard.style.display = 'block';
         }
     }
 }
@@ -141,7 +144,15 @@ function getStationPreferences() {
             document.getElementById('reqFood')?.checked ? 'food' : null,
             document.getElementById('reqShopping')?.checked ? 'shopping' : null,
             document.getElementById('reqParking')?.checked ? 'parking' : null
-        ].filter(Boolean)
+        ].filter(Boolean),
+        // 🔧 V4.0: Yol Engellemeleri (Road Avoidances) - Preferences içinde nested!
+        road_avoidances: {
+            avoid_tolls: document.getElementById('avoidTolls')?.checked || false,
+            avoid_highways: document.getElementById('avoidHighways')?.checked || false,
+            avoid_ferries: document.getElementById('avoidFerries')?.checked || false,
+            avoid_osmangazi_bridge: document.getElementById('avoidOsmangazi')?.checked || false,
+            avoid_canakkale_bridge: document.getElementById('avoidCanakkale')?.checked || false
+        }
     };
 }
 
@@ -498,6 +509,16 @@ async function handleFormSubmit(e) {
         if (routeStrategyEl && routeStrategyEl.value) {
             formData.route_strategy = routeStrategyEl.value;
         }
+
+        // 🔧 V4.0: Sürücü Ayarları (Top-level)
+        formData.driving_style = document.getElementById('drivingStyle')?.value || 'normal';
+        formData.hvac_on = document.getElementById('hvacOn')?.checked ?? true;
+        
+        const maxSpeed = getOptionalValue('maxSpeed');
+        if (maxSpeed !== null) formData.max_speed_kmh = maxSpeed;
+
+        // 🔧 V4.0: Şarj Sıklığı
+        formData.charging_frequency = document.getElementById('chargingFrequency')?.value || 'optimal';
 
         // Çıkış zamanı (opsiyonel) -> ISO 8601 UTC (Z)
         const departureTimeEl = document.getElementById('departureTime');

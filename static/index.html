@@ -189,59 +189,135 @@
                                 </div>
                             </div>
 
-                            <!-- Route Strategy -->
-                            <div>
-                                <label class="block text-gray-400 text-sm mb-2">
-                                    <span class="flex items-center gap-2">
-                                        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor"
-                                            viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                d="M13 7h8m0 0v8m0-8l-8 8M11 17H3m0 0V9m0 8l8-8" />
-                                        </svg>
-                                        Rota Stratejisi
-                                    </span>
-                                </label>
-                                <select id="routeStrategy"
-                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all appearance-none cursor-pointer">
-                                    <option value="optimal" class="bg-slate-800">🎯 Optimal (Süre + Enerji)</option>
-                                    <option value="fastest" class="bg-slate-800">⚡ En Hızlı (Trafik Dahil)</option>
-                                    <option value="efficient" class="bg-slate-800">🔋 En Verimli (Enerji)</option>
-                                    <option value="cheapest" class="bg-slate-800">💰 En Ucuz (Şarj Maliyeti)</option>
-                                </select>
+                            <!-- Route Strategy & AI Settings -->
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-gray-400 text-sm mb-2">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M13 7h8m0 0v8m0-8l-8 8M11 17H3m0 0V9m0 8l8-8" />
+                                            </svg>
+                                            Strateji
+                                        </span>
+                                    </label>
+                                    <select id="routeStrategy"
+                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-green-500/50 input-glow transition-all appearance-none cursor-pointer">
+                                        <option value="optimal" class="bg-slate-800">🎯 Optimal</option>
+                                        <option value="fastest" class="bg-slate-800">⚡ En Hızlı</option>
+                                        <option value="efficient" class="bg-slate-800">🔋 En Verimli</option>
+                                        <option value="cheapest" class="bg-slate-800">💰 En Ucuz</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 text-sm mb-2">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                            </svg>
+                                            Sürüş Tarzı
+                                        </span>
+                                    </label>
+                                    <select id="drivingStyle"
+                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-green-500/50 input-glow transition-all appearance-none cursor-pointer">
+                                        <option value="eco" class="bg-slate-800">🍀 Eco</option>
+                                        <option value="normal" class="bg-slate-800" selected>🚗 Normal</option>
+                                        <option value="sport" class="bg-slate-800">🔥 Sport</option>
+                                    </select>
+                                </div>
                             </div>
 
-                            <!-- Departure Time (Optional) -->
-                            <div>
-                                <label class="block text-gray-400 text-sm mb-2">
-                                    <span class="flex items-center gap-2">
-                                        <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor"
-                                            viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        Çıkış Zamanı (Opsiyonel)
-                                    </span>
-                                </label>
-                                <input type="datetime-local" id="departureTime"
-                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-green-500/50 input-glow transition-all"
-                                    placeholder="Şimdi" />
-                                <p class="text-gray-600 text-xs mt-2">Boş bırakırsanız: Şimdi çıkış kabul edilir</p>
+                            <!-- AI Managed Settings (Hidden when AI Mode is ON) -->
+                            <div id="aiManagedSettings" class="space-y-4 pt-2">
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-gray-400 text-sm mb-2">
+                                            <span class="flex items-center gap-2">
+                                                <svg class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                Şarj Sıklığı
+                                            </span>
+                                        </label>
+                                        <select id="chargingFrequency"
+                                            class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-green-500/50 input-glow transition-all appearance-none cursor-pointer">
+                                            <option value="optimal" class="bg-slate-800">🎯 Dengeli</option>
+                                            <option value="less" class="bg-slate-800">⏳ Daha Az Durak</option>
+                                            <option value="frequent" class="bg-slate-800">⚡ Daha Sık Durak</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="block text-gray-400 text-sm mb-2">
+                                            <span class="flex items-center gap-2">
+                                                <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor"
+                                                    viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                Hız Limiti
+                                            </span>
+                                        </label>
+                                        <input type="number" id="maxSpeed"
+                                            class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-green-500/50 input-glow transition-all"
+                                            placeholder="Otomatik" min="50" max="250">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-gray-400 text-sm mb-2">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                                            </svg>
+                                            Klima (HVAC)
+                                        </span>
+                                    </label>
+                                    <div class="flex items-center justify-between px-4 py-3 bg-white/5 border border-white/10 rounded-xl">
+                                        <span class="text-white text-sm">Sürüş boyunca klima açık</span>
+                                        <label class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" id="hvacOn" class="sr-only peer" checked>
+                                            <div class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
+                                        </label>
+                                    </div>
+                                </div>
                             </div>
 
-                            <!-- Battery -->
-                            <div>
-                                <label class="block text-gray-400 text-sm mb-2">
-                                    <span class="flex items-center gap-2">
-                                        <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
-                                            <path
-                                                d="M2 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H3a1 1 0 01-1-1V4zM8 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H9a1 1 0 01-1-1V4zM15 3a1 1 0 00-1 1v12a1 1 0 001 1h2a1 1 0 001-1V4a1 1 0 00-1-1h-2z" />
-                                        </svg>
-                                        Mevcut Batarya %
-                                    </span>
-                                </label>
-                                <input type="number" id="initialSoc"
-                                    class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all"
-                                    value="85" min="10" max="100" required>
+                            <!-- Departure Time & Battery (Battery visible only when AI Mode is OFF) -->
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-gray-400 text-sm mb-2">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor"
+                                                viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                            Çıkış Zamanı
+                                        </span>
+                                    </label>
+                                    <input type="datetime-local" id="departureTime"
+                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-xs focus:outline-none focus:border-green-500/50 input-glow transition-all" />
+                                </div>
+                                <div id="batterySettings">
+                                    <label class="block text-gray-400 text-sm mb-2">
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                                                <path
+                                                    d="M2 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H3a1 1 0 01-1-1V4zM8 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1H9a1 1 0 01-1-1V4zM15 3a1 1 0 00-1 1v12a1 1 0 001 1h2a1 1 0 001-1V4a1 1 0 00-1-1h-2z" />
+                                            </svg>
+                                            Mevcut Şarj %
+                                        </span>
+                                    </label>
+                                    <input type="number" id="initialSoc"
+                                        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500/50 input-glow transition-all"
+                                        value="85" min="10" max="100" required>
+                                </div>
                             </div>
 
                             <!-- AI Planlama Toggle -->
@@ -376,31 +452,29 @@
                                         </select>
                                     </div>
 
-                                    <!-- Zorunlu İmkanlar -->
-                                    <div>
-                                        <label class="block text-gray-500 text-xs mb-2">🛎️ Zorunlu İmkanlar</label>
-                                        <div class="flex flex-wrap gap-2">
-                                            <label
-                                                class="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-lg cursor-pointer hover:bg-white/10">
-                                                <input type="checkbox" id="reqToilet" class="w-3 h-3 accent-purple-500">
-                                                <span class="text-gray-300 text-xs">🚻 WC</span>
+                                    <!-- Yol Engellemeleri -->
+                                    <div class="pt-2">
+                                        <label class="block text-gray-500 text-xs mb-2">🛣️ Yol Seçenekleri</label>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <label class="flex items-center gap-2 bg-white/5 px-2 py-2 rounded-lg cursor-pointer hover:bg-white/10">
+                                                <input type="checkbox" id="avoidTolls" class="w-4 h-4 accent-red-500">
+                                                <span class="text-gray-300 text-xs">Ücretli Yol Kaçın</span>
                                             </label>
-                                            <label
-                                                class="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-lg cursor-pointer hover:bg-white/10">
-                                                <input type="checkbox" id="reqFood" class="w-3 h-3 accent-purple-500">
-                                                <span class="text-gray-300 text-xs">🍔 Yemek</span>
+                                            <label class="flex items-center gap-2 bg-white/5 px-2 py-2 rounded-lg cursor-pointer hover:bg-white/10">
+                                                <input type="checkbox" id="avoidHighways" class="w-4 h-4 accent-red-500">
+                                                <span class="text-gray-300 text-xs">Otoyol Kaçın</span>
                                             </label>
-                                            <label
-                                                class="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-lg cursor-pointer hover:bg-white/10">
-                                                <input type="checkbox" id="reqShopping"
-                                                    class="w-3 h-3 accent-purple-500">
-                                                <span class="text-gray-300 text-xs">🛒 Market</span>
+                                            <label class="flex items-center gap-2 bg-white/5 px-2 py-2 rounded-lg cursor-pointer hover:bg-white/10">
+                                                <input type="checkbox" id="avoidFerries" class="w-4 h-4 accent-red-500">
+                                                <span class="text-gray-300 text-xs">Feribot Kaçın</span>
                                             </label>
-                                            <label
-                                                class="flex items-center gap-1 bg-white/5 px-2 py-1 rounded-lg cursor-pointer hover:bg-white/10">
-                                                <input type="checkbox" id="reqParking"
-                                                    class="w-3 h-3 accent-purple-500">
-                                                <span class="text-gray-300 text-xs">🅿️ Otopark</span>
+                                            <label class="flex items-center gap-2 bg-white/5 px-2 py-2 rounded-lg cursor-pointer hover:bg-white/10">
+                                                <input type="checkbox" id="avoidOsmangazi" class="w-4 h-4 accent-red-500">
+                                                <span class="text-gray-300 text-xs">Osmangazi Kaçın</span>
+                                            </label>
+                                            <label class="flex items-center gap-2 bg-white/5 px-2 py-2 rounded-lg cursor-pointer hover:bg-white/10">
+                                                <input type="checkbox" id="avoidCanakkale" class="w-4 h-4 accent-red-500">
+                                                <span class="text-gray-300 text-xs">Çanakkale Köp. Kaçın</span>
                                             </label>
                                         </div>
                                     </div>
