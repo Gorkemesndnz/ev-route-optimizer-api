@@ -287,6 +287,22 @@ class MainCalculator:
         if max_speed_kmh is not None and max_speed_kmh > 110:
             # (130 / 110)^2 = 1.39 -> %39 artış
             aero_speed_factor = (max_speed_kmh / 110.0) ** 2
+            
+            # 🔧 V2.9: Araç bazlı aerodinamik katsayısı (Cd * A)
+            # Referans araç: Sedan (Cd=0.28, Area=2.2) -> 0.616
+            reference_cda = 0.616
+            current_cd = getattr(vehicle, "drag_coefficient", 0.28) or 0.28
+            current_area = getattr(vehicle, "frontal_area_m2", 2.2) or 2.2
+            current_cda = current_cd * current_area
+            
+            # CDA faktörü: Aracın referans araca göre ne kadar dirençli olduğu
+            # Bu faktör rüzgar ve hız gibi dinamik etkileri ölçeklendirir.
+            cda_scale = current_cda / reference_cda if reference_cda > 0 else 1.0
+            
+            # Hız etkisini CDA'ya göre ölçeklendir (SUV daha çok etkilenir)
+            # 1.0 + (aero_speed_factor - 1.0) * cda_scale
+            aero_speed_factor = 1.0 + (aero_speed_factor - 1.0) * cda_scale
+            
             # abartılı çarpanları limitleyelim max 2.5
             aero_speed_factor = min(2.5, aero_speed_factor)
         

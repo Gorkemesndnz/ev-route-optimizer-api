@@ -32,6 +32,7 @@ class VehicleType(str, Enum):
     """Vehicle type classification"""
     CAR = "car"
     SUV = "suv"
+    HATCHBACK = "hatchback"
     COMPACT = "compact"
     MOTORBIKE = "motorbike"
     MICROCAR = "microcar"
@@ -139,6 +140,10 @@ class VehicleSpec:
     regen_max_power_kw: float = 70.0  # Maksimum regen gücü (kW)
     battery_chemistry: str = "NMC"  # NMC, LFP, NCA - soğuk hava davranışı için
     
+    # Aero properties (for physics engine)
+    drag_coefficient: float = 0.28   # Cd
+    frontal_area_m2: float = 2.2    # A (m^2)
+    
     # Metadata
     has_real_curve: bool = False
     vehicle_type: VehicleType = VehicleType.CAR
@@ -171,6 +176,8 @@ class VehicleSpec:
             "battery_chemistry": self.battery_chemistry,
             "has_real_curve": self.has_real_curve,
             "vehicle_type": self.vehicle_type.value,
+            "drag_coefficient": self.drag_coefficient,
+            "frontal_area_m2": self.frontal_area_m2,
         }
 
 
@@ -178,6 +185,7 @@ class VehicleSpec:
 DEFAULT_WEIGHTS_BY_TYPE = {
     VehicleType.CAR: 1700,
     VehicleType.SUV: 2100,
+    VehicleType.HATCHBACK: 1600,
     VehicleType.COMPACT: 1500,
     VehicleType.MOTORBIKE: 250,
     VehicleType.MICROCAR: 600,

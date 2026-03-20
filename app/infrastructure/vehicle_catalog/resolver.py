@@ -46,7 +46,7 @@ _DEFAULT_FRONTAL_AREAS = {
 _VEHICLE_TYPE_MAP = {
     "suv": VehicleType.SUV,
     "sedan": VehicleType.CAR,
-    "hatchback": VehicleType.COMPACT,
+    "hatchback": VehicleType.HATCHBACK,
     "compact": VehicleType.COMPACT,
     "car": VehicleType.CAR,
     "motorbike": VehicleType.MOTORBIKE,
@@ -195,6 +195,8 @@ def resolve_vehicle_spec(payload: VehiclePayload) -> VehicleSpec:
         battery_chemistry=payload.battery_chemistry,
         has_real_curve=payload.charge_curve is not None and len(payload.charge_curve) > 0,
         vehicle_type=vehicle_type,
+        drag_coefficient=drag_cd,
+        frontal_area_m2=frontal_area,
         charge_curve=_resolve_charge_curve(payload)
     )
 
