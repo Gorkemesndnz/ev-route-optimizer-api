@@ -47,7 +47,7 @@ def test_return_type_and_count():
     from dataclasses import dataclass
     from app.infrastructure.vehicle_catalog import get_vehicle_model
     
-    vehicle = get_vehicle_model('mg_mg4_electric_51_kwh_2022')
+    vehicle = get_vehicle_model('abarth_500e_hatchback_2024')
     
     # Basit mock segment
     @dataclass

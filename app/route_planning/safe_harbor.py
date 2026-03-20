@@ -281,16 +281,18 @@ async def calculate_safe_harbor_soc(
         logger.warning(f"Safe Harbor nearby search failed: {e}")
         nearby_stations = []
 
-    # Gerçek DC şarj istasyonlarını filtrele (min 50kW)
+    # Gerçek DC şarj istasyonlarını filtrele (min 50kW ve OPERATIONAL)
     valid_nearby = [
         s for s in nearby_stations
-        if s.get("max_power_kw", 0) >= 50 or s.get("connector_count", 0) > 0
+        if (s.get("max_power_kw", 0) >= 50 or s.get("connector_count", 0) > 0)
+        and s.get("business_status") in ["OPERATIONAL", "OPERATIONAL_STATUS_UNSPECIFIED"]
     ]
 
-    if len(valid_nearby) >= 2:
+    # Eğer varışta 1 tane çok güçlü istasyon (>100kW) varsa veya 2 normal istasyon varsa güvenli sayalım.
+    if (len(valid_nearby) >= 1 and any(s.get("max_power_kw", 0) >= 100 for s in valid_nearby)) or (len(valid_nearby) >= 2):
         # Varışta yeterli istasyon var — normal akış
         logger.info(
-            f"✅ Safe Harbor: Destination has {len(valid_nearby)} charging stations "
+            f"✅ Safe Harbor: Destination has {len(valid_nearby)} reliable charging station(s) "
             f"within {SAFE_HARBOR_NEARBY_RADIUS_KM}km. Normal operation."
         )
         return SafeHarborResult(
@@ -356,8 +358,9 @@ async def calculate_safe_harbor_soc(
                 power_kw = station.get("max_power_kw", 0)
                 connector_count = station.get("connector_count", 0)
 
-                # En az DC seviyesinde olmalı
-                if power_kw < 50 and connector_count == 0:
+                # En az DC seviyesinde olmalı ve açık olmalı
+                if (power_kw < 50 and connector_count == 0) or \
+                   (station.get("business_status") not in ["OPERATIONAL", "OPERATIONAL_STATUS_UNSPECIFIED"]):
                     continue
 
                 distance = haversine_km(destination.lat, destination.lon, slat, slng)

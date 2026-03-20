@@ -93,7 +93,8 @@ class GoogleMapsService(BaseService):
         end: GeoPoint,
         alternatives: bool = True,
         departure_time: Optional[int] = None,
-        traffic_model: Optional[TrafficModel] = "best_guess"
+        traffic_model: Optional[TrafficModel] = "best_guess",
+        avoidances: Optional[List[str]] = None
     ) -> dict:
         """
         Google Directions API'den ham JSON döndürür.
@@ -125,6 +126,9 @@ class GoogleMapsService(BaseService):
             "departure_time": effective_departure_time,
             "key": self.api_key
         }
+        
+        if avoidances:
+            params["avoid"] = "|".join(avoidances)
         
         # traffic_model sadece departure_time varsa anlamlı
         if traffic_model:
@@ -170,7 +174,8 @@ class GoogleMapsService(BaseService):
         end: GeoPoint,
         alternatives: bool = True,
         departure_time: Optional[int] = None,
-        traffic_model: Optional[TrafficModel] = "best_guess"
+        traffic_model: Optional[TrafficModel] = "best_guess",
+        avoidances: Optional[List[str]] = None
     ) -> dict:
         """
         Cache'li versiyon - Kısa TTL (120s) ile trafikli istekler için.
@@ -180,7 +185,8 @@ class GoogleMapsService(BaseService):
             end=end,
             alternatives=alternatives,
             departure_time=departure_time,
-            traffic_model=traffic_model
+            traffic_model=traffic_model,
+            avoidances=avoidances
         )
 
 

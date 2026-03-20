@@ -17,23 +17,12 @@ from app.models import (
 from app.charging_model import calculate_charge_time
 from app.charging_tariffs import get_price_for_station
 from app.consumption_engine.v2_ml_model import ChargingTimeCalculator
-from app.infrastructure.vehicle_catalog import FileVehicleCatalog
+from app.infrastructure.vehicle_catalog.models import VehicleSpec
 from app.utils.logger import get_logger
 from app.utils.charging_estimator import get_smart_dc_max, is_curve_suspicious
 from app.route_planning.weather_pipeline import extract_weather_from_forecast
 
 logger = get_logger("route_planning.leg_builder")
-
-# Lazy-load vehicle catalog for charging curves
-_vehicle_catalog = None
-
-
-def _get_vehicle_catalog():
-    """Lazy-load vehicle catalog (singleton pattern)."""
-    global _vehicle_catalog
-    if _vehicle_catalog is None:
-        _vehicle_catalog = FileVehicleCatalog()
-    return _vehicle_catalog
 
 
 def _build_alternative_stations(
@@ -101,7 +90,7 @@ def _calculate_charge_duration(
     charge_power_kw: float,
     battery_capacity_kwh: float,
     temperature_c: Optional[float],
-    vehicle_model_id: Optional[str],
+    vehicle_spec: Optional[VehicleSpec] = None,
 ) -> Tuple[float, float]:
     """
     Şarj süresini hesapla (Hybrid: eğri varsa kullan, yoksa fallback).
@@ -109,9 +98,7 @@ def _calculate_charge_duration(
     Returns:
         (charge_duration_minutes, energy_added_kwh)
     """
-    catalog = _get_vehicle_catalog()
-    vehicle_curve = catalog.get_charge_curve(vehicle_model_id) if vehicle_model_id else None
-    vehicle_spec = catalog.get_by_id(vehicle_model_id) if vehicle_model_id else None
+    vehicle_curve = vehicle_spec.charge_curve if vehicle_spec else None
     
     # Eğri ve spec değerlerini al
     curve_peak_kw = 0.0
@@ -147,7 +134,7 @@ def _calculate_charge_duration(
             station_max_kw=charge_power_kw
         )
         logger.debug(
-            f"[CHARGE] Curve mode for {vehicle_model_id}: {charge_duration:.1f} min "
+            f"[CHARGE] Curve mode for {vehicle_spec.id if vehicle_spec else 'unknown'}: {charge_duration:.1f} min "
             f"(station={charge_power_kw:.0f}kW, dc_max={dc_max:.0f}kW [{dc_source}])"
         )
     else:
@@ -163,7 +150,7 @@ def _calculate_charge_duration(
         charge_duration = charge_result.duration_minutes
         kwh_to_add = charge_result.energy_added_kwh
         logger.debug(
-            f"[CHARGE] Fallback mode for {vehicle_model_id}: {charge_duration:.1f} min "
+            f"[CHARGE] Fallback mode for {vehicle_spec.id if vehicle_spec else 'unknown'}: {charge_duration:.1f} min "
             f"(smart_power={smart_power:.0f}kW [{dc_source}])"
         )
     
@@ -223,7 +210,7 @@ def build_multi_legs(
     battery_capacity_kwh: float = 51.0,
     temperature_c: Optional[float] = None,
     weather_info: Optional[WeatherInfo] = None,
-    vehicle_model_id: str = None
+    vehicle_spec: Optional[VehicleSpec] = None
 ) -> Tuple[List, List[str]]:
     """
     Multi-leg yapısı oluştur: DriveLeg + ChargeLeg + DriveLeg + ...
@@ -318,7 +305,7 @@ def build_multi_legs(
             charge_power_kw=charge_power_kw,
             battery_capacity_kwh=battery_capacity_kwh,
             temperature_c=temperature_c,
-            vehicle_model_id=vehicle_model_id,
+            vehicle_spec=vehicle_spec,
         )
         
         # StationInfo oluştur

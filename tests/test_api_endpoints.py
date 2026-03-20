@@ -29,7 +29,7 @@ ANKARA_LAT = 39.9334
 ANKARA_LON = 32.8597
 
 # Bilinen test araç modeli
-TEST_VEHICLE_ID = "mg4_51kwh"
+TEST_VEHICLE_ID = "abarth_500e_hatchback_2024"
 
 
 # =============================================================================
@@ -87,8 +87,8 @@ class TestVehicleCatalog:
         assert len(data["brands"]) > 0
 
     def test_vehicles_by_brand(self, client):
-        """GET /vehicles/by_brand?brand=Tesla → Tesla araçları dönmeli."""
-        response = client.get("/vehicles/by_brand", params={"brand": "Tesla"})
+        """GET /vehicles/by_brand?brand=Abarth → Abarth araçları dönmeli."""
+        response = client.get("/vehicles/by_brand", params={"brand": "Abarth"})
         data = response.json()
 
         assert response.status_code == 200
@@ -103,8 +103,8 @@ class TestVehicleCatalog:
             assert vehicle["battery_kwh"] > 0
 
     def test_vehicles_search(self, client):
-        """GET /vehicles/search?query=Model → Arama sonucu dönmeli."""
-        response = client.get("/vehicles/search", params={"query": "Model"})
+        """GET /vehicles/search?query=500E → Arama sonucu dönmeli."""
+        response = client.get("/vehicles/search", params={"query": "500E"})
         data = response.json()
 
         assert response.status_code == 200

@@ -1189,14 +1189,16 @@ async def find_stations_for_hotspots(
                 if req_amenities:
                     def has_required_amenities(station):
                         for amenity in req_amenities:
-                            if amenity == "toilet" and not station.has_toilet:
+                            if amenity in ("toilet", "rest_area") and not station.has_toilet:
                                 return False
-                            if amenity == "food" and not station.has_food:
+                            if amenity in ("food", "cafe", "restaurant", "rest_area") and not station.has_food:
                                 return False
-                            if amenity == "shopping" and not station.has_shopping:
+                            if amenity in ("shopping", "supermarket") and not station.has_shopping:
                                 return False
-                            if amenity == "parking" and not station.has_parking:
+                            if amenity in ("parking", "rest_area") and not station.has_parking:
                                 return False
+                            # hotel ve gas_station için katı filtreleme yapmıyoruz çünkü mevcut has_* booleam map'inde yok, 
+                            # ama arama algoritmamız restoran/market vb barındıran yerleri de puanlıyor
                         return True
                     
                     filtered = [s for s in available_stations if has_required_amenities(s)]
@@ -1204,8 +1206,19 @@ async def find_stations_for_hotspots(
                         available_stations = filtered
                         logger.info(f"Amenities filter applied: {len(filtered)} stations have {req_amenities}")
                     else:
-                        # 🔧 V3.2: Uygun istasyon yoksa warning ekle (soft filter)
-                        amenity_names = {"toilet": "tuvalet", "food": "yemek", "shopping": "market", "parking": "otopark"}
+                        # 🔧 V3.2: Uygun istasyon yoksa warning ekle (soft filter fallback)
+                        amenity_names = {
+                            "toilet": "tuvalet", 
+                            "food": "yiyecek", 
+                            "shopping": "market", 
+                            "parking": "otopark",
+                            "hotel": "otel",
+                            "cafe": "kafe/kahve",
+                            "restaurant": "restoran",
+                            "rest_area": "dinlenme tesisi",
+                            "supermarket": "süpermarket",
+                            "gas_station": "akaryakıt istasyonu"
+                        }
                         missing_amenities = [amenity_names.get(a, a) for a in req_amenities]
                         result.amenities_warning = f"⚠️ İstenen imkanlara ({', '.join(missing_amenities)}) sahip istasyon bulunamadı. En yakın istasyonlar gösteriliyor."
                         logger.warning(f"No stations found with required amenities {req_amenities}, showing all stations")

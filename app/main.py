@@ -39,7 +39,7 @@ from app.services.base_service import ExternalAPIError, close_global_client
 from app.services.google_service import google_maps
 from app.utils.logger import get_logger
 from app.utils.config_manager import config
-from app.infrastructure.vehicle_catalog import FileVehicleCatalog, get_vehicle_model
+from app.infrastructure.vehicle_catalog import get_vehicle_model, get_available_vehicle_ids
 from app.services.feedback_service import feedback_manager
 
 
@@ -49,7 +49,8 @@ from app.services.feedback_service import feedback_manager
 
 logger = get_logger("main_api")
 
-vehicle_catalog = FileVehicleCatalog()
+# Araç yönetimi .NET gateway'de yapıldığından yerel DB kaldırıldı
+# vehicle_catalog = FileVehicleCatalog()
 
 
 @asynccontextmanager
@@ -65,7 +66,7 @@ async def lifespan(app: FastAPI):
     # Log available vehicles
     logger.info(
         "Available vehicle models",
-        vehicle_count=vehicle_catalog.get_vehicle_count(),
+        vehicle_count=len(get_available_vehicle_ids()),
     )
     
     yield
@@ -184,7 +185,7 @@ async def api_info():
             "test": "GET /test",
             "debug": "GET /debug"
         },
-        "available_vehicles": sorted(v.id for v in vehicle_catalog.search(limit=20))
+        "available_vehicles": get_available_vehicle_ids()
     }
 
 
@@ -192,11 +193,11 @@ async def api_info():
 async def health():
     """Detaylı sağlık kontrolü"""
     try:
-        # Test vehicle model loading — katalogdan ilk aracı çek
-        all_vehicles = vehicle_catalog.search(limit=1)
-        if not all_vehicles:
+        # Test vehicle model loading
+        vehicle_ids = get_available_vehicle_ids()
+        if not vehicle_ids:
             raise RuntimeError("No vehicles loaded in catalog")
-        test_vehicle = all_vehicles[0]
+        test_vehicle = get_vehicle_model(vehicle_ids[0])
         
         return {
             "status": "ok",
@@ -210,7 +211,7 @@ async def health():
                 "logger": "ok",
                 "config_manager": "ok"
             },
-            "vehicle_catalog_count": vehicle_catalog.get_vehicle_count(),
+            "vehicle_catalog_count": len(vehicle_ids),
             "test_vehicle": {
                 "model": test_vehicle.display_name,
                 "battery_kwh": test_vehicle.battery_capacity_kwh
@@ -272,8 +273,8 @@ async def optimize_route(request: RouteRequest) -> MultiStopRouteResponse:
                 "processing_time_ms": round(planning_duration * 1000, 1),
                 "request_details": request_details,
                 "vehicle_info": {
-                    "model": request.vehicle_model_id,
-                    "battery_kwh": get_vehicle_model(request.vehicle_model_id).battery_capacity_kwh
+                    "model": request.vehicle_spec.slug if request.vehicle_spec else request.vehicle_model_id,
+                    "battery_kwh": request.vehicle_spec.battery_useable_kwh if request.vehicle_spec else get_vehicle_model(request.vehicle_model_id).battery_capacity_kwh
                 }
             }
         
@@ -363,7 +364,7 @@ async def test_endpoint():
         sample_request = RouteRequest(
             start_location=GeoPoint(lat=41.0, lon=29.0),
             end_location=GeoPoint(lat=39.0, lon=32.0),
-            vehicle_model_id="mg4_51kwh",
+            vehicle_model_id="abarth_500e_hatchback_2024",
             current_soc_percent=80.0,
             extra_load_kg=50.0
         )
@@ -373,12 +374,12 @@ async def test_endpoint():
             "environment": config.get_environment(),
             "debug_mode": config.is_debug(),
             "available_vehicles": {
-                v.id: {
-                    "model": v.display_name,
-                    "battery_kwh": v.battery_capacity_kwh,
-                    "consumption_wh_km": v.base_consumption_wh_km
+                vid: {
+                    "model": get_vehicle_model(vid).display_name,
+                    "battery_kwh": get_vehicle_model(vid).battery_capacity_kwh,
+                    "consumption_wh_km": get_vehicle_model(vid).base_consumption_wh_km
                 }
-                for v in vehicle_catalog.search(limit=20)
+                for vid in get_available_vehicle_ids()
             },
             "sample_request": sample_request.model_dump(),
             "api_keys_configured": {
@@ -407,7 +408,7 @@ async def debug_info():
                 "level": "DEBUG",
                 "structured_logging": True
             },
-            "vehicle_database_count": vehicle_catalog.get_vehicle_count(),
+            "vehicle_database_count": len(get_available_vehicle_ids()),
             "api_endpoints": [
                 {"method": "GET", "path": "/", "description": "Web interface (index.html)"},
                 {"method": "GET", "path": "/api/info", "description": "API info (JSON)"},
@@ -442,7 +443,7 @@ async def validate_vehicle(vehicle_id: str):
         return {
             "status": "invalid",
             "error": str(e),
-            "available_vehicles": sorted(v.id for v in vehicle_catalog.search(limit=20))
+            "available_vehicles": get_available_vehicle_ids()
         }
 
 
@@ -523,9 +524,10 @@ async def autocomplete_address(query: str):
 @app.get("/vehicles/brands", tags=["Vehicles"])
 async def list_vehicle_brands():
     try:
+        brands = sorted(list(set(get_vehicle_model(vid).brand for vid in get_available_vehicle_ids())))
         return {
             "status": "success",
-            "brands": vehicle_catalog.get_all_brands(),
+            "brands": brands,
         }
     except Exception as e:
         logger.error("Vehicle brands endpoint failed", error=str(e))
@@ -538,7 +540,15 @@ async def list_vehicles_by_brand(
     limit: int = Query(500, ge=1, le=5000),
 ):
     try:
-        vehicles = vehicle_catalog.search(brand=brand, limit=limit)
+        all_vids = get_available_vehicle_ids()
+        vehicles = []
+        for vid in all_vids:
+            v = get_vehicle_model(vid)
+            if v.brand.lower() == brand.lower():
+                vehicles.append(v)
+            if len(vehicles) >= limit:
+                break
+                
         return {
             "status": "success",
             "brand": brand,
@@ -564,7 +574,14 @@ async def search_vehicles(
     limit: int = Query(50, ge=1, le=500),
 ):
     try:
-        vehicles = vehicle_catalog.search(query=query, limit=limit)
+        all_vids = get_available_vehicle_ids()
+        vehicles = []
+        for vid in all_vids:
+            v = get_vehicle_model(vid)
+            if not query or query.lower() in v.display_name.lower():
+                vehicles.append(v)
+            if len(vehicles) >= limit:
+                break
         return {
             "status": "success",
             "query": query,
@@ -593,7 +610,11 @@ from app.models import (
     StationFeedbackRequest,
     SwitchStationRequest,
     RecalculateResponse,
-    FeedbackType
+    FeedbackType,
+    StationInfo,
+    ConnectorInfo,
+    PlugType,
+    ChargerType
 )
 
 
@@ -610,7 +631,6 @@ async def get_map_stations(
     Google Places API ile entegre, ancak bounding box ve zoom limitlerine göre optimize çalışır.
     """
     from app.services.google_service import google_maps
-    from app.models import StationInfo, GeoPoint, ConnectorInfo, PlugType, ChargerType
     
     try:
         raw_places = await google_maps.get_map_stations(lat=lat, lon=lon, radius_km=radius_km, zoom=zoom)

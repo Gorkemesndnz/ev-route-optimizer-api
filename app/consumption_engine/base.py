@@ -30,7 +30,11 @@ class ConsumptionEngine(ABC):
         weather_condition: str = "clear",
         extra_load_kg: float = 0.0,
         passenger_count: int = 1,
-        child_count: int = 0
+        child_count: int = 0,
+        driving_style_multiplier: float = 1.0,
+        hvac_on: bool = True,
+        max_speed_kmh: Optional[int] = None,
+        consumption_override_wh_km: Optional[float] = None
     ) -> List[SegmentWithConsumption]:
         """
         Verilen segmentler için tüketim hesapla.
@@ -45,6 +49,10 @@ class ConsumptionEngine(ABC):
             extra_load_kg: Ekstra yük (kg)
             passenger_count: Yetişkin yolcu sayısı
             child_count: Çocuk yolcu sayısı
+            driving_style_multiplier: Sürüş tarzı çarpanı (eco, normal, sport)
+            hvac_on: Klima açık mı
+            max_speed_kmh: Kullanıcının belirlediği maksimum hız
+            consumption_override_wh_km: Manuel tüketim override değeri
             
         Returns:
             List[SegmentWithConsumption]: SOCSimulator için hazır segment listesi.

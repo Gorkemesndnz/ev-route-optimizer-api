@@ -36,7 +36,7 @@ from app.soc_simulator import (
     ChargePlanOptimizer,
 )
 from app.consumption_engine import get_engine
-from app.infrastructure.vehicle_catalog import get_vehicle_model
+from app.infrastructure.vehicle_catalog import get_vehicle_model, resolve_vehicle_spec
 from app.route_selector import find_best_route
 from app.services.weather_service import WeatherService
 from app.services.google_service import google_maps
@@ -164,7 +164,17 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
     try:
         # STEP 1: Araç bilgilerini al
         try:
-            vehicle = get_vehicle_model(request.vehicle_model_id)
+            if request.vehicle_spec:
+                # V4.0: .NET Gateway'den gelen MSSQL verisi
+                vehicle = resolve_vehicle_spec(request.vehicle_spec)
+                logger.info(
+                    f"Vehicle resolved from MSSQL payload: {vehicle.display_name}",
+                    vehicle_id=vehicle.id,
+                    battery_kwh=vehicle.battery_capacity_kwh,
+                )
+            else:
+                # Backward compat: JSON dosyadan oku (local dev / test)
+                vehicle = get_vehicle_model(request.vehicle_model_id)
         except ValueError as e:
             return create_error_response("error_vehicle_not_found", str(e))
         
@@ -280,7 +290,11 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             weather_checkpoints=checkpoint_weather,
             extra_load_kg=extra_load_kg,
             passenger_count=passenger_count,
-            child_count=child_count
+            child_count=child_count,
+            driving_style_multiplier=request.driving_style.consumption_multiplier if request.driving_style else 1.0,
+            hvac_on=request.hvac_on,
+            max_speed_kmh=request.max_speed_kmh,
+            consumption_override_wh_km=request.consumption_override_wh_km
         )
         
         total_consumption = sum(s.consumption_kwh for s in segments_with_consumption)
@@ -363,7 +377,11 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                         weather_condition=refined_weather.condition.value,
                         extra_load_kg=extra_load_kg,
                         passenger_count=passenger_count,
-                        child_count=child_count
+                        child_count=child_count,
+                        driving_style_multiplier=request.driving_style.consumption_multiplier if request.driving_style else 1.0,
+                        hvac_on=request.hvac_on,
+                        max_speed_kmh=request.max_speed_kmh,
+                        consumption_override_wh_km=request.consumption_override_wh_km
                     )
                     
                     new_total = sum(s.consumption_kwh for s in segments_with_consumption)
@@ -416,7 +434,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             battery_capacity_kwh=battery_kwh,
             temperature_c=avg_weather.temp_c if avg_weather else None,
             weather_info=avg_weather,
-            vehicle_model_id=request.vehicle_model_id
+            vehicle_spec=vehicle
         )
         
         end_soc = sim_result.final_soc

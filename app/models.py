@@ -46,6 +46,10 @@ class AmenityType(str, Enum):
     WIFI = "wifi"
     SHOPPING = "shopping"
     PARKING = "parking"
+    HOTEL = "hotel"
+    CAFE = "cafe"
+    REST_AREA = "rest_area"
+    GAS_STATION = "gas_station"
 
 
 class RouteStrategy(str, Enum):
@@ -63,6 +67,54 @@ class RouteStrategy(str, Enum):
     OPTIMAL = "optimal"
     CHEAPEST = "cheapest"
     RENEWABLE = "renewable"
+
+
+class DrivingStyle(str, Enum):
+    """
+    Sürüş tarzı — tüketim çarpanı olarak kullanılır.
+    
+    - ECO: ×0.85 (düşük ivmelenme, max regen)
+    - NORMAL: ×1.00 (referans)
+    - SPORT: ×1.20 (agresif ivmelenme)
+    """
+    ECO = "eco"
+    NORMAL = "normal"
+    SPORT = "sport"
+
+    @property
+    def consumption_multiplier(self) -> float:
+        return {"eco": 0.85, "normal": 1.0, "sport": 1.20}[self.value]
+
+
+class ChargingFrequency(str, Enum):
+    """
+    Şarj sıklığı tercihi.
+    
+    - OPTIMAL: Dengeli durak sayısı ve şarj süresi
+    - LESS: Daha az durak (düşük min SOC eşiği)
+    - FREQUENT: Daha sık kısa durak (yüksek min SOC eşiği)
+    """
+    OPTIMAL = "optimal"
+    LESS = "less"
+    FREQUENT = "frequent"
+
+    @property
+    def charge_min_soc_hint(self) -> float:
+        """Önerilen charge_min_soc (%) — kullanıcı override etmezse."""
+        return {"optimal": 17, "less": 10, "frequent": 25}[self.value]
+
+    @property
+    def charge_target_soc_hint(self) -> float:
+        """Önerilen charge_target_soc (%) — kullanıcı override etmezse."""
+        return {"optimal": 80.0, "less": 85.0, "frequent": 80.0}[self.value]
+
+
+class ChargerSpeedPref(str, Enum):
+    """İstasyon şarj hızı tercihi."""
+    HPC = "hpc"    # ≥150kW
+    DC = "dc"      # ≥50kW
+    AC = "ac"      # AC (yavaş)
+    ANY = "any"    # Hepsi
 
 
 # ======================================================
@@ -142,20 +194,96 @@ class StationInfo(BaseModel):
 
 
 # ======================================================
-# 3. ARAÇ MODELLERİ
+# 3. ARAÇ MODELLERİ — MSSQL VehiclePayload
 # ======================================================
 
-class VehicleModel(BaseModel):
+class ChargeCurvePointPayload(BaseModel):
+    """Şarj eğrisi noktası (.NET Gateway'den)."""
+    soc: float = Field(..., ge=0, le=100)
+    power_kw: float = Field(..., ge=0)
+
+
+class VehiclePayload(BaseModel):
     """
-    vehicle_models.py içinde statik olarak tanımlanacak araç profili.
+    MSSQL veritabanından .NET Gateway aracılığıyla gelen araç verisi.
+    Hesaplama motoru bu veriyi doğrudan kullanır.
+    
+    Null/0 olan alanlar için fallback mantığı resolve_vehicle_spec() fonksiyonunda.
     """
-    id: str  # "mg4_51kwh" gibi
-    name: str  # "MG4 51 kWh"
-    battery_kwh: float
-    base_consumption_wh_per_km: float  # WLTP veya ortalama tüketim
-    max_dc_kw: float
-    max_ac_kw: float
-    weight_kg: int
+    # Kimlik
+    id: int
+    slug: str
+    brand: str
+    model: str
+    variant: str = ""
+    year: int = 2024
+    
+    # Batarya
+    battery_useable_kwh: float = Field(..., gt=0, description="Kullanılabilir batarya kapasitesi (kWh)")
+    battery_nominal_kwh: Optional[float] = Field(None, description="Nominal batarya kapasitesi (kWh)")
+    battery_chemistry: str = Field("NMC", description="NMC / LFP / Solid State")
+    battery_thermal_management: Optional[str] = Field(None, description="Sıvı Soğutmalı / Hava Soğutmalı")
+    heat_pump: bool = Field(False, description="Isı pompası var mı")
+    
+    # WLTP verileri
+    wltp_range_tel_km: Optional[int] = None
+    wltp_range_teh_km: Optional[int] = None
+    wltp_nominal_consumption_wh_km: Optional[float] = None
+    wltp_vehicle_consumption_wh_km: Optional[float] = Field(None, description="WLTP araç tüketimi (Wh/km)")
+    
+    # Gerçek dünya menzil (km)
+    real_range_km: Optional[int] = None
+    range_cold_city_km: Optional[int] = None
+    range_cold_highway_km: Optional[int] = None
+    range_cold_combined_km: Optional[int] = None
+    range_mild_city_km: Optional[int] = None
+    range_mild_highway_km: Optional[int] = None
+    range_mild_combined_km: Optional[int] = None
+    
+    # Gerçek dünya tüketim (Wh/km) — koşul bazlı
+    efficiency_wh_km: Optional[float] = Field(None, description="Ortalama gerçek dünya tüketimi")
+    efficiency_real_min_wh_km: Optional[float] = None
+    efficiency_real_max_wh_km: Optional[float] = None
+    efficiency_cold_city_wh_km: Optional[float] = None
+    efficiency_cold_highway_wh_km: Optional[float] = None
+    efficiency_cold_combined_wh_km: Optional[float] = None
+    efficiency_mild_city_wh_km: Optional[float] = None
+    efficiency_mild_highway_wh_km: Optional[float] = None
+    efficiency_mild_combined_wh_km: Optional[float] = None
+    
+    # Uzun mesafe
+    long_distance_rating: Optional[float] = None
+    one_stop_range_cold_km: Optional[int] = None
+    one_stop_range_avg_km: Optional[int] = None
+    one_stop_range_mild_km: Optional[int] = None
+    
+    # Şarj
+    fastcharge_power_max_kw: float = Field(50.0, ge=0, description="Maksimum DC şarj gücü (kW)")
+    fastcharge_power_avg_kw: Optional[float] = Field(None, description="Ortalama DC şarj gücü (kW)")
+    fastcharge_time_10_80_min: Optional[int] = None
+    ac_charge_power_kw: float = Field(11.0, ge=0, description="AC şarj gücü (kW)")
+    charging_voltage: int = Field(400, description="Şarj voltajı: 400 veya 800")
+    connector_type: str = Field("CCS", description="Konnektör tipi: CCS / Type2 / CHAdeMO")
+    fastcharge_port_type: Optional[str] = None
+    ac_port_type: Optional[str] = None
+    onboard_charger_kw: float = 11.0
+    regen_max_power_kw: float = Field(70.0, ge=0, description="Maksimum regen gücü (kW)")
+    battery_preconditioning: bool = False
+    
+    # Fiziksel ve performans
+    curb_weight_kg: Optional[int] = Field(None, description="Boş araç ağırlığı (kg)")
+    drag_coefficient: Optional[float] = Field(None, description="Aerodinamik sürtünme katsayısı (Cd)")
+    frontal_area_m2: Optional[float] = Field(None, description="Ön kesit alanı (m²)")
+    vehicle_type: str = Field("car", description="suv / sedan / hatchback / compact")
+    seats: Optional[int] = 5
+    top_speed_kmh: Optional[int] = None
+    acceleration_0_100_sec: Optional[float] = None
+    
+    # Şarj eğrisi
+    charge_curve: Optional[List[ChargeCurvePointPayload]] = Field(
+        None,
+        description="Şarj eğrisi noktaları [{soc: 10, power_kw: 150}, ...]"
+    )
 
 
 # ======================================================
@@ -181,6 +309,15 @@ class WeatherInfo(BaseModel):
 # 5. ROTA TERCİHLERİ & İSTEK MODELLERİ
 # ======================================================
 
+class RoadAvoidances(BaseModel):
+    """Yol tercihleri — kaçınılacak yol tipleri."""
+    avoid_tolls: bool = Field(False, description="Ücretli yollardan kaçın")
+    avoid_highways: bool = Field(False, description="Otoyollardan kaçın")
+    avoid_ferries: bool = Field(False, description="Feribotlardan kaçın")
+    avoid_osmangazi_bridge: bool = Field(False, description="Osmangazi Köprüsü'nden kaçın")
+    avoid_canakkale_bridge: bool = Field(False, description="1915 Çanakkale Köprüsü'nden kaçın")
+
+
 class RoutePreferences(BaseModel):
     """
     Kullanıcının rota oluşturma tercihleri.
@@ -204,23 +341,35 @@ class RoutePreferences(BaseModel):
     )
     amenities_required: List[AmenityType] = Field(
         default_factory=list,
-        description="Zorunlu istenen imkanlar (WC, yemek, wifi vs.)."
+        description="Zorunlu istenen imkanlar (WC, yemek, wifi, otel, kafe, dinlenme tesisi vs.)."
     )
     max_detour_km: float = Field(
         10.0,
         description="Bir şarj için rotadan max sapma mesafesi (km)."
+    )
+    # V4.0: Yol tercihleri
+    road_avoidances: RoadAvoidances = Field(
+        default_factory=RoadAvoidances,
+        description="Kaçınılacak yol tipleri"
+    )
+    # V4.0: Şarj hızı tercihi
+    charger_speed_pref: ChargerSpeedPref = Field(
+        ChargerSpeedPref.ANY,
+        description="İstasyon şarj hızı tercihi: hpc (≥150kW), dc (≥50kW), ac, any"
     )
 
 
 class RouteRequest(BaseModel):
     """
     API'ye gelen ana istek modeli (/optimize_route).
-    V1'de start/end koordinat üzerinden çalışacağız.
-    Üst katmanda istenirse geocoding ile string'ten GeoPoint'e çevirilebilir.
+    
+    V4.0: vehicle_spec ile MSSQL'den zengin araç verisi,
+    driving_style, charging_frequency, hvac_on, max_speed_kmh,
+    consumption_override_wh_km eklendi.
     """
     start_location: GeoPoint
     end_location: GeoPoint
-    vehicle_model_id: str = Field(..., description="vehicle_models.py içindeki ID")
+    vehicle_model_id: str = Field("", description="Araç ID (backward compat — vehicle_spec yoksa kullanılır)")
     current_soc_percent: float = Field(..., ge=0, le=100)
     target_arrival_soc_percent: Optional[float] = Field(
         None, ge=5, le=80,
@@ -232,7 +381,7 @@ class RouteRequest(BaseModel):
     )
     charge_target_soc_percent: Optional[float] = Field(
         None, ge=50, le=100,
-        description="Şarj hedefi - istasyondan çıkış SOC. None ise otomatik hesaplanır (75-95%)"
+        description="Şarj hedefi - istasyondan çıkış SOC. None ise otomatik hesaplanır (80-85%)"
     )
     passenger_count: Optional[int] = Field(None, ge=1, description="Yetişkin yolcu sayısı. None ise 1")
     child_count: Optional[int] = Field(None, ge=0, le=4, description="Çocuk sayısı. None ise 0")
@@ -251,6 +400,38 @@ class RouteRequest(BaseModel):
     selected_rescue_place_id: Optional[str] = Field(
         None, 
         description="Safe Harbor durumunda kullanıcının seçtiği kurtarıcı istasyon ID'si."
+    )
+    
+    # ====== V4.0: Yeni Alanlar ======
+    
+    # MSSQL'den araç verisi (.NET Gateway gönderir)
+    vehicle_spec: Optional[VehiclePayload] = Field(
+        None,
+        description="MSSQL'den gelen araç spesifikasyonu. Varsa vehicle_model_id yerine kullanılır."
+    )
+    
+    # Sürücü ayarları
+    driving_style: DrivingStyle = Field(
+        DrivingStyle.NORMAL,
+        description="Sürüş tarzı: eco (×0.85), normal (×1.0), sport (×1.20)"
+    )
+    max_speed_kmh: Optional[int] = Field(
+        None, ge=30, le=250,
+        description="Gidilecek ortalama azami hız (km/h). None ise rota hızı kullanılır."
+    )
+    hvac_on: bool = Field(
+        True,
+        description="Klima açık mı? False ise sadece temel elektronik tüketimi."
+    )
+    consumption_override_wh_km: Optional[float] = Field(
+        None, gt=0,
+        description="Kullanıcının girdiği referans tüketim (Wh/km). Varsa baz tüketimi override eder."
+    )
+    
+    # Şarj sıklığı tercihi
+    charging_frequency: ChargingFrequency = Field(
+        ChargingFrequency.OPTIMAL,
+        description="Şarj sıklığı: optimal, less (az durak), frequent (sık durak)"
     )
 
     @field_validator("current_soc_percent")

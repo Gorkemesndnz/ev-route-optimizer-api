@@ -32,7 +32,11 @@ class PhysicsConsumptionEngine(ConsumptionEngine):
         weather_condition: str = "clear",
         extra_load_kg: float = 0.0,
         passenger_count: int = 1,
-        child_count: int = 0
+        child_count: int = 0,
+        driving_style_multiplier: float = 1.0,
+        hvac_on: bool = True,
+        max_speed_kmh: Optional[int] = None,
+        consumption_override_wh_km: Optional[float] = None
     ) -> List[SegmentWithConsumption]:
         """MainCalculator proxy — aynı imza, aynı dönüş tipi."""
         
@@ -47,5 +51,9 @@ class PhysicsConsumptionEngine(ConsumptionEngine):
             weather_condition=weather_condition,
             extra_load_kg=extra_load_kg,
             passenger_count=passenger_count,
-            child_count=child_count
+            child_count=child_count,
+            driving_style_multiplier=driving_style_multiplier,
+            hvac_on=hvac_on,
+            max_speed_kmh=max_speed_kmh,
+            consumption_override_wh_km=consumption_override_wh_km
         )

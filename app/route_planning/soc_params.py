@@ -100,6 +100,8 @@ def calculate_base_soc_params(
     # 2. Şarj Eşiği (charge_min_soc) - 🔧 V3.5: Bacak uzunluğuna göre esnek
     if request.charge_min_soc_percent is not None:
         charge_min_soc = request.charge_min_soc_percent
+    elif getattr(request, "charging_frequency", None):
+        charge_min_soc = request.charging_frequency.charge_min_soc_hint
     else:
         if route_distance_km < 100:
             charge_min_soc = HARD_MIN_SOC
@@ -112,6 +114,8 @@ def calculate_base_soc_params(
     
     # 3. Kullanıcı target_soc override'ı (None ise optimizer belirler)
     user_target_soc_override = request.charge_target_soc_percent
+    if user_target_soc_override is None and getattr(request, "charging_frequency", None):
+        user_target_soc_override = request.charging_frequency.charge_target_soc_hint
     
     logger.info(
         f"Base SOC params: min={charge_min_soc}%, arrival={arrival_soc}% "

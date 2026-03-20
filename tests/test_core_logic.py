@@ -65,7 +65,6 @@ class TestConstants:
             TARGET_ARRIVAL_SOC,
             TARGET_CHARGE_MIN_SOC,
             MIN_CHARGE_THRESHOLD_PERCENT,
-            SAFETY_BUFFER_PERCENT,
             MAX_CHARGE_LIMIT
         )
         
@@ -457,6 +456,9 @@ class TestSOCParametersDistanceBased:
         from app.route_planner import _calculate_base_soc_params
         from app.constants import HARD_MIN_SOC
         
+        mock_route_request.preferences = None
+        mock_route_request.charging_frequency = None
+        
         charge_min, _, _ = _calculate_base_soc_params(
             battery_kwh=51.0, start_soc=100.0, total_consumption_kwh=10.0,
             route_distance_km=50.0, request=mock_route_request
@@ -468,6 +470,9 @@ class TestSOCParametersDistanceBased:
         """Senaryo: Orta rota (100-200 km) - MIN_CHARGE_THRESHOLD"""
         from app.route_planner import _calculate_base_soc_params
         from app.constants import MIN_CHARGE_THRESHOLD_PERCENT
+        
+        mock_route_request.preferences = None
+        mock_route_request.charging_frequency = None
         
         charge_min, _, _ = _calculate_base_soc_params(
             battery_kwh=51.0, start_soc=100.0, total_consumption_kwh=10.0,
@@ -481,6 +486,9 @@ class TestSOCParametersDistanceBased:
         from app.route_planner import _calculate_base_soc_params
         from app.constants import TARGET_CHARGE_MIN_SOC
         
+        mock_route_request.preferences = None
+        mock_route_request.charging_frequency = None
+        
         charge_min, _, _ = _calculate_base_soc_params(
             battery_kwh=51.0, start_soc=100.0, total_consumption_kwh=10.0,
             route_distance_km=300.0, request=mock_route_request
@@ -492,6 +500,9 @@ class TestSOCParametersDistanceBased:
         """Senaryo: Çok uzun rota (> 400 km) - TARGET_ARRIVAL_SOC"""
         from app.route_planner import _calculate_base_soc_params
         from app.constants import TARGET_ARRIVAL_SOC
+        
+        mock_route_request.preferences = None
+        mock_route_request.charging_frequency = None
         
         charge_min, _, _ = _calculate_base_soc_params(
             battery_kwh=51.0, start_soc=100.0, total_consumption_kwh=10.0,

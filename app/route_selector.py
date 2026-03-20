@@ -25,7 +25,7 @@ Kullanım:
 
 import time
 from typing import Dict, Any, List, Union, Optional
-from app.models import GeoPoint, RouteStrategy
+from app.models import GeoPoint, RouteStrategy, RoadAvoidances
 from app.services.google_service import google_maps
 from app.services.pricing_service import pricing_service, DEFAULT_PRICE_PER_KWH
 from app.infrastructure.vehicle_catalog import get_vehicle_model
@@ -254,7 +254,8 @@ async def find_best_route(
     extra_load_kg: float = 0.0,
     temperature_celsius: float = 20.0,
     strategy: RouteStrategy = RouteStrategy.OPTIMAL,
-    departure_time_iso: Optional[str] = None
+    departure_time_iso: Optional[str] = None,
+    road_avoidances: Optional[RoadAvoidances] = None
 ) -> Dict[str, Any]:
     """
     Google'dan alternatif rotaları alır ve stratejiye göre en uygun olanı seçer.
@@ -302,12 +303,26 @@ async def find_best_route(
         vehicle = get_vehicle_model(vehicle_model_id)
         
         # --- 3. Google'dan alternatif rotaları al (trafik dahil) ---
+        avoidances = []
+        avoid_osmangazi = False
+        avoid_canakkale = False
+        
+        if road_avoidances:
+            if road_avoidances.avoid_tolls: avoidances.append("tolls")
+            if road_avoidances.avoid_highways: avoidances.append("highways")
+            if road_avoidances.avoid_ferries: avoidances.append("ferries")
+            avoid_osmangazi = road_avoidances.avoid_osmangazi_bridge
+            avoid_canakkale = road_avoidances.avoid_canakkale_bridge
+
+        logger.info(f"Yol kısıtlamaları: {avoidances}, Köprü kısıtlamaları: Osmangazi={avoid_osmangazi}, Çanakkale={avoid_canakkale}")
+
         directions_response = await google_maps.get_route_alternatives_cached(
             start=start,
             end=end,
             alternatives=True,
             departure_time=departure_time,
-            traffic_model="best_guess"
+            traffic_model="best_guess",
+            avoidances=avoidances if avoidances else None
         )
         
         # API status kontrolü
@@ -328,6 +343,21 @@ async def find_best_route(
         for i, route in enumerate(routes):
             analysis = _analyze_route(route, i)
             if analysis:
+                # Köprü yasakları kontrolü (Polyline coordinate check)
+                bridge_penalty = 0.0
+                if avoid_osmangazi or avoid_canakkale:
+                    coords = polyline.decode(analysis["polyline"])
+                    passes_osmangazi = any(40.71 <= lat <= 40.76 and 29.50 <= lon <= 29.53 for lat, lon in coords)
+                    passes_canakkale = any(40.32 <= lat <= 40.35 and 26.62 <= lon <= 26.65 for lat, lon in coords)
+                    
+                    if (avoid_osmangazi and passes_osmangazi) or (avoid_canakkale and passes_canakkale):
+                        bridge_penalty = 10000.0  # Dev bir süre cezası (10.000 dakika)
+                        logger.warning(f"Rota {i+1} köprü ihlali yaptı, çok ağır penalize ediliyor.")
+
+                analysis["bridge_penalty_min"] = bridge_penalty
+                analysis["duration_in_traffic_min"] += bridge_penalty
+                analysis["duration_min"] += bridge_penalty
+                
                 route_analyses.append(analysis)
                 logger.info(
                     f"Rota {i + 1} analiz edildi",
@@ -335,7 +365,8 @@ async def find_best_route(
                     duration_min=round(analysis["duration_min"]),
                     duration_traffic=round(analysis["duration_in_traffic_min"]),
                     traffic_ratio=f"{analysis['traffic_ratio']:.2f}",
-                    summary=analysis["summary"]
+                    summary=analysis["summary"],
+                    bridge_penalty_min=bridge_penalty
                 )
         
         if not route_analyses:

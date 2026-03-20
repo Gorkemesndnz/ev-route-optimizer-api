@@ -171,25 +171,15 @@ Ev-Route-Optimizer-Api/
 Proje içerisindeki elektrikli araç modelleri ve bu araçların spesifik şarj eğrileri rastgele değil, gerçek veriler üzerine inşa edilmiştir.
 
 ### 1. Veriseti Kaynağı
-Araç veri tabanımız **[KilowattApp/open-ev-data](https://github.com/KilowattApp/open-ev-data)** adlı açık kaynaklı (MIT Lisanslı) dataset projesinden beslenmektedir. Bu repodan düzenli aralıklarla araç katalogları ve batarya teknik verileri (charge curves, batarya tipleri) senkronize edilmektedir.
+Araç verileri artık merkezi bir **.NET Gateway** üzerinden anlık olarak MSSQL veritabanından çekilmektedir. Bu sayede veriler her zaman güncel tutulur ve 1,300'den fazla araç modeline anlık erişim sağlanır.
 
-### 2. Veri İçeriği
- Sistem içerisinde **1,300'den fazla** güncel EV (Elektrikli Araç) modeli ve **800'ün üzerinde** eşsiz şarj eğrisi grafiği bulunur:
+### 2. Veri İçerği
+Sistem içerisinde yer alan araç parametreleri şunları kapsar:
 - **Batarya Kapasitesi (kWh):** Hesaplamaların omurgasını oluşturan maksimum pil kapasitesi.
 - **Base Consumption (Wh/km):** Araçların test döngülerinden çıkmış, rüzgarsız ve düz yoldaki ideal fabrika tüketim verisi.
-- **Ağırlık (Curb Weight):** Fizik motorunda (yukarı doğru yokuş tırmanırken yapılan iş `mgh`) arabanın kendi ağırlığını temsil eder.
-- **Maks. DC Hızı ve Soket Tipi:** Aracın en fazla ne kadar hızlı şarj olabileceği ve soketinin (CCS2, Type 2, CHAdeMO) istasyon filtrelerindeki uyumluluğu.
+- **Ağırlık (Curb Weight):** Fizik motorunda arabanın kendi ağırlığını temsil eder.
+- **Maks. DC Hızı ve Soket Tipi:** Aracın en fazla ne kadar hızlı şarj olabileceği ve soketinin istasyon filtrelerindeki uyumluluğu.
 
-### 3. Nasıl Güncellenir?
-Eğer ileride piyasaya çıkacak yeni araç modellerini sisteme entegre etmek isterseniz, proje kök dizininde yer alan `scripts` klasöründeki yardımcı betikleri çalıştırarak güncel veritabanını master dosyamıza indirebilirsiniz:
-```bash
-# Repo'dan en güncel ham (raw) verileri çeker
-python scripts/download_open_ev_data.py
-
-# Verileri kendi sistemimizin okuyabileceği formata dönüştürür
-python scripts/convert_to_master.py
-```
-*(Yukarıdaki betikler `data/processed/` klasörü altındaki `vehicles_master.json` ve `charge_curves.json` dosyalarını otomatik olarak güncelleyecektir.)*
 
 ---
 

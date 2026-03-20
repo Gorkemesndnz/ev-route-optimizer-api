@@ -1,25 +1,11 @@
 # Vehicle Catalog - abstraction layer for vehicle data access
 from .models import VehicleSpec, ChargeCurve, ChargeCurvePoint, ConnectorType, VehicleType
-from .interfaces import IVehicleCatalog
-from .file_catalog import FileVehicleCatalog
+from .resolver import resolve_vehicle_spec
+from .mock_data import MOCK_NET_VEHICLE_PAYLOAD
 
 
 # =============================================================================
-# SINGLETON CATALOG INSTANCE
-# =============================================================================
-
-_catalog = None
-
-def _get_catalog() -> FileVehicleCatalog:
-    """Lazy-load singleton FileVehicleCatalog."""
-    global _catalog
-    if _catalog is None:
-        _catalog = FileVehicleCatalog()
-    return _catalog
-
-
-# =============================================================================
-# BACKWARD COMPATIBILITY (eski vehicle_models.py yerine)
+# BACKWARD COMPATIBILITY
 # =============================================================================
 
 # VehicleModel artık VehicleSpec'in alias'ı
@@ -29,32 +15,24 @@ VehiclePhysicsProfile = VehicleSpec
 
 def get_vehicle_model(model_id: str) -> VehicleSpec:
     """
-    Araç modeli ID'sine göre VehicleSpec döner.
-    
-    Eski vehicle_models.py ile aynı davranış:
-    - Bulunursa VehicleSpec döner
-    - Bulunamazsa ValueError fırlatır
+    Testler veya backward compatibility icin sadece 1 adet Mock aracı(.NET payload formatında) dondurur.
+    Gercek kullanimlarda artik orchestration tarafinda "request.vehicle_spec"(.NET response'u) kullanılmaktadir.
     
     Args:
-        model_id: Araç tanımlayıcısı (ör. "tesla_model_3_long_range_2019")
+        model_id: "abarth_500e_hatchback_2024" (Mock ID)
     
     Returns:
         VehicleSpec instance
-    
-    Raises:
-        ValueError: Araç bulunamazsa
     """
-    catalog = _get_catalog()
-    spec = catalog.get_by_id(model_id)
-    if spec is not None:
-        return spec
-    raise ValueError(f"Unknown vehicle model: {model_id}")
+    if model_id == MOCK_NET_VEHICLE_PAYLOAD.slug:
+        return resolve_vehicle_spec(MOCK_NET_VEHICLE_PAYLOAD)
+    
+    raise ValueError(f"Unknown vehicle model: {model_id} (Only \"{MOCK_NET_VEHICLE_PAYLOAD.slug}\" is available for mocking)")
 
 
 def get_available_vehicle_ids() -> list:
-    """Tüm mevcut araç ID'lerini döner."""
-    catalog = _get_catalog()
-    return sorted(v.id for v in catalog.search(limit=5000))
+    """Sadece test mock ID'sini döner."""
+    return [MOCK_NET_VEHICLE_PAYLOAD.slug]
 
 
 __all__ = [
@@ -65,8 +43,7 @@ __all__ = [
     "ChargeCurvePoint",
     "ConnectorType",
     "VehicleType",
-    "IVehicleCatalog",
-    "FileVehicleCatalog",
     "get_vehicle_model",
     "get_available_vehicle_ids",
+    "resolve_vehicle_spec",
 ]

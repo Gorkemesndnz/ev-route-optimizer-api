@@ -135,14 +135,18 @@ class MainCalculator:
             return base_efficiency  # %65 nominal
 
     @staticmethod
-    def _calculate_hvac_power(temp_c: float, base_aux_kw: float) -> float:
+    def _calculate_hvac_power(temp_c: float, base_aux_kw: float, hvac_on: bool = True, has_heat_pump: bool = False) -> float:
         """
-        🔥 YENİ: Sıcaklığa bağlı HVAC gücü
+        🔥 YENİ: Sıcaklığa bağlı HVAC gücü + Heat Pump desteği
         
         HVAC yükü sıcaklık ile doğru orantılı değildir, parabolik bir eğri izler:
         - 20°C civarı: minimum (sadece ventilasyon)
         - Çok soğuk/sıcak: maksimum (ısıtma/soğutma)
         """
+        if not hvac_on:
+            return base_aux_kw * 0.3  # Sadece temel elektronik sistemler (infotainment vs)
+
+
         comfort_temp = 20.0
         temp_deviation = abs(temp_c - comfort_temp)
         
@@ -159,6 +163,10 @@ class MainCalculator:
         # Maksimum 2.5x ile sınırla (fiziksel gerçeklik)
         hvac_multiplier = min(2.5, hvac_multiplier)
         
+        # Heat pump soğuk havalarda (%35 daha verimli isitma saglar)
+        if has_heat_pump and temp_c < 15:
+            hvac_multiplier *= 0.65
+        
         return base_aux_kw * hvac_multiplier
 
     @staticmethod
@@ -167,7 +175,11 @@ class MainCalculator:
         vehicle: VehiclePhysicsProfile,
         passenger_count: int = 1,
         extra_load_kg: float = 0.0,
-        child_count: int = 0
+        child_count: int = 0,
+        driving_style_multiplier: float = 1.0,
+        hvac_on: bool = True,
+        max_speed_kmh: Optional[int] = None,
+        consumption_override_wh_km: Optional[float] = None
     ) -> ConsumptionResult:
         """
         🎯 V1.6 FINAL - Fiziksel Olarak Doğru Tüketim Hesaplaması
@@ -211,7 +223,14 @@ class MainCalculator:
         # ---------------------------------------------------
         # 1️⃣ BAZ TÜKETİM (faktörsüz, ideal koşullar)
         # ---------------------------------------------------
-        base_kwh_per_km = MainCalculator._get_base_consumption_kwh_per_km(vehicle)
+        if consumption_override_wh_km is not None and consumption_override_wh_km > 0:
+            base_kwh_per_km = consumption_override_wh_km / 1000.0
+        else:
+            base_kwh_per_km = MainCalculator._get_base_consumption_kwh_per_km(vehicle)
+        
+        # Sürüş stili çarpanını burada uygula (SPORT > 1.0, ECO < 1.0)
+        base_kwh_per_km *= driving_style_multiplier
+
         base_segment_kwh = base_kwh_per_km * distance_km
         result.base_consumption_kwh = base_segment_kwh
 
@@ -262,6 +281,17 @@ class MainCalculator:
             vehicle_heading_deg=heading
         )
 
+        # Max Speed aerodinamik çarpanı (basit dinamik model: Tüketim hızın karesiyle orantılı artar yüksek hızlarda)
+        # Referans hız 110 km/h kabul edilmiştir, 110'un üstüne çıkıldıkça katlanarak artar.
+        aero_speed_factor = 1.0
+        if max_speed_kmh is not None and max_speed_kmh > 110:
+            # (130 / 110)^2 = 1.39 -> %39 artış
+            aero_speed_factor = (max_speed_kmh / 110.0) ** 2
+            # abartılı çarpanları limitleyelim max 2.5
+            aero_speed_factor = min(2.5, aero_speed_factor)
+        
+        weather_factor *= aero_speed_factor
+
         # ⚠️ ÖNEMLİ: Weather faktörü SADECE düz yol tüketimini etkiler
         # Sıcaklık etkisi elevation'da regen verimliliğine yansır (aşağıda)
         weather_adjusted_kwh = load_adjusted_kwh * weather_factor
@@ -303,8 +333,15 @@ class MainCalculator:
         # ---------------------------------------------------
         base_aux_kw = getattr(vehicle, "auxiliary_power_kw", 1.0)
         
-        # Sıcaklığa bağlı HVAC gücü
-        hvac_power_kw = MainCalculator._calculate_hvac_power(weather.temp_c, base_aux_kw)
+        # Sıcaklığa bağlı HVAC gücü (heat pump desteği eklendi)
+        has_heat_pump = getattr(vehicle, "has_heat_pump", False)
+        # Yeni implementasyonda has_heat_pump, vehicle profiline eklenecek
+        hvac_power_kw = MainCalculator._calculate_hvac_power(
+            temp_c=weather.temp_c, 
+            base_aux_kw=base_aux_kw, 
+            hvac_on=hvac_on,
+            has_heat_pump=has_heat_pump
+        )
         
         duration_hours = MainCalculator._get_segment_duration_hours(segment)
         aux_energy_kwh = hvac_power_kw * duration_hours
@@ -373,6 +410,10 @@ def calculate_segment_consumption_kwh(
     extra_load_kg: float = 0.0,
     passenger_count: int = 1,
     child_count: int = 0,
+    driving_style_multiplier: float = 1.0,
+    hvac_on: bool = True,
+    max_speed_kmh: Optional[int] = None,
+    consumption_override_wh_km: Optional[float] = None,
     engine_version: str = "v1"
 ) -> float:
     """
@@ -436,7 +477,11 @@ def calculate_segment_consumption_kwh(
         vehicle=vehicle,
         passenger_count=passenger_count,
         extra_load_kg=extra_load_kg,
-        child_count=child_count
+        child_count=child_count,
+        driving_style_multiplier=driving_style_multiplier,
+        hvac_on=hvac_on,
+        max_speed_kmh=max_speed_kmh,
+        consumption_override_wh_km=consumption_override_wh_km
     )
     
     return result.practical_consumption_kwh
@@ -482,7 +527,11 @@ def calculate_route_consumption(
     weather_condition: str = "clear",
     extra_load_kg: float = 0.0,
     passenger_count: int = 1,
-    child_count: int = 0
+    child_count: int = 0,
+    driving_style_multiplier: float = 1.0,
+    hvac_on: bool = True,
+    max_speed_kmh: Optional[int] = None,
+    consumption_override_wh_km: Optional[float] = None
 ):
     """
     V2.0: Tüm segmentler için tüketim hesapla (TEK KAYNAK).
@@ -556,7 +605,11 @@ def calculate_route_consumption(
             end_point=segment.end_point,       # 🔧 V2.0: Bearing hesabı için
             extra_load_kg=extra_load_kg,
             passenger_count=passenger_count,
-            child_count=child_count
+            child_count=child_count,
+            driving_style_multiplier=driving_style_multiplier,
+            hvac_on=hvac_on,
+            max_speed_kmh=max_speed_kmh,
+            consumption_override_wh_km=consumption_override_wh_km
         )
         
         # SegmentWithConsumption oluştur

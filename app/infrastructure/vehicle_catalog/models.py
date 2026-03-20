@@ -142,6 +142,7 @@ class VehicleSpec:
     # Metadata
     has_real_curve: bool = False
     vehicle_type: VehicleType = VehicleType.CAR
+    charge_curve: Optional['ChargeCurve'] = None
     
     def get_consumption_kwh_100km(self) -> float:
         """Get consumption in kWh/100km (common unit)"""
