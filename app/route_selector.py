@@ -315,7 +315,12 @@ async def find_best_route(
             avoid_osmangazi = road_avoidances.avoid_osmangazi_bridge
             avoid_canakkale = road_avoidances.avoid_canakkale_bridge
 
-        logger.info(f"Yol kısıtlamaları: {avoidances}, Köprü kısıtlamaları: Osmangazi={avoid_osmangazi}, Çanakkale={avoid_canakkale}")
+        logger.info(
+            "🛣️ Route avoidances applied",
+            google_avoid=avoidances if avoidances else "none",
+            bridge_osmangazi=avoid_osmangazi,
+            bridge_canakkale=avoid_canakkale,
+        )
 
         directions_response = await google_maps.get_route_alternatives_cached(
             start=start,

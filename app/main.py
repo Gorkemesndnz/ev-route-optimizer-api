@@ -12,7 +12,6 @@ V1.3 Enterprise FastAPI Application
 - Structured logging with request tracking
 
 Endpoints:
-- GET  /           - Web arayüzü (index.html)
 - GET  /api/info   - API bilgisi (JSON)
 - GET  /health     - Health check
 - POST /optimize_route - Main route optimization
@@ -26,7 +25,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any
 
 from fastapi import FastAPI, HTTPException, Request, Query
-from fastapi.staticfiles import StaticFiles
+
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models import (
@@ -103,19 +102,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"] if not config.is_debug() else ["*"],
 )
 
-# Static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
-
-# =============================================================================
-# ROOT ROUTE - Serve index.html
-# =============================================================================
-
-@app.get("/")
-async def read_index():
-    """Serve the main index.html file"""
-    from fastapi.responses import FileResponse
-    return FileResponse("static/index.html")
 
 
 # =============================================================================
@@ -410,7 +397,7 @@ async def debug_info():
             },
             "vehicle_database_count": len(get_available_vehicle_ids()),
             "api_endpoints": [
-                {"method": "GET", "path": "/", "description": "Web interface (index.html)"},
+
                 {"method": "GET", "path": "/api/info", "description": "API info (JSON)"},
                 {"method": "GET", "path": "/health", "description": "Health check"},
                 {"method": "POST", "path": "/optimize_route", "description": "Route optimization"},

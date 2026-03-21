@@ -182,14 +182,34 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         
         # STEP 2: En iyi rotayı seç
         try:
+            # Road avoidances: None geçir eğer hiçbir filtre seçilmemişse
+            _ra = None
+            if request.preferences and request.preferences.road_avoidances:
+                ra = request.preferences.road_avoidances
+                # En az bir filtre True ise gönder, aksi halde None bırak
+                has_any = (
+                    ra.avoid_tolls or ra.avoid_highways or ra.avoid_ferries
+                    or ra.avoid_osmangazi_bridge or ra.avoid_canakkale_bridge
+                )
+                if has_any:
+                    _ra = ra
+                    
+            logger.info(
+                f"🛣️ road_avoidances: {_ra}",
+                avoid_tolls=_ra.avoid_tolls if _ra else False,
+                avoid_highways=_ra.avoid_highways if _ra else False,
+                avoid_ferries=_ra.avoid_ferries if _ra else False,
+                avoid_osmangazi=_ra.avoid_osmangazi_bridge if _ra else False,
+                avoid_canakkale=_ra.avoid_canakkale_bridge if _ra else False,
+            )
             route_result = await find_best_route(
                 origin=request.start_location,
                 destination=request.end_location,
                 vehicle_model_id=request.vehicle_model_id,
-                extra_load_kg=request.extra_load_kg,
+                extra_load_kg=request.extra_load_kg or 0.0,
                 strategy=request.route_strategy,
                 departure_time_iso=request.departure_time_iso,
-                road_avoidances=request.preferences.road_avoidances if request.preferences else None
+                road_avoidances=_ra
             )
         except Exception as e:
             return create_error_response("error_route_failed", str(e))

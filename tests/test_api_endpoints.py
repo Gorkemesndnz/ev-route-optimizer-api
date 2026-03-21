@@ -39,12 +39,6 @@ TEST_VEHICLE_ID = "abarth_500e_hatchback_2024"
 class TestHealthAndInfo:
     """Temel sistem durumu endpoint'leri."""
 
-    def test_root_returns_html(self, client):
-        """GET / → index.html serve edilmeli."""
-        response = client.get("/")
-        assert response.status_code == 200
-        assert "text/html" in response.headers.get("content-type", "")
-
     def test_api_info_returns_json(self, client):
         """GET /api/info → API bilgileri JSON olarak dönmeli."""
         response = client.get("/api/info")
