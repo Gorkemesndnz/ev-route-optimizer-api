@@ -12,8 +12,14 @@ httpx>=0.25.0
 # Data Validation & Serialization
 pydantic>=2.5.0
 
+# Geo & Maps
+polyline>=2.0.0
+
 # Environment Variables (.env file support)
 python-dotenv>=1.0.0
 
 # Optional: Async file operations (for data logging)
 # aiofiles>=23.0.0
+
+# Testing
+requests>=2.31.0

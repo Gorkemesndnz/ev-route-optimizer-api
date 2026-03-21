@@ -20,14 +20,17 @@ def print_result(name, data):
     print(f"TEST: {name}")
     print(f"{'='*50}")
     
-    if data["status"] != "success":
+    if data.get("success") is not True and data.get("status") != "success":
         print(f"HATA: {data.get('message', data)}")
         return
         
-    print(f"Toplam Mesafe: {data['total_distance_km']:.1f} km")
-    print(f"Toplam Süre: {data['total_duration_minutes']:.1f} dk")
+    # Handle both old format (direct) and new format (nested in data)
+    route_data = data.get("data", data)
+        
+    print(f"Toplam Mesafe: {route_data['total_distance_km']:.1f} km")
+    print(f"Toplam Süre: {route_data['total_duration_minutes']:.1f} dk")
     print("\nAdımlar:")
-    for i, leg in enumerate(data['legs'], 1):
+    for i, leg in enumerate(route_data['legs'], 1):
         if leg['type'] == 'drive':
             print(f"  {i}. Sürüş: {leg['distance_km']:.1f} km, {leg['duration_minutes']:.1f} dk")
         else: # charge
