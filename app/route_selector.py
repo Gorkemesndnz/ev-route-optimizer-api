@@ -256,7 +256,8 @@ async def find_best_route(
     temperature_celsius: float = 20.0,
     strategy: RouteStrategy = RouteStrategy.OPTIMAL,
     departure_time_iso: Optional[str] = None,
-    road_avoidances: Optional[RoadAvoidances] = None
+    road_avoidances: Optional[RoadAvoidances] = None,
+    waypoints: Optional[List[GeoPoint]] = None
 ) -> Dict[str, Any]:
     """
     Google'dan alternatif rotaları alır ve stratejiye göre en uygun olanı seçer.
@@ -328,7 +329,8 @@ async def find_best_route(
             alternatives=True,
             departure_time=departure_time,
             traffic_model="best_guess",
-            avoidances=avoidances if avoidances else None
+            avoidances=avoidances if avoidances else None,
+            waypoints=waypoints
         )
         
         # API status kontrolü

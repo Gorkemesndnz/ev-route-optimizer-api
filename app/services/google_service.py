@@ -94,7 +94,8 @@ class GoogleMapsService(BaseService):
         alternatives: bool = True,
         departure_time: Optional[int] = None,
         traffic_model: Optional[TrafficModel] = "best_guess",
-        avoidances: Optional[List[str]] = None
+        avoidances: Optional[List[str]] = None,
+        waypoints: Optional[List[GeoPoint]] = None
     ) -> dict:
         """
         Google Directions API'den ham JSON döndürür.
@@ -129,6 +130,9 @@ class GoogleMapsService(BaseService):
         
         if avoidances:
             params["avoid"] = "|".join(avoidances)
+            
+        if waypoints:
+            params["waypoints"] = "|".join([f"{w.lat},{w.lon}" for w in waypoints])
         
         # traffic_model sadece departure_time varsa anlamlı
         if traffic_model:
@@ -139,7 +143,8 @@ class GoogleMapsService(BaseService):
             origin=origin,
             destination=destination,
             departure_time=effective_departure_time,
-            traffic_model=traffic_model
+            traffic_model=traffic_model,
+            waypoints_count=len(waypoints) if waypoints else 0
         )
 
         data = await self.request(
@@ -175,7 +180,8 @@ class GoogleMapsService(BaseService):
         alternatives: bool = True,
         departure_time: Optional[int] = None,
         traffic_model: Optional[TrafficModel] = "best_guess",
-        avoidances: Optional[List[str]] = None
+        avoidances: Optional[List[str]] = None,
+        waypoints: Optional[List[GeoPoint]] = None
     ) -> dict:
         """
         Cache'li versiyon - Kısa TTL (120s) ile trafikli istekler için.
@@ -186,7 +192,8 @@ class GoogleMapsService(BaseService):
             alternatives=alternatives,
             departure_time=departure_time,
             traffic_model=traffic_model,
-            avoidances=avoidances
+            avoidances=avoidances,
+            waypoints=waypoints
         )
 
 

@@ -369,6 +369,10 @@ class RouteRequest(BaseModel):
     """
     start_location: GeoPoint
     end_location: GeoPoint
+    waypoints: Optional[List[GeoPoint]] = Field(
+        default_factory=list,
+        description="Manuel eklenen ara duraklar"
+    )
     vehicle_model_id: str = Field("", description="Araç ID (backward compat — vehicle_spec yoksa kullanılır)")
     current_soc_percent: float = Field(..., ge=0, le=100)
     target_arrival_soc_percent: Optional[float] = Field(

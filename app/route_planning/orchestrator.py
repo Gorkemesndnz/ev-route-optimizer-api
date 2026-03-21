@@ -209,7 +209,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                 extra_load_kg=request.extra_load_kg or 0.0,
                 strategy=request.route_strategy,
                 departure_time_iso=request.departure_time_iso,
-                road_avoidances=_ra
+                road_avoidances=_ra,
+                waypoints=request.waypoints
             )
         except Exception as e:
             return create_error_response("error_route_failed", str(e))
