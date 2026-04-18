@@ -107,7 +107,7 @@ def get_price_for_station(
             price = tariff["above_price"]
         
         logger.debug(
-            f"Price found: {operator['brand']} {socket_type} {power_kw}kW → {price} TRY/kWh"
+            f"Price found: {operator['brand']} {socket_type} {power_kw}kW -> {price} TRY/kWh"
         )
         return price, operator["brand"]
     
@@ -136,4 +136,4 @@ if __name__ == "__main__":
     
     for name, power, is_dc in test_cases:
         price, operator = get_price_for_station(name, power, is_dc)
-        print(f"{name} ({power}kW {'DC' if is_dc else 'AC'}) → {operator}: {price} TRY/kWh")
+        print(f"{name} ({power}kW {'DC' if is_dc else 'AC'}) -> {operator}: {price} TRY/kWh")

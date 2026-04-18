@@ -257,7 +257,8 @@ async def find_best_route(
     strategy: RouteStrategy = RouteStrategy.OPTIMAL,
     departure_time_iso: Optional[str] = None,
     road_avoidances: Optional[RoadAvoidances] = None,
-    waypoints: Optional[List[GeoPoint]] = None
+    waypoints: Optional[List[GeoPoint]] = None,
+    vehicle_spec = None  # Zaten çözülmüş VehicleSpec (MSSQL'den geliyorsa)
 ) -> Dict[str, Any]:
     """
     Google'dan alternatif rotaları alır ve stratejiye göre en uygun olanı seçer.
@@ -302,7 +303,11 @@ async def find_best_route(
         )
         
         # --- 2. Araç bilgisini al ---
-        vehicle = get_vehicle_model(vehicle_model_id)
+        if vehicle_spec:
+            vehicle = vehicle_spec
+            logger.info(f"Using pre-resolved vehicle: {getattr(vehicle, 'display_name', vehicle_model_id)}")
+        else:
+            vehicle = get_vehicle_model(vehicle_model_id)
         
         # --- 3. Google'dan alternatif rotaları al (trafik dahil) ---
         avoidances = []

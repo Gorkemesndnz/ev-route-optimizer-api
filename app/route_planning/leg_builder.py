@@ -275,7 +275,7 @@ def build_multi_legs(
         leg_consumption = (soc_drop / 100) * battery_capacity_kwh
         
         logger.debug(
-            f"[LEG {i+1}] dist={leg_distance:.1f}km, soc={current_soc:.1f}%→{end_soc:.1f}%, "
+            f"[LEG {i+1}] dist={leg_distance:.1f}km, soc={current_soc:.1f}%->{end_soc:.1f}%, "
             f"drop={soc_drop:.1f}%, cons={leg_consumption:.2f}kWh"
         )
         
@@ -373,7 +373,7 @@ def build_multi_legs(
         avg_speed = (final_leg_distance / final_leg_duration) * 60 if final_leg_duration > 0 else 60
         
         logger.debug(
-            f"[FINAL LEG] dist={final_leg_distance:.1f}km, soc={current_soc:.1f}%→{final_soc:.1f}%, "
+            f"[FINAL LEG] dist={final_leg_distance:.1f}km, soc={current_soc:.1f}%->{final_soc:.1f}%, "
             f"cons={final_leg_consumption:.2f}kWh"
         )
         

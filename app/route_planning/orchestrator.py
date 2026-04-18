@@ -210,7 +210,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                 strategy=request.route_strategy,
                 departure_time_iso=request.departure_time_iso,
                 road_avoidances=_ra,
-                waypoints=request.waypoints
+                waypoints=request.waypoints,
+                vehicle_spec=vehicle  # Zaten çözülmüş araç objesini ver
             )
         except Exception as e:
             return create_error_response("error_route_failed", str(e))
@@ -364,7 +365,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             station_results = await find_stations_for_hotspots(
                 hotspots,
                 request.vehicle_model_id,
-                preferences=prefs_dict
+                preferences=prefs_dict,
+                vehicle_spec=vehicle
             )
         
         charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0
@@ -429,7 +431,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                         hotspots = sim_result.hotspots
                         if hotspots:
                             from app.station_finder import find_stations_for_hotspots
-                            station_results = await find_stations_for_hotspots(hotspots, request.vehicle_model_id)
+                            station_results = await find_stations_for_hotspots(hotspots, request.vehicle_model_id, vehicle_spec=vehicle)
                         else:
                             station_results = []
                         charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0

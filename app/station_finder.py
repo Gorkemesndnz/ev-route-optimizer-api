@@ -392,9 +392,10 @@ class CorridorSearcher:
         vehicle_model_id: str,
         corridor_length_km: float = CORRIDOR_LENGTH_KM,
         corridor_width_km: float = CORRIDOR_WIDTH_KM,
-        min_dc_power_kw: float = MIN_DC_POWER_KW
+        min_dc_power_kw: float = MIN_DC_POWER_KW,
+        vehicle_spec = None  # Zaten çözülmüş VehicleSpec (MSSQL'den geliyorsa)
     ):
-        self.vehicle = get_vehicle_model(vehicle_model_id)
+        self.vehicle = vehicle_spec if vehicle_spec else get_vehicle_model(vehicle_model_id)
         self.vehicle_model_id = vehicle_model_id
         self.corridor_length_km = corridor_length_km
         self.corridor_width_km = corridor_width_km
@@ -1092,7 +1093,8 @@ async def find_stations_for_hotspots(
     hotspots: List[ChargeHotspot],
     vehicle_model_id: str,
     min_distance_between_stations_km: float = 50.0,
-    preferences: Optional[Dict[str, Any]] = None
+    preferences: Optional[Dict[str, Any]] = None,
+    vehicle_spec = None  # Zaten çözülmüş VehicleSpec (MSSQL'den geliyorsa)
 ) -> List[CorridorSearchResult]:
     """
     Birden fazla hotspot için akıllı istasyon seçimi.
@@ -1108,6 +1110,7 @@ async def find_stations_for_hotspots(
         vehicle_model_id: Araç modeli
         min_distance_between_stations_km: İstasyonlar arası minimum mesafe
         preferences: Kullanıcı tercihleri (max_detour_km, preferred_operators, vb.)
+        vehicle_spec: Zaten çözülmüş araç spesifikasyonu (MSSQL'den geliyorsa)
     """
     if not hotspots:
         return []
@@ -1119,7 +1122,8 @@ async def find_stations_for_hotspots(
     
     searcher = CorridorSearcher(
         vehicle_model_id=vehicle_model_id,
-        corridor_length_km=max_detour_km
+        corridor_length_km=max_detour_km,
+        vehicle_spec=vehicle_spec
     )
     
     # Paralel arama yap (tüm istasyonları bul)
