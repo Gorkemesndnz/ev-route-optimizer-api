@@ -132,7 +132,9 @@ class GoogleMapsService(BaseService):
             params["avoid"] = "|".join(avoidances)
             
         if waypoints:
-            params["waypoints"] = "|".join([f"{w.lat},{w.lon}" for w in waypoints])
+            # "side_of_road" özelliği, Google algoritmasının her zaman yolun gidiş
+            # yönündeki (karşıdaki değil) duraklara odaklanmasını sağlar (U-dönüşlerini engeller)
+            params["waypoints"] = "|".join([f"side_of_road:{w.lat},{w.lon}" for w in waypoints])
         
         # traffic_model sadece departure_time varsa anlamlı
         if traffic_model:
