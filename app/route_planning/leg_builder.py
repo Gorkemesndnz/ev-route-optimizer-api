@@ -174,6 +174,12 @@ def _build_station_info(station, station_amenities=None) -> StationInfo:
             is_24_7=station.is_open_now is True
         )
     
+    connector_count = (
+        station.station_info.get("connector_count")
+        or len(station.station_info.get("Connections", []))
+        or 1
+    )
+
     return StationInfo(
         id=station.station_id,
         name=station.station_name,
@@ -184,7 +190,8 @@ def _build_station_info(station, station_amenities=None) -> StationInfo:
             ConnectorInfo(
                 plug_type=PlugType.CCS2,
                 charger_type=ChargerType.DC,
-                power_kw=station.power_kw if station.power_kw > 0 else 120.0
+                power_kw=station.power_kw if station.power_kw > 0 else 120.0,
+                count=connector_count
             )
         ],
         amenities=station_amenities,

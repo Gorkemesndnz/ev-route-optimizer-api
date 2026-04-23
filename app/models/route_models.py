@@ -155,6 +155,7 @@ class ConnectorInfo(BaseModel):
         description="kWh başına ücret. Bilinmiyorsa None."
     )
     currency: str = "TRY"
+    count: int = Field(1, ge=1, description="Bu tip soketten istasyondaki toplam adet")
 
 
 class StationInfo(BaseModel):
