@@ -444,6 +444,8 @@ class RouteRequest(BaseModel):
     def validate_soc_range(cls, v: float) -> float:
         if not (0 <= v <= 100):
             raise ValueError("current_soc_percent 0-100 arasında olmalıdır.")
+        if v == 0:
+            raise ValueError("Batarya tamamen boş (SOC=0) ile rota planlanamaz.")
         return v
 
 

@@ -77,7 +77,7 @@ class ConfigManager:
 
     @staticmethod
     def environment() -> str:
-        env = ConfigManager._get("ENVIRONMENT", "development").lower()
+        env = ConfigManager._get("ENVIRONMENT", "production").lower()
         if env not in ("development", "production", "test", "staging"):
             logger.warning(f"Unknown ENVIRONMENT '{env}', using 'development'")
             return "development"

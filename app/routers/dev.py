@@ -14,6 +14,8 @@ logger = get_logger("dev_router")
 @router.get("/api/maps-key", response_model=ApiResponse[Dict[str, str]])
 async def maps_key() -> ApiResponse[Dict[str, str]]:
     """Frontend Google Maps JS yüklemesi için API key döner."""
+    if not config.is_debug():
+        return ApiResponse.fail("Bu endpoint sadece development modunda kullanılabilir")
     key = config.get_google_api_key()
     if not key:
         return ApiResponse.fail("Google API key not configured")

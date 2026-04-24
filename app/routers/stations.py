@@ -9,6 +9,7 @@ from app.models.route_models import (
 from app.services.google_service import google_maps
 from app.services.feedback_service import feedback_manager
 from app.services.route_service import plan_route
+from app.services.base_service import ExternalAPIError
 from app.utils.logger import get_logger
 from app.core.api_response import ApiResponse
 
@@ -29,7 +30,7 @@ async def get_map_stations(
         for p in raw_places:
             location = p.get("geometry", {}).get("location", {})
             st_lat, st_lon = location.get("lat"), location.get("lng")
-            if not st_lat or not st_lon:
+            if st_lat is None or st_lon is None:
                 continue
                 
             power_kw = p.get("max_power_kw", 0.0)
@@ -61,6 +62,9 @@ async def get_map_stations(
                 )
             )
         return ApiResponse.ok(stations)
+    except ExternalAPIError as e:
+        logger.error(f"Map Stations external API error: source={e.source} status={e.status_code}", error=str(e))
+        return ApiResponse.fail(f"Dış API hatası ({e.source})", [])
     except Exception as e:
         logger.error(f"Map Stations Error: {e}")
         return ApiResponse.fail("İstasyonlar getirilemedi", [])
@@ -73,10 +77,9 @@ async def station_feedback(request: StationFeedbackRequest) -> ApiResponse[Recal
     logger.info(f"[{request_id}] Station feedback received", station_id=request.station_id)
     
     try:
-        user_id = getattr(request, 'user_id', None) or request_id
         feedback_result = await feedback_manager.report_station(
             station_id=request.station_id,
-            user_id=user_id,
+            user_id=request_id,
             reason=request.feedback_type.value
         )
         
@@ -99,7 +102,13 @@ async def station_feedback(request: StationFeedbackRequest) -> ApiResponse[Recal
             route=new_route,
             affected_legs=list(range(len(new_route.legs)))
         ))
-        
+
+    except ValueError as e:
+        logger.warning(f"[{request_id}] Feedback validation failed", error=str(e))
+        return ApiResponse.fail(f"Geçersiz istek: {str(e)}")
+    except ExternalAPIError as e:
+        logger.error(f"[{request_id}] Feedback external API error", api_source=e.source, detail=str(e))
+        return ApiResponse.fail(f"Dış API hatası ({e.source})")
     except Exception as e:
         logger.error(f"[{request_id}] Feedback processing failed", error=str(e))
         return ApiResponse.fail(f"Rota yeniden hesaplanamadı: {str(e)}")
@@ -134,7 +143,13 @@ async def switch_station(request: SwitchStationRequest) -> ApiResponse[Recalcula
             route=new_route,
             affected_legs=list(range(len(new_route.legs)))
         ))
-        
+
+    except ValueError as e:
+        logger.warning(f"[{request_id}] Switch validation failed", error=str(e))
+        return ApiResponse.fail(f"Geçersiz istek: {str(e)}")
+    except ExternalAPIError as e:
+        logger.error(f"[{request_id}] Switch external API error", api_source=e.source, detail=str(e))
+        return ApiResponse.fail(f"Dış API hatası ({e.source})")
     except Exception as e:
         logger.error(f"[{request_id}] Station switch failed", error=str(e))
         return ApiResponse.fail(f"İstasyon değiştirilemedi: {str(e)}")

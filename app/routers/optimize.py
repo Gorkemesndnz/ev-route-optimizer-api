@@ -1,6 +1,7 @@
 import time
 import traceback
-from typing import Dict, Any
+import uuid
+from typing import Dict, Any, Optional
 
 from fastapi import APIRouter
 from app.models.route_models import RouteRequest, MultiStopRouteResponse
@@ -29,9 +30,9 @@ def _extract_request_details(request: RouteRequest) -> Dict[str, Any]:
     }
 
 def _create_error_response(
-    status: str, 
-    message: str, 
-    debug_info: Dict[str, Any] = None
+    status: str,
+    message: str,
+    debug_info: Optional[Dict[str, Any]] = None
 ) -> MultiStopRouteResponse:
     return MultiStopRouteResponse(
         status=status,
@@ -47,15 +48,12 @@ def _create_error_response(
 async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteResponse]:
     """Ana rota optimizasyonu endpoint'i"""
     request_start_time = time.time()
-    request_id = f"req_{int(request_start_time * 1000)}"
+    request_id = f"req_{uuid.uuid4().hex[:12]}"
     request_details = _extract_request_details(request)
-    
+
     logger.info(f"[{request_id}] Route optimization request received", **request_details)
-    
+
     try:
-        if request.current_soc_percent == 0:
-            raise ValueError("Batarya tamamen boş (SOC=0) ile rota planlanamaz")
-        
         logger.debug(f"[{request_id}] Starting route planning", step="planning_start")
         plan = await plan_route(request)
         planning_duration = time.time() - request_start_time
