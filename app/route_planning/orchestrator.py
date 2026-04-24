@@ -218,20 +218,28 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         
         selected_route = route_result["selected_route"]
         polyline = route_result.get("polyline", "")
-        route_leg = selected_route["legs"][0]
-        
-        route_distance_km = route_leg["distance"]["value"] / 1000
-        duration_in_traffic = route_leg.get("duration_in_traffic", {}).get("value")
-        if duration_in_traffic:
-            route_duration_min = duration_in_traffic / 60
-            traffic_ratio = route_result.get("traffic_ratio", 1.0)
-            logger.info(f"Using traffic duration: {route_duration_min:.1f}min (ratio: {traffic_ratio:.2f})")
+        google_legs = selected_route["legs"]
+        first_leg = google_legs[0]
+        last_leg = google_legs[-1]
+
+        # Manual waypoints → Google multiple legs. Tüm leg'leri toplamazsak
+        # distance/duration yalnızca origin → ilk waypoint aralığını yansıtır.
+        total_distance_m = sum(l["distance"]["value"] for l in google_legs)
+        total_duration_sec = sum(l["duration"]["value"] for l in google_legs)
+        route_distance_km = total_distance_m / 1000
+
+        traffic_values = [l.get("duration_in_traffic", {}).get("value") for l in google_legs]
+        if all(v is not None for v in traffic_values) and total_duration_sec > 0:
+            total_traffic_sec = sum(traffic_values)
+            route_duration_min = total_traffic_sec / 60
+            traffic_ratio = total_traffic_sec / total_duration_sec
+            logger.info(f"Using traffic duration: {route_duration_min:.1f}min (ratio: {traffic_ratio:.2f}) across {len(google_legs)} legs")
         else:
-            route_duration_min = route_leg["duration"]["value"] / 60
+            route_duration_min = total_duration_sec / 60
             traffic_ratio = 1.0
-        
-        start_coords = route_leg["start_location"]
-        end_coords = route_leg["end_location"]
+
+        start_coords = first_leg["start_location"]
+        end_coords = last_leg["end_location"]
         logger.info(f"Route selected: {round(route_distance_km, 1)}km, {round(route_duration_min, 1)}min")
         
         # STEP 3: Elevation verisi al
@@ -576,12 +584,13 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             message=message,
             request=request,
             traffic_ratio=traffic_ratio,
-            route_leg=route_leg,
+            route_leg=first_leg,
             start_weather=start_weather,
             end_weather=end_weather,
             missing_station_warnings=missing_station_warnings,
             warning_messages=warning_messages,
             insights=insights,
+            overview_polyline=polyline,
         )
         
         # Safe Harbor bilgisini enjekte et

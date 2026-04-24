@@ -596,6 +596,8 @@ class MultiStopRouteResponse(BaseModel):
         default=None,
         description="Varışta şarj istasyonu yoksa Safe Harbor bilgisi (dönüş tüketimi, kurtarıcı istasyonlar vb.)"
     )
+    # Tüm rotayı kapsayan Google Maps encoded polyline (harita çizimi için)
+    overview_polyline: Optional[str] = Field(None, description="Google Maps encoded polyline (tüm rota)")
 
 
 # ======================================================

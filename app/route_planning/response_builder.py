@@ -170,10 +170,17 @@ def build_route_response(
     missing_station_warnings: List[str],
     warning_messages: List[str],
     insights: List[RouteInsight] = None,
+    overview_polyline: Optional[str] = None,
 ) -> MultiStopRouteResponse:
     """Final MultiStopRouteResponse oluştur."""
-    # Trafiksiz süre
-    duration_without_traffic = route_leg["duration"]["value"] / 60
+    # Trafiksiz süre — traffic_ratio = traffic_total / duration_total olduğu için
+    # route_duration_min / traffic_ratio çok-leg durumlarında da total trafiksiz
+    # süreyi verir. route_leg tek bir leg'in sözlüğü olduğundan multi-leg rotalarda
+    # (waypoint'li) yanlış sonuç vermemek için ratio üzerinden türetiyoruz.
+    if traffic_ratio and traffic_ratio > 0:
+        duration_without_traffic = route_duration_min / traffic_ratio
+    else:
+        duration_without_traffic = route_leg["duration"]["value"] / 60
     
     # Toplam regen (gelecekte segment bazlı eklenecek)
     total_regen_kwh = 0.0
@@ -202,4 +209,5 @@ def build_route_response(
         total_charging_cost=round(total_charging_cost, 2),
         warning_messages=warning_messages,
         insights=insights or [],
+        overview_polyline=overview_polyline or None,
     )

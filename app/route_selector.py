@@ -80,15 +80,19 @@ def _analyze_route(route: dict, index: int) -> Dict[str, Any]:
         - traffic_ratio: Trafik oranı (1.0 = normal, >1 = trafik var)
     """
     try:
-        leg = route["legs"][0]
-        distance_km = leg["distance"]["value"] / 1000
-        duration_min = leg["duration"]["value"] / 60
-        
-        # Trafik süresi (varsa)
-        duration_in_traffic_sec = leg.get("duration_in_traffic", {}).get("value")
-        if duration_in_traffic_sec:
+        legs = route["legs"]
+        # Waypoint varsa Google birden fazla leg döndürür; tümünü toplamak gerekir.
+        # Aksi halde distance/duration sadece origin → ilk waypoint aralığını yansıtır.
+        distance_km = sum(l["distance"]["value"] for l in legs) / 1000
+        duration_sec_total = sum(l["duration"]["value"] for l in legs)
+        duration_min = duration_sec_total / 60
+
+        # Trafik süresi: tüm leg'lerde varsa topla, eksikse trafiksiz süreye düş.
+        traffic_values = [l.get("duration_in_traffic", {}).get("value") for l in legs]
+        if all(v is not None for v in traffic_values) and duration_sec_total > 0:
+            duration_in_traffic_sec = sum(traffic_values)
             duration_in_traffic_min = duration_in_traffic_sec / 60
-            traffic_ratio = duration_in_traffic_sec / leg["duration"]["value"] if leg["duration"]["value"] > 0 else 1.0
+            traffic_ratio = duration_in_traffic_sec / duration_sec_total
         else:
             duration_in_traffic_min = duration_min
             traffic_ratio = 1.0
