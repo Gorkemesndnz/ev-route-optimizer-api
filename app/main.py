@@ -54,7 +54,11 @@ app = FastAPI(
 
 # CORS Configuration
 _cors_origins = (
-    ["http://localhost:5173", "http://localhost:3000"]
+    [
+        "http://localhost:5173",  # Vite dev
+        "http://localhost:3000",  # CRA dev
+        "http://localhost:5146",  # .NET backend (dev swagger/postman direct test)
+    ]
     if config.is_debug()
     else [
         "https://ev-route-optimizer.com",
@@ -76,7 +80,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     logger.warning("Request validation failed", path=str(request.url.path), errors=exc.errors())
     return JSONResponse(
         status_code=422,
-        content=ApiResponse.fail("Geçersiz istek verisi", exc.errors()).model_dump()
+        content=ApiResponse.fail(
+            "Geçersiz istek verisi",
+            errors=exc.errors(),
+            code="VALIDATION_ERROR",
+        ).model_dump(mode="json")
     )
 
 
@@ -85,7 +93,10 @@ async def external_api_exception_handler(request: Request, exc: ExternalAPIError
     logger.error("Unhandled external API error", path=str(request.url.path), source=exc.source, status_code=exc.status_code, detail=str(exc))
     return JSONResponse(
         status_code=502,
-        content=ApiResponse.fail(f"Dış API hatası ({exc.source})").model_dump()
+        content=ApiResponse.fail(
+            f"Dış API hatası ({exc.source})",
+            code="EXTERNAL_API_ERROR",
+        ).model_dump()
     )
 
 
@@ -95,7 +106,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     detail = str(exc) if config.is_debug() else "İç sunucu hatası"
     return JSONResponse(
         status_code=500,
-        content=ApiResponse.fail(detail).model_dump()
+        content=ApiResponse.fail(detail, code="INTERNAL_ERROR").model_dump()
     )
 
 
