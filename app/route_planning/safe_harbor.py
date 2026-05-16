@@ -281,10 +281,13 @@ async def calculate_safe_harbor_soc(
         logger.warning(f"Safe Harbor nearby search failed: {e}")
         nearby_stations = []
 
-    # Gerçek DC şarj istasyonlarını filtrele (min 50kW ve OPERATIONAL)
+    # Sprint 5: Yalnızca BİLİNEN gücü >=50 kW olan istasyonlar Safe Harbor için
+    # "güçlü güvenli istasyon" sayılır. connector_count > 0 ama kW bilinmeyen
+    # istasyonlar artık güçlü kabul edilmez — bunlar düşük güven adayıdır,
+    # adımda B'de "rescue station" olarak hâlâ değerlendirilir.
     valid_nearby = [
         s for s in nearby_stations
-        if (s.get("max_power_kw", 0) >= 50 or s.get("connector_count", 0) > 0)
+        if s.get("max_power_kw", 0) >= 50
         and s.get("business_status") in ["OPERATIONAL", "OPERATIONAL_STATUS_UNSPECIFIED"]
     ]
 

@@ -14,6 +14,7 @@ Kullanım:
 
 import time
 import functools
+from contextvars import ContextVar, Token
 from typing import Any, Callable, Optional, Dict, Tuple
 from app.utils.config_manager import config
 
@@ -73,6 +74,47 @@ class MemoryCache:
 
 # Singleton
 _cache = MemoryCache()
+_cache_metrics: ContextVar[Optional[Dict[str, Any]]] = ContextVar("cache_metrics", default=None)
+
+
+def begin_cache_trace() -> Token:
+    """Start request-scope cache hit/miss accounting."""
+    return _cache_metrics.set({
+        "total_hits": 0,
+        "total_misses": 0,
+        "total_sets": 0,
+        "by_prefix": {},
+    })
+
+
+def get_cache_metrics_snapshot() -> Dict[str, Any]:
+    metrics = _cache_metrics.get()
+    if not metrics:
+        return {}
+    return {
+        "total_hits": int(metrics.get("total_hits", 0)),
+        "total_misses": int(metrics.get("total_misses", 0)),
+        "total_sets": int(metrics.get("total_sets", 0)),
+        "by_prefix": {
+            prefix: dict(values)
+            for prefix, values in dict(metrics.get("by_prefix", {})).items()
+        },
+    }
+
+
+def end_cache_trace(token: Token) -> None:
+    _cache_metrics.reset(token)
+
+
+def _record_cache_metric(prefix: str, event: str) -> None:
+    metrics = _cache_metrics.get()
+    if metrics is None:
+        return
+    plural = "misses" if event == "miss" else f"{event}s"
+    metrics[f"total_{plural}"] = int(metrics.get(f"total_{plural}", 0)) + 1
+    by_prefix = metrics.setdefault("by_prefix", {})
+    item = by_prefix.setdefault(prefix, {"hits": 0, "misses": 0, "sets": 0})
+    item[plural] = int(item.get(plural, 0)) + 1
 
 
 # =============================================================================
@@ -141,12 +183,15 @@ def cacheable(prefix: str, ttl_seconds: Optional[int] = None):
             # Cache hit?
             cached = _cache.get(key)
             if cached is not None:
+                _record_cache_metric(prefix, "hit")
                 return cached
             
             # Cache miss - çalıştır ve kaydet
+            _record_cache_metric(prefix, "miss")
             result = await func(*args, **kwargs)
             if result is not None:
                 _cache.set(key, result, ttl)
+                _record_cache_metric(prefix, "set")
             
             return result
         return wrapper

@@ -9,7 +9,7 @@ import sys
 import copy
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 BASE_URL = "http://127.0.0.1:8001"
@@ -248,7 +248,7 @@ def task3_code_integrity():
     
     # Test 3d: import copy dosyanın başında mı?
     print("\n📌 Test 3d: import copy dosya başında mı?")
-    with open("app/soc_simulator.py", "r", encoding="utf-8") as f:
+    with open(PROJECT_ROOT / "app" / "soc_simulator.py", "r", encoding="utf-8") as f:
         content = f.read()
     
     import_pos = content.find("import copy")

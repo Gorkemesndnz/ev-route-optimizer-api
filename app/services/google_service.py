@@ -1,7 +1,8 @@
 import urllib.parse
 import time
 import math
-from typing import List, Optional, Literal, Dict, Any
+from dataclasses import dataclass, field
+from typing import List, Optional, Literal, Dict, Any, Set, Tuple
 from app.services.base_service import BaseService, ExternalAPIError
 from app.utils.config_manager import config
 from app.utils.cache_manager import cacheable
@@ -657,6 +658,80 @@ class GoogleMapsService(BaseService):
                     matched_stations.append(st)
                     
         return matched_stations
+
+    # ============================================================
+    # 10) ROADS API — Snap to Roads
+    # ============================================================
+    async def snap_to_roads(self, path: List[GeoPoint], interpolate: bool = True) -> List[Dict[str, Any]]:
+        """
+        Google Roads API snapToRoads endpoint'i.
+        Verilen koordinat listesini en yakın yol segmentlerine snap eder.
+        Max 100 nokta/istek. Uzun rotalar otomatik parçalanır.
+
+        Returns: snappedPoints listesi — her eleman {"location": {...}, "originalIndex": int, "placeId": str}
+        """
+        CHUNK_SIZE = 100
+        all_snapped: List[Dict[str, Any]] = []
+
+        for i in range(0, len(path), CHUNK_SIZE):
+            chunk = path[i:i + CHUNK_SIZE]
+            path_str = "|".join(f"{p.lat},{p.lon}" for p in chunk)
+            params = {
+                "path": path_str,
+                "interpolate": "true" if interpolate else "false",
+                "key": self.api_key,
+            }
+            try:
+                data = await self._roads_request("/snapToRoads", params)
+                all_snapped.extend(data.get("snappedPoints", []))
+            except Exception as e:
+                logger.warning(f"snap_to_roads chunk {i}-{i+CHUNK_SIZE} failed: {e}")
+
+        return all_snapped
+
+    # ============================================================
+    # 11) ROADS API — Nearest Roads
+    # ============================================================
+    async def nearest_roads(self, points: List[GeoPoint]) -> List[Dict[str, Any]]:
+        """
+        Google Roads API nearestRoads endpoint'i.
+        Her nokta için en yakın yol segmentinin placeId'sini döner.
+        Max 100 nokta/istek.
+
+        Returns: snappedPoints listesi — her eleman {"location": {...}, "originalIndex": int, "placeId": str}
+        """
+        CHUNK_SIZE = 100
+        all_snapped: List[Dict[str, Any]] = []
+
+        for i in range(0, len(points), CHUNK_SIZE):
+            chunk = points[i:i + CHUNK_SIZE]
+            points_str = "|".join(f"{p.lat},{p.lon}" for p in chunk)
+            params = {
+                "points": points_str,
+                "key": self.api_key,
+            }
+            try:
+                data = await self._roads_request("/nearestRoads", params)
+                all_snapped.extend(data.get("snappedPoints", []))
+            except Exception as e:
+                logger.warning(f"nearest_roads chunk {i}-{i+CHUNK_SIZE} failed: {e}")
+
+        return all_snapped
+
+    async def _roads_request(self, endpoint: str, params: dict) -> dict:
+        """Roads API (roads.googleapis.com) için ayrı base_url ile istek atar."""
+        import httpx
+        from app.services.base_service import GLOBAL_CLIENT, API_LIMIT
+        import asyncio
+
+        url = f"https://roads.googleapis.com/v1{endpoint}"
+        async with API_LIMIT:
+            response = await GLOBAL_CLIENT.get(url, params=params)
+
+        if response.status_code >= 400:
+            raise ExternalAPIError("GoogleRoadsAPI", response.status_code, response.text[:200])
+        return response.json()
+
 
 # Tek instance
 google_maps = GoogleMapsService()

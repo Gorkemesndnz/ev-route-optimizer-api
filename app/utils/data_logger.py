@@ -26,6 +26,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from app.utils.logger import get_logger
+from app.optimization.decision_logger import anonymize_coords
 
 # =============================================================================
 # CONFIGURATION
@@ -54,6 +55,29 @@ def _setup_log_dir() -> None:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         logger.error("Log dizini oluşturulamadı", error=str(e), path=str(LOG_DIR))
+
+
+# =============================================================================
+# PRIVACY
+# =============================================================================
+def _sanitize_training_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop direct identifiers and round coordinates before JSONL writes."""
+    sanitized = {
+        key: value for key, value in (data or {}).items()
+        if key.lower() not in {"user_id", "ip", "email", "raw_address"}
+    }
+    coord_pairs = (
+        ("start_lat", "start_lon"),
+        ("end_lat", "end_lon"),
+        ("origin_lat", "origin_lon"),
+        ("destination_lat", "destination_lon"),
+    )
+    for lat_key, lon_key in coord_pairs:
+        if lat_key in sanitized and lon_key in sanitized:
+            lat, lon = anonymize_coords(sanitized.get(lat_key), sanitized.get(lon_key))
+            sanitized[lat_key] = lat
+            sanitized[lon_key] = lon
+    return sanitized
 
 
 # =============================================================================
@@ -95,7 +119,7 @@ def log_training_data(data: Dict[str, Any], category: Optional[str] = None) -> b
             record["category"] = category
         
         # Data'yı flatten olarak ekle (nested "data" key yok)
-        record.update(data)
+        record.update(_sanitize_training_data(data))
         
         # Günlük dosyaya yaz
         log_file = _get_daily_log_file()

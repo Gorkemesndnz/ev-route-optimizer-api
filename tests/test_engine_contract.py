@@ -42,12 +42,33 @@ def test_factory():
         print(f"✅ TEST 2 PASSED: Factory → PhysicsConsumptionEngine (USE_ML_ENGINE={USE_ML_ENGINE})")
 
 
+def _build_test_vehicle():
+    """Mock catalog deprecated (.NET MSSQL'e taşındı). Test için elle VehicleSpec kuruyoruz."""
+    from app.infrastructure.vehicle_catalog import VehicleSpec, ConnectorType, VehicleType
+    return VehicleSpec(
+        id="test_vehicle",
+        source_id="test-uuid",
+        brand="TestBrand",
+        model="TestModel",
+        variant="Standard",
+        year=2024,
+        display_name="Test Vehicle",
+        battery_capacity_kwh=42.0,
+        base_consumption_wh_km=160.0,
+        connector_type=ConnectorType.CCS,
+        ac_max_kw=11.0,
+        dc_max_kw=85.0,
+        charging_voltage=400,
+        curb_weight_kg=1500,
+        vehicle_type=VehicleType.CAR,
+    )
+
+
 def test_return_type_and_count():
     """Her iki motor da aynı tip ve aynı sayıda segment döndürür."""
     from dataclasses import dataclass
-    from app.infrastructure.vehicle_catalog import get_vehicle_model
-    
-    vehicle = get_vehicle_model('abarth_500e_hatchback_2024')
+
+    vehicle = _build_test_vehicle()
     
     # Basit mock segment
     @dataclass

@@ -48,6 +48,8 @@ def mock_route_request():
     request.target_arrival_soc_percent = None
     request.charge_min_soc_percent = None
     request.charge_target_soc_percent = None
+    request.smart_plan_enabled = False
+    request.charging_frequency = None
     return request
 
 
@@ -102,22 +104,25 @@ class TestConstants:
         assert MIN_CHARGE_THRESHOLD_PERCENT < TARGET_CHARGE_MIN_SOC
         assert TARGET_CHARGE_MIN_SOC < TARGET_ARRIVAL_SOC
     
-    def test_constants_imported_in_route_planner(self):
-        """Test: route_planner.py sabitleri import ediyor"""
-        from app.route_planner import (
+    def test_constants_imported_in_route_planning(self):
+        """Test: route_planning modülü sabitleri doğru kullanıyor"""
+        from app.route_planning.orchestrator import (
             HARD_MIN_SOC,
             TARGET_ARRIVAL_SOC,
-            MIN_CHARGE_THRESHOLD_PERCENT
+            MIN_CHARGE_THRESHOLD_PERCENT,
+            DEFAULT_CHARGE_TARGET_SOC,
         )
         from app.constants import (
             HARD_MIN_SOC as CONST_HARD_MIN,
             TARGET_ARRIVAL_SOC as CONST_TARGET,
-            MIN_CHARGE_THRESHOLD_PERCENT as CONST_MIN_CHARGE
+            MIN_CHARGE_THRESHOLD_PERCENT as CONST_MIN_CHARGE,
+            DEFAULT_CHARGE_TARGET_SOC as CONST_DEFAULT_TARGET,
         )
-        
+
         assert HARD_MIN_SOC == CONST_HARD_MIN
         assert TARGET_ARRIVAL_SOC == CONST_TARGET
         assert MIN_CHARGE_THRESHOLD_PERCENT == CONST_MIN_CHARGE
+        assert DEFAULT_CHARGE_TARGET_SOC == CONST_DEFAULT_TARGET == 80.0
 
 
 # =============================================================================
@@ -354,7 +359,7 @@ class TestSOCParametersBasic:
     
     def test_can_reach_without_charging(self, mock_route_request):
         """Senaryo: Şarjsız varılabilir (projected > TARGET)"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         from app.constants import HARD_MIN_SOC
         
         # 51 kWh batarya, %80 başlangıç, 20 kWh tüketim
@@ -373,7 +378,7 @@ class TestSOCParametersBasic:
     
     def test_needs_charging_below_hard_min(self, mock_route_request):
         """Senaryo: HARD_MIN altında kalıyor - şarj gerekli"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         from app.constants import TARGET_ARRIVAL_SOC
         
         # 51 kWh batarya, %80 başlangıç, 39 kWh tüketim
@@ -394,7 +399,7 @@ class TestSOCParametersDynamicTolerance:
     
     def test_projected_between_hard_and_target(self, mock_route_request):
         """Senaryo: Projected %8-15 arası - şarj YAPILMAZ"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         from app.constants import HARD_MIN_SOC, TARGET_ARRIVAL_SOC
         
         # 51 kWh, %80 start, 35 kWh consumption
@@ -413,7 +418,7 @@ class TestSOCParametersDynamicTolerance:
     
     def test_projected_exactly_at_hard_min(self, mock_route_request):
         """Edge case: Projected tam %8'de"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         from app.constants import HARD_MIN_SOC
         
         # 50 kWh, %80 start, 36 kWh consumption
@@ -431,7 +436,7 @@ class TestSOCParametersDynamicTolerance:
     
     def test_projected_just_below_hard_min(self, mock_route_request):
         """Edge case: Projected %7.9 (hard min altında)"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         from app.constants import TARGET_ARRIVAL_SOC
         
         # 50 kWh, %80 start, 36.05 kWh consumption
@@ -453,7 +458,7 @@ class TestSOCParametersDistanceBased:
     
     def test_short_route_uses_hard_min(self, mock_route_request):
         """Senaryo: Kısa rota (< 100 km) - HARD_MIN_SOC"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         from app.constants import HARD_MIN_SOC
         
         mock_route_request.preferences = None
@@ -468,7 +473,7 @@ class TestSOCParametersDistanceBased:
     
     def test_medium_route_uses_min_charge(self, mock_route_request):
         """Senaryo: Orta rota (100-200 km) - MIN_CHARGE_THRESHOLD"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         from app.constants import MIN_CHARGE_THRESHOLD_PERCENT
         
         mock_route_request.preferences = None
@@ -483,7 +488,7 @@ class TestSOCParametersDistanceBased:
     
     def test_long_route_uses_target_charge(self, mock_route_request):
         """Senaryo: Uzun rota (200-400 km) - TARGET_CHARGE_MIN"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         from app.constants import TARGET_CHARGE_MIN_SOC
         
         mock_route_request.preferences = None
@@ -498,7 +503,7 @@ class TestSOCParametersDistanceBased:
     
     def test_very_long_route_uses_target_arrival(self, mock_route_request):
         """Senaryo: Çok uzun rota (> 400 km) - TARGET_ARRIVAL_SOC"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         from app.constants import TARGET_ARRIVAL_SOC
         
         mock_route_request.preferences = None
@@ -517,7 +522,7 @@ class TestSOCParametersUserOverride:
     
     def test_user_arrival_soc_respected(self, mock_route_request):
         """Senaryo: Kullanıcı varış SOC'u belirledi"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         
         mock_route_request.target_arrival_soc_percent = 25.0
         
@@ -530,7 +535,7 @@ class TestSOCParametersUserOverride:
     
     def test_user_charge_min_respected(self, mock_route_request):
         """Senaryo: Kullanıcı şarj eşiği belirledi"""
-        from app.route_planner import _calculate_base_soc_params
+        from app.route_planning.soc_params import calculate_base_soc_params as _calculate_base_soc_params
         
         mock_route_request.charge_min_soc_percent = 20.0
         

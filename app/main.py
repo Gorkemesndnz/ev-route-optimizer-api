@@ -8,6 +8,7 @@ Endpoints are now separated using APIRouter for maintainability.
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -18,7 +19,7 @@ from app.services.base_service import close_global_client, ExternalAPIError
 from app.core.api_response import ApiResponse
 
 # Import Routers
-from app.routers import optimize, stations, dev
+from app.routers import optimize, stations, dev, trips
 
 logger = get_logger("main_api")
 
@@ -77,12 +78,17 @@ app.add_middleware(
 # Global Exception Handlers
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.warning("Request validation failed", path=str(request.url.path), errors=exc.errors())
+    # field_validator raised exception nesnesini errors içine koyabilir; JSON-safe hale getir.
+    safe_errors = jsonable_encoder(
+        exc.errors(),
+        custom_encoder={Exception: str, ValueError: str},
+    )
+    logger.warning("Request validation failed", path=str(request.url.path), errors=safe_errors)
     return JSONResponse(
         status_code=422,
         content=ApiResponse.fail(
             "Geçersiz istek verisi",
-            errors=exc.errors(),
+            errors=safe_errors,
             code="VALIDATION_ERROR",
         ).model_dump(mode="json")
     )
@@ -114,3 +120,4 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.include_router(optimize.router)
 app.include_router(stations.router)
 app.include_router(dev.router)
+app.include_router(trips.router)

@@ -28,6 +28,10 @@ TARGET_MIN_SOC = 15.0  # Tercih edilen minimum (alias)
 MAX_CHARGE_LIMIT = 100.0  # Maksimum şarj seviyesi
 MIN_CHARGE_THRESHOLD_PERCENT = 10.0  # Acil şarj eşiği - bunun altında hotspot oluştur
 
+# Default şarj hedefi — kullanıcı override yoksa optimizer find_optimal_plan'a başlar
+# (bu değer optimizer tarafından üzerine yazılır; sadece sentinel)
+DEFAULT_CHARGE_TARGET_SOC = 80.0
+
 # Eski sabitler (geriye uyumluluk)
 MIN_SOC_RANGE = (HARD_MIN_SOC, 20.0)  # Şarj eşiği aralığı
 TARGET_SOC_RANGE = (75.0, 95.0)  # Şarj hedefi aralığı

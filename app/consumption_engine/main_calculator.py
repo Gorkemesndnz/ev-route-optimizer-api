@@ -51,7 +51,7 @@ class MainCalculator:
     ✅ Load faktörü hem düz yol hem elevationda
     """
 
-    DEFAULT_AVG_SPEED_KMH = 50.0
+    DEFAULT_AVG_SPEED_KMH = 60.0  # Tek kaynak — wrapper ve fallback aynı değeri kullanır
     MIN_PRACTICAL_CONSUMPTION = -10.0  # Maksimum regen limiti (güvenlik)
 
     @staticmethod
@@ -328,8 +328,13 @@ class MainCalculator:
         result.regen_efficiency_applied = temp_adjusted_regen_eff
 
         # Tırmanış enerjisi (pozitif) - 🔥 V1.6: total_mass zaten yükü içerir
+        # Drivetrain verimi: m·g·h saf mekanik enerji, batarya çıkışı / efficiency
+        drivetrain_eff = getattr(
+            vehicle, "drivetrain_efficiency",
+            ElevationEffectCalculator.DRIVETRAIN_EFFICIENCY
+        )
         uphill_joule = total_mass * ElevationEffectCalculator.GRAVITY * segment.elevation_gain_m
-        uphill_kwh = uphill_joule / ElevationEffectCalculator.JOULE_TO_KWH
+        uphill_kwh = (uphill_joule / ElevationEffectCalculator.JOULE_TO_KWH) / drivetrain_eff
         # ❌ mass_factor eklenmiyor - total_mass zaten passengers + cargo içeriyor (m*g*h)
 
         # İniş regen (negatif) - regen verimliliği sıcaklığa bağlı
@@ -430,7 +435,8 @@ def calculate_segment_consumption_kwh(
     hvac_on: bool = True,
     max_speed_kmh: Optional[int] = None,
     consumption_override_wh_km: Optional[float] = None,
-    engine_version: str = "v1"
+    engine_version: str = "v1",
+    duration_minutes: Optional[float] = None,  # Gerçek segment süresi (trafik dahil)
 ) -> float:
     """
     V2.0: Rüzgar entegrasyonlu segment tüketim hesabı.
@@ -475,8 +481,11 @@ def calculate_segment_consumption_kwh(
             self.distance_km = segment_distance_km
             self.elevation_gain_m = segment_elevation_gain_m
             self.elevation_loss_m = segment_elevation_loss_m
-            assumed_speed_kmh = 60.0
-            self.duration_minutes = (segment_distance_km / assumed_speed_kmh) * 60.0  # Tahmini 60 km/h
+            # Gerçek süre verildiyse onu kullan (trafik dahil), yoksa default speed'den hesapla
+            if duration_minutes is not None and duration_minutes > 0:
+                self.duration_minutes = duration_minutes
+            else:
+                self.duration_minutes = (segment_distance_km / MainCalculator.DEFAULT_AVG_SPEED_KMH) * 60.0
             self.start_point = start_point  # 🔧 V2.0: Bearing için
             self.end_point = end_point      # 🔧 V2.0: Bearing için
             self.weather_context = WeatherInfo(
@@ -625,9 +634,10 @@ def calculate_route_consumption(
             driving_style_multiplier=driving_style_multiplier,
             hvac_on=hvac_on,
             max_speed_kmh=max_speed_kmh,
-            consumption_override_wh_km=consumption_override_wh_km
+            consumption_override_wh_km=consumption_override_wh_km,
+            duration_minutes=getattr(segment, "duration_minutes", None),
         )
-        
+
         # SegmentWithConsumption oluştur
         seg_with_cons = SegmentWithConsumption(
             segment=segment,

@@ -197,6 +197,10 @@ def resolve_vehicle_spec(payload: VehiclePayload) -> VehicleSpec:
         vehicle_type=vehicle_type,
         drag_coefficient=drag_cd,
         frontal_area_m2=frontal_area,
+        # Sprint 2: Soğuk hava ve preconditioning bilgileri payload'dan geçer.
+        # Resolver'da fallback yok — kaynak veride yoksa default False kalır.
+        has_heat_pump=payload.heat_pump,
+        battery_preconditioning=payload.battery_preconditioning,
         charge_curve=_resolve_charge_curve(payload)
     )
 
@@ -209,7 +213,8 @@ def resolve_vehicle_spec(payload: VehiclePayload) -> VehicleSpec:
         drag_cd=drag_cd,
         frontal_area=frontal_area,
         dc_max_kw=spec.dc_max_kw,
-        heat_pump=payload.heat_pump,
+        heat_pump=spec.has_heat_pump,
+        battery_preconditioning=spec.battery_preconditioning,
     )
 
     return spec

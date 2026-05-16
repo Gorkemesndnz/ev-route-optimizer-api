@@ -143,7 +143,15 @@ class VehicleSpec:
     # Aero properties (for physics engine)
     drag_coefficient: float = 0.28   # Cd
     frontal_area_m2: float = 2.2    # A (m^2)
-    
+
+    # Sprint 2: Soğuk hava davranışı için araç-spesifik alanlar.
+    # has_heat_pump → soğuk hava aux/HVAC tüketim düzeltmesinde kullanılır.
+    # battery_preconditioning → DC fast charge öncesi batarya ısıtma kabiliyeti.
+    # (Sprint 2'de alanlar resolver'dan geçer; consumption/charging engine
+    #  kullanımı Sprint 3'te aktive edilir — şu an pasif/raporlama amaçlı.)
+    has_heat_pump: bool = False
+    battery_preconditioning: bool = False
+
     # Metadata
     has_real_curve: bool = False
     vehicle_type: VehicleType = VehicleType.CAR
@@ -178,6 +186,8 @@ class VehicleSpec:
             "vehicle_type": self.vehicle_type.value,
             "drag_coefficient": self.drag_coefficient,
             "frontal_area_m2": self.frontal_area_m2,
+            "has_heat_pump": self.has_heat_pump,
+            "battery_preconditioning": self.battery_preconditioning,
         }
 
 

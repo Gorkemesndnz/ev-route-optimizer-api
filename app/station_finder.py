@@ -1,33 +1,32 @@
 """
-Station Finder v2.0
-====================
+Station Finder
+===============
 
-V2.0 Google Places Öncelikli + OCM Fallback İstasyon Arama Modülü.
+Google Places öncelikli, OCM fallback'li EV şarj istasyonu arama modülü.
 
 Özellikler:
 - Google Places API ile EV şarj istasyonu arama (birincil)
 - OCM API fallback (Google boş dönerse)
 - Connector uyumluluğu kontrolü
-- DC/AC istasyon ayrımı
-- Haversine mesafe filtreleme
-- V1.5 Koridor bazlı arama (Corridor Search)
+- DC/AC istasyon ayrımı (≥40 kW DC, altı AC)
+- Haversine + koridor + polyline-perpendicular mesafe filtreleme
 - Hotspot bazlı akıllı istasyon seçimi
 - Greedy station selection
-- Ağırlıklı skorlama sistemi
+- Ağırlıklı skorlama sistemi (StationScorer)
 
 Flow:
 1. Google Places'tan EV istasyonlarını ara
 2. Google boş dönerse → OCM'ye fallback
 3. Operasyonel ve uyumlu olanları filtrele
 4. DC/AC ayrımı yap
-5. Haversine/Koridor mesafe filtreleme
+5. Haversine/Koridor/Polyline mesafe filtreleme
 6. Ağırlıklı skorlama ile en iyiyi seç
 
 Kullanım:
     from app.station_finder import (
-        find_best_station,              # Tek nokta bazlı
-        find_stations_for_hotspots,     # V1.5 çoklu hotspot
-        CorridorSearcher                # V1.5 arama sınıfı
+        find_best_station_for_hotspot,  # Tek hotspot için
+        find_stations_for_hotspots,     # Çoklu hotspot
+        CorridorSearcher                # Arama sınıfı
     )
 """
 
@@ -41,13 +40,21 @@ from app.soc_simulator import ChargeHotspot
 from app.services.ocm_service import ocm_service
 from app.services.google_service import google_maps
 from app.services.weather_service import weather_service
+from app.infrastructure.station_catalog import (
+    DATA_CONFIDENCE_PENALTY_UNKNOWN_AVAILABILITY,
+    DATA_CONFIDENCE_PENALTY_UNKNOWN_POWER,
+    UNKNOWN_POWER_PLANNING_KW,
+    AvailabilityStatus,
+    parse_google_place,
+    parse_ocm_station,
+)
 from app.infrastructure.vehicle_catalog import get_vehicle_model, VehicleSpec as VehicleModel
 from app.utils.config_manager import config
 from app.utils.logger import get_logger
 from app.utils.charging_estimator import estimate_dc_charging_power
 from app.services.feedback_service import feedback_manager
 from app.services.station_logic import StationScorer, StationFilter
-from app.utils.geo import haversine_km, calculate_bearing
+from app.utils.geo import haversine_km
 from app.services.station_logic.scorer import (
     WEIGHT_DEVIATION, WEIGHT_POWER, WEIGHT_RATING, WEIGHT_AMENITIES, WEIGHT_POPULARITY,
     GREEDY_WEIGHT_POWER, GREEDY_WEIGHT_DEVIATION, GREEDY_WEIGHT_RATING,
@@ -71,28 +78,31 @@ DC_POWER_THRESHOLD_KW = 40.0
 MAX_DISTANCE_MATRIX_DESTINATIONS = 100
 TOP_STATIONS_FOR_DETAILS = 3
 
-# Koridor sabitleri (V1.5)
+# Koridor sabitleri
 CORRIDOR_LENGTH_KM = 50.0
 CORRIDOR_WIDTH_KM = 10.0
 MIN_DC_POWER_KW = 50.0
 MAX_STATIONS_PER_HOTSPOT = 5
+MAX_REJECT_AUDIT_SAMPLES_PER_REASON = 3
 
-# 🔧 V3.3: Kademeli arama yarıçapları (istasyon bulunamazsa genişlet)
+# Kademeli arama yarıçapları (istasyon bulunamazsa genişlet)
 SEARCH_RADII_KM = [50, 80, 120]  # km - 3 kademeli arama
 
-# 🔧 V3.2: Skorlama ve filtreleme sabitleri station_logic/ altına taşındı
+# Skorlama ve filtreleme sabitleri station_logic/ altına taşındı.
 # Import: from app.services.station_logic.scorer import WEIGHT_*, AMENITY_*, etc.
 
 
 # =============================================================================
-# DATA CLASSES (V1.5)
+# DATA CLASSES
 # =============================================================================
 
 @dataclass
 class CorridorStation:
-    """
-    Koridor içinde bulunan istasyon.
-    🔧 V2.8: Amenities ve weighted rating desteği eklendi.
+    """Koridor içinde bulunan istasyon (amenities + weighted rating destekli).
+
+    Sprint 5: Provider-neutral normalization alanlarını taşır (power_known,
+    availability_status, source_provider, source_id, available_count, ...).
+    Bu alanlar StationInfo response'una downstream'de aktarılır.
     """
     station_info: Dict[str, Any]
     distance_from_hotspot_km: float
@@ -101,14 +111,22 @@ class CorridorStation:
     is_dc: bool = False
     is_compatible: bool = True
     rating: float = 4.0
-    user_ratings_total: int = 0  # 🔧 V2.8: Weighted rating için
+    user_ratings_total: int = 0  # Weighted rating için
     score: float = 0.0
-    # 🔧 V2.8: Amenities alanları
+    # Amenities alanları
     has_toilet: bool = False
     has_food: bool = False
     has_shopping: bool = False
     has_parking: bool = False
     is_open_now: Optional[bool] = None
+    # Sprint 5 — Provider-neutral normalization alanları
+    power_known: bool = True
+    availability_status: Optional[str] = None  # 'available' | 'unavailable' | 'unknown'
+    available_count: Optional[int] = None
+    out_of_service_count: Optional[int] = None
+    availability_last_update_time: Optional[str] = None
+    source_provider: Optional[str] = None  # 'google' | 'ocm'
+    source_id: Optional[str] = None
     
     @property
     def station_id(self) -> str:
@@ -139,85 +157,25 @@ class CorridorSearchResult:
     search_radius_km: float = CORRIDOR_LENGTH_KM
     total_found: int = 0
     dc_compatible: int = 0
-    weather_forecast: Optional[Dict[str, Any]] = None  # 🔧 V2.7: İstasyon için forecast
-    amenities_warning: Optional[str] = None  # 🔧 V3.2: Zorunlu imkan bulunamadı uyarısı
+    weather_forecast: Optional[Dict[str, Any]] = None  # İstasyon için forecast
+    amenities_warning: Optional[str] = None  # Zorunlu imkan bulunamadı uyarısı
+    distance_warning: Optional[str] = None  # Min mesafe filtresi gevşetildi uyarısı
+    reject_audit: Dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================
 # HELPER FUNCTIONS
+# =============================================================================
+# Polyline perpendicular distance filter:
+# Refactor 2 Stage 2 (2026-05-06) ile app/services/station_logic/polyline_filter.py
+# altina tasindi. Geriye donuk uyumluluk icin yerel isimler import ediliyor.
 
-
-
-def _is_station_on_route_side(
-    route_bearing: float,
-    hotspot_lat: float,
-    hotspot_lon: float,
-    station_lat: float,
-    station_lon: float,
-    max_perpendicular_distance_km: float = 1.0
-) -> Tuple[bool, float]:
-    """
-    🔧 V3.1: İstasyonun rotanın doğru tarafında olup olmadığını kontrol et.
-    
-    Otoyolda karşı yöndeki istasyonları filtrelemek için:
-    - Rota yönüne dik mesafeyi hesapla
-    - Açı farkı kontrolü (90°+ = muhtemelen karşı tarafta)
-    - Mesafeye göre dinamik tolerans
-    
-    Args:
-        route_bearing: Rotanın gittiği yön (derece)
-        hotspot_lat/lon: Şarj gerekli nokta
-        station_lat/lon: İstasyon konumu
-        max_perpendicular_distance_km: Rotaya dik maksimum mesafe (km)
-    
-    Returns:
-        (is_valid, perpendicular_distance_km)
-    """
-    # İstasyona olan bearing
-    station_bearing = _calculate_bearing(hotspot_lat, hotspot_lon, station_lat, station_lon)
-    
-    # Rota ile istasyon arasındaki açı farkı
-    angle_diff = abs(station_bearing - route_bearing)
-    if angle_diff > 180:
-        angle_diff = 360 - angle_diff
-    
-    # İstasyona olan toplam mesafe
-    total_distance = haversine_km(hotspot_lat, hotspot_lon, station_lat, station_lon)
-    
-    # Rotaya dik mesafe (perpendicular) = toplam mesafe × sin(açı farkı)
-    perpendicular_distance = total_distance * math.sin(math.radians(angle_diff))
-    
-    # İleri yönde mesafe (along-route) = toplam mesafe × cos(açı farkı)
-    along_route_distance = total_distance * math.cos(math.radians(angle_diff))
-    
-    # 🔧 V3.1: Dinamik tolerans - yakın istasyonlar için daha sıkı kontrol
-    # Otoyolda karşı şerit sadece 50-200m uzaklıkta, bu yüzden yakın mesafelerde
-    # daha sıkı filtreleme gerekiyor
-    if total_distance <= 1.0:
-        # Çok yakın istasyonlar (1 km içinde) - sıkı kontrol
-        effective_max_perp = min(max_perpendicular_distance_km, 0.3)  # Max 300m
-    elif total_distance <= 3.0:
-        # Yakın istasyonlar (1-3 km) - orta sıkılıkta
-        effective_max_perp = min(max_perpendicular_distance_km, 0.5)  # Max 500m
-    else:
-        # Uzak istasyonlar - normal tolerans
-        effective_max_perp = max_perpendicular_distance_km
-    
-    # 🔧 V3.1: Açı farkı kontrolü
-    # Eğer istasyon rotanın neredeyse ters yönündeyse (135°+), büyük ihtimalle
-    # karşı yönde veya çok farklı bir yerde
-    is_opposite_direction = angle_diff >= 135.0
-    
-    # Kriterler:
-    # 1. İstasyon ileri yönde olmalı (arkada değil) - along_route >= -1 km tolerans
-    # 2. Rotaya dik mesafe effective_max_perp'den küçük olmalı
-    # 3. Ters yönde olmamalı (135°+ açı farkı)
-    is_forward = along_route_distance >= -1.0  # 1km geriye tolerans (daraltıldı)
-    is_close_to_route = perpendicular_distance <= effective_max_perp
-    
-    is_valid = is_forward and is_close_to_route and not is_opposite_direction
-    
-    return is_valid, perpendicular_distance
+from app.services.station_logic.polyline_filter import (  # noqa: E402
+    PERP_DISTANCE_THRESHOLD_KM,
+    decode_route_polyline_coords as _decode_route_polyline_coords,
+    min_distance_to_polyline_km as _min_distance_to_polyline_km,
+    check_stations_on_polyline as _check_stations_on_polyline,
+)
 
 
 def _is_connector_compatible(connections: List[dict], vehicle_connector: str) -> bool:
@@ -246,141 +204,81 @@ def _get_max_power_kw(connections: List[dict]) -> float:
     return max_power
 
 
-def _calculate_weighted_rating(rating: float, user_ratings_total: int) -> float:
-    """
-    🔧 V2.8: Weighted rating hesapla.
-    
-    Az yorumlu istasyonlarda rating güvenilirliği düşük olduğundan,
-    yorum sayısına göre rating'i bir prior ile karıştırır.
-    
-    Formül: weighted = confidence * rating + (1 - confidence) * prior
-    
-    Args:
-        rating: Google/OCM rating (0-5)
-        user_ratings_total: Toplam yorum sayısı
-    
-    Returns:
-        Güven ayarlı rating (0-5)
-    """
-    if user_ratings_total <= 0:
-        return RATING_PRIOR
-    
-    # Güven katsayısı: 50+ yorum = %100 güven
-    confidence = min(1.0, user_ratings_total / RATING_CONFIDENCE_THRESHOLD)
-    
-    # Weighted rating
-    weighted = confidence * rating + (1 - confidence) * RATING_PRIOR
-    
-    return weighted
+# Refactor 2 Stage 1 (2026-05-05): _calculate_weighted_rating, _calculate_amenities_score,
+# _calculate_popularity_score, _calculate_station_score modul-level fonksiyonlari kaldirildi.
+# StationScorer (app/services/station_logic/scorer.py) icindeki ayni metodlar kullaniliyor.
+# Modul-level singleton: _scorer; metodlari tum sinif disinda da call edilebilir.
+_scorer = StationScorer()
 
 
-def _calculate_amenities_score(
-    has_toilet: bool = False,
-    has_food: bool = False,
-    has_shopping: bool = False,
-    has_parking: bool = False,
-    is_open_now: Optional[bool] = None
-) -> float:
-    """
-    🔧 V2.8: Amenities (tesis olanakları) skoru hesapla.
-    
-    Kullanıcılar rota sapması benzer ise tuvalet, yemek, market
-    gibi olanakları olan istasyonları tercih eder.
-    
-    Returns:
-        0.0 - 1.0 arası amenities skoru
-    """
-    score = 0.0
-    
-    if has_toilet:
-        score += AMENITY_BONUS_TOILET
-    if has_food:
-        score += AMENITY_BONUS_FOOD
-    if has_shopping:
-        score += AMENITY_BONUS_SHOPPING
-    if has_parking:
-        score += AMENITY_BONUS_PARKING
-    if is_open_now is True:  # Explicitly True (None = bilinmiyor)
-        score += AMENITY_BONUS_OPEN_NOW
-    
-    # Normalize to 0-1 (max possible = 1.0)
-    return min(1.0, score)
+def _new_reject_audit(source_provider: str) -> Dict[str, Any]:
+    return {
+        "source_provider": source_provider,
+        "total_rejected": 0,
+        "by_reason": {},
+    }
 
 
-def _calculate_popularity_score(user_ratings_total: int) -> float:
-    """
-    🔧 V2.9: Popülerlik skoru hesapla.
-    
-    Yüksek yorum sayısına sahip istasyonlar (Highway gibi) bonus alır.
-    
-    Returns:
-        0.0 - 1.0 arası popülerlik skoru
-    """
-    if user_ratings_total >= POPULARITY_VERY_HIGH_THRESHOLD:
-        return 1.0  # 500+ yorum = maksimum bonus
-    elif user_ratings_total >= POPULARITY_HIGH_THRESHOLD:
-        return 0.7  # 200-500 yorum = yüksek bonus
-    elif user_ratings_total >= 50:
-        return 0.4  # 50-200 yorum = orta bonus
-    elif user_ratings_total >= 10:
-        return 0.2  # 10-50 yorum = düşük bonus
+def _safe_reject_sample(source_provider: str, station: Dict[str, Any], reason_code: str, **extra) -> Dict[str, Any]:
+    if source_provider == "google":
+        source_id = station.get("place_id") or station.get("id") or ""
+        display_name = station.get("name")
+        if not display_name and isinstance(station.get("displayName"), dict):
+            display_name = station["displayName"].get("text")
     else:
-        return 0.0  # 10'dan az yorum = bonus yok
+        source_id = str(station.get("ID", "") or "")
+        display_name = (station.get("AddressInfo", {}) or {}).get("Title")
+    sample = {
+        "source_provider": source_provider,
+        "source_id": str(source_id),
+        "reason_code": reason_code,
+    }
+    if display_name:
+        sample["name_hash"] = str(abs(hash(str(display_name))) % 10_000_000)
+    for key, value in extra.items():
+        if value is not None:
+            sample[key] = value
+    return sample
 
 
+def _record_reject(audit: Dict[str, Any], reason_code: str, sample: Dict[str, Any]) -> None:
+    audit["total_rejected"] = int(audit.get("total_rejected", 0)) + 1
+    by_reason = audit.setdefault("by_reason", {})
+    payload = by_reason.setdefault(reason_code, {"count": 0, "samples": []})
+    payload["count"] = int(payload.get("count", 0)) + 1
+    samples = payload.setdefault("samples", [])
+    if len(samples) < MAX_REJECT_AUDIT_SAMPLES_PER_REASON:
+        samples.append(sample)
 
 
-def _calculate_station_score(
-    deviation_minutes: float,
-    power_kw: float,
-    max_power_kw: float,
-    rating: float,
-    user_ratings_total: int = 0,
-    has_toilet: bool = False,
-    has_food: bool = False,
-    has_shopping: bool = False,
-    has_parking: bool = False,
-    is_open_now: Optional[bool] = None
-) -> float:
-    """
-    🔧 V2.9: İstasyon için ağırlıklı skor hesapla.
-    
-    V2.9 Güncellemeleri:
-    - Rating ağırlığı artırıldı (%15 → %25)
-    - Popülerlik skoru eklendi (yüksek yorum sayısı = bonus)
-    """
-    deviation_score = max(0, 1 - (deviation_minutes / MAX_DEVIATION_MINUTES))
-    power_score = power_kw / max_power_kw if max_power_kw > 0 else 0
-    
-    # Weighted rating kullan
-    weighted_rating = _calculate_weighted_rating(rating, user_ratings_total)
-    rating_score = weighted_rating / 5.0
-    
-    # Amenities skoru
-    amenities_score = _calculate_amenities_score(
-        has_toilet, has_food, has_shopping, has_parking, is_open_now
-    )
-    
-    # 🔧 V2.9: Popülerlik skoru (yüksek yorum sayısı = güvenilir istasyon)
-    popularity_score = _calculate_popularity_score(user_ratings_total)
-    
-    return (
-        WEIGHT_DEVIATION * deviation_score + 
-        WEIGHT_POWER * power_score + 
-        WEIGHT_RATING * rating_score +
-        WEIGHT_AMENITIES * amenities_score +
-        WEIGHT_POPULARITY * popularity_score
-    )
+def _merge_reject_audit(target: Dict[str, Any], source: Dict[str, Any], *, radius_km: float) -> Dict[str, Any]:
+    if not target:
+        target = _new_reject_audit(source.get("source_provider", "unknown") if source else "unknown")
+    if not source:
+        return target
+    target["total_rejected"] = int(target.get("total_rejected", 0)) + int(source.get("total_rejected", 0))
+    by_reason = target.setdefault("by_reason", {})
+    for reason_code, payload in (source.get("by_reason", {}) or {}).items():
+        existing = by_reason.setdefault(reason_code, {"count": 0, "samples": []})
+        existing["count"] = int(existing.get("count", 0)) + int(payload.get("count", 0))
+        samples = existing.setdefault("samples", [])
+        for sample in payload.get("samples", []) or []:
+            if len(samples) >= MAX_REJECT_AUDIT_SAMPLES_PER_REASON:
+                break
+            sample = dict(sample)
+            sample["search_radius_km"] = radius_km
+            samples.append(sample)
+    return target
 
 
 # =============================================================================
-# V1.5 CORRIDOR SEARCHER CLASS
+# CORRIDOR SEARCHER CLASS
 # =============================================================================
 
 class CorridorSearcher:
     """
-    V1.5 Koridor Bazlı İstasyon Arama Motoru.
-    
+    Koridor bazlı istasyon arama motoru.
+
     Kullanım:
         searcher = CorridorSearcher(vehicle_model_id="mg4_51kwh")
         result = await searcher.search_for_hotspot(hotspot)
@@ -400,6 +298,7 @@ class CorridorSearcher:
         self.corridor_length_km = corridor_length_km
         self.corridor_width_km = corridor_width_km
         self.min_dc_power_kw = min_dc_power_kw
+        self._last_reject_audit: Dict[str, Any] = {}
         
         logger.info(
             "CorridorSearcher initialized",
@@ -410,16 +309,16 @@ class CorridorSearcher:
     
     async def search_for_hotspot(self, hotspot: ChargeHotspot) -> CorridorSearchResult:
         """
-        🔧 V3.1: Google Places öncelikli + OCM fallback istasyon arama.
-        
+        Google Places öncelikli + OCM fallback istasyon arama.
+
         Args:
             hotspot: Şarj gerekli olan nokta
-            
+
         Returns:
             CorridorSearchResult: Bulunan istasyonlar ve seçilen
         """
         logger.info(
-            f"🔍 Searching stations for hotspot at {hotspot.location.lat:.4f}, {hotspot.location.lon:.4f} "
+            f"Searching stations for hotspot at {hotspot.location.lat:.4f}, {hotspot.location.lon:.4f} "
             f"(distance: {hotspot.distance_from_start_km:.0f}km from start, "
             f"remaining: {hotspot.remaining_distance_km:.0f}km to end, "
             f"corridor: {self.corridor_length_km}km length, {self.corridor_width_km}km width)"
@@ -443,7 +342,7 @@ class CorridorSearcher:
         )
         
         try:
-            # 🔧 V3.3: Kademeli arama yarıçapı - istasyon bulunamazsa genişlet
+            # Kademeli arama yarıçapı - istasyon bulunamazsa genişlet
             raw_stations = []
             source = "none"
             used_radius = SEARCH_RADII_KM[0]
@@ -480,9 +379,14 @@ class CorridorSearcher:
                 if raw_stations:
                     # Kaynak bazlı filtreleme ve skorlama
                     if source == "google":
-                        corridor_stations = self._filter_and_score_google_stations(raw_stations, hotspot)
+                        corridor_stations = await self._filter_and_score_google_stations(raw_stations, hotspot)
                     else:
-                        corridor_stations = self._filter_and_score_stations(raw_stations, hotspot)
+                        corridor_stations = await self._filter_and_score_stations(raw_stations, hotspot)
+                    result.reject_audit = _merge_reject_audit(
+                        result.reject_audit,
+                        self._last_reject_audit,
+                        radius_km=radius,
+                    )
                     
                     result.dc_compatible = len(corridor_stations)
                     
@@ -529,9 +433,10 @@ class CorridorSearcher:
     async def _fetch_stations_google_first(self, hotspot: ChargeHotspot, search_radius_km: float = None) -> Tuple[List[Dict[str, Any]], str]:
         """
         Google Places öncelikli istasyon arama.
-        🔧 V3.2: Hibrit sistem - Google'da kW yoksa OCM'den cross-reference.
-        🔧 V3.3: Kademeli arama yarıçapı desteği.
-        
+
+        - Hibrit sistem: Google'da kW yoksa OCM'den cross-reference.
+        - Kademeli arama yarıçapı desteklenir.
+
         Args:
             hotspot: Şarj gerekli olan nokta
             search_radius_km: Arama yarıçapı (None ise varsayılan kullanılır)
@@ -561,7 +466,7 @@ class CorridorSearcher:
         except Exception as e:
             logger.warning(f"Google Places search failed: {e}")
         
-        # 2. 🔧 V3.1: Hibrit - Sadece connector_count>0 olan ama kW=0 olan istasyonlar için OCM crossref
+        # 2. Hibrit - Sadece connector_count>0 olan ama kW=0 olan istasyonlar için OCM crossref
         # Bu sayede yanlış POI'lere (oto yıkama gibi) OCM'den güç yapıştırılmaz
         stations_need_power = [
             s for s in google_stations 
@@ -676,14 +581,14 @@ class CorridorSearcher:
             logger.error("OCM API call failed", error=str(e))
             return []
     
-    def _filter_and_score_google_stations(
+    async def _filter_and_score_google_stations(
         self,
         google_stations: List[Dict[str, Any]],
         hotspot: ChargeHotspot
     ) -> List[CorridorStation]:
         """
         Google Places verilerini filtrele ve skorla.
-        
+
         Google Places formatı:
         {
             "place_id": "...",
@@ -695,58 +600,98 @@ class CorridorSearcher:
             "vicinity": "..."
         }
         """
-        filtered_stations = []
-        
+        # Ön filtre: operasyonel + konumlu + EV verisine sahip istasyonları topla
+        pre_filtered = []
+        reject_audit = _new_reject_audit("google")
+        rej_blocked = rej_status = rej_geo = rej_far = rej_no_ev = rej_ac = 0
         for station in google_stations:
-            try:
-                # 🔧 V3.2: Feedback blok kontrolü
-                place_id = station.get("place_id", "")
-                if place_id and feedback_manager.is_station_blocked(place_id):
-                    logger.debug(f"Station filtered (blocked by feedback): {station.get('name')}")
-                    continue
-                
-                # İşletme durumu kontrolü
-                business_status = station.get("business_status", "OPERATIONAL")
-                if business_status not in ("OPERATIONAL", None):
-                    continue
-                
-                # Konum al
-                geometry = station.get("geometry", {})
-                location = geometry.get("location", {})
-                station_lat = location.get("lat", 0)
-                station_lng = location.get("lng", 0)
-                
-                if not station_lat or not station_lng:
-                    continue
-                
-                # Mesafe hesapla
-                distance = haversine_km(
-                    hotspot.location.lat, hotspot.location.lon,
-                    station_lat, station_lng
+            place_id = station.get("place_id", "")
+            if place_id and feedback_manager.is_station_blocked(place_id):
+                rej_blocked += 1
+                _record_reject(reject_audit, "blocked_by_feedback", _safe_reject_sample("google", station, "blocked_by_feedback"))
+                continue
+            business_status = station.get("business_status", "OPERATIONAL")
+            if business_status not in ("OPERATIONAL", None):
+                rej_status += 1
+                _record_reject(reject_audit, "non_operational", _safe_reject_sample("google", station, "non_operational"))
+                continue
+            geometry = station.get("geometry", {})
+            location = geometry.get("location", {})
+            station_lat = location.get("lat", 0)
+            station_lng = location.get("lng", 0)
+            if not station_lat or not station_lng:
+                rej_geo += 1
+                _record_reject(reject_audit, "invalid_geometry", _safe_reject_sample("google", station, "invalid_geometry"))
+                continue
+            distance = haversine_km(
+                hotspot.location.lat, hotspot.location.lon,
+                station_lat, station_lng
+            )
+            if distance > self.corridor_length_km:
+                rej_far += 1
+                _record_reject(
+                    reject_audit,
+                    "too_far_from_route",
+                    _safe_reject_sample("google", station, "too_far_from_route", distance_km=round(distance, 2)),
                 )
-                
-                if distance > self.corridor_length_km:
-                    continue
-                
-                # 🔧 V3.1: Gerçek EV şarj istasyonu doğrulaması (connector_count / evChargeOptions)
-                # Google Places (New) sonucunda connector_count veya max_power_kw yoksa bu POI şarj istasyonu değil
-                connector_count = station.get("connector_count", 0)
-                max_power = station.get("max_power_kw", 0)
-                
-                # Eğer hem connector_count hem max_power 0 ise, bu gerçek bir şarj istasyonu değil
-                if connector_count == 0 and max_power == 0:
-                    logger.debug(f"Station filtered (no EV charge data): {station.get('name')} - connector_count=0, max_power=0")
-                    continue
-                
-                # 🔧 V3.3: Perpendicular distance filtresi kaldırıldı
-                # Service alanları genellikle otobana dik bağlantı yollarıyla bağlı
-                # Koridor genişliği (3km) zaten yeterli filtreleme sağlıyor
-                
+                continue
+            connector_count = station.get("connector_count", 0)
+            max_power = station.get("max_power_kw", 0)
+            station_types = station.get("types", []) or []
+            # Google Places New bazen Türkiye için connector_count=0, max_power=0 dönüyor.
+            # types içinde 'electric_vehicle_charging_station' varsa yine de kabul et.
+            is_ev_by_type = "electric_vehicle_charging_station" in station_types
+            if connector_count == 0 and max_power == 0 and not is_ev_by_type:
+                rej_no_ev += 1
+                _record_reject(reject_audit, "no_ev_charge_data", _safe_reject_sample("google", station, "no_ev_charge_data"))
+                logger.debug(f"Station filtered (no EV charge data, no EV type): {station.get('name')}")
+                continue
+            # Google istasyonlarda DC/AC kontrolü.
+            # Gerçek max_power_kw biliniyorsa ve DC eşiğinin (40 kW) altındaysa AC kabul et ve REDDET.
+            # Sadece max_power=0 (Google bilgi vermedi) durumunda fallback 120 kW DC olarak devam et.
+            if max_power > 0 and max_power < DC_POWER_THRESHOLD_KW:
+                rej_ac += 1
+                _record_reject(
+                    reject_audit,
+                    "below_min_power",
+                    _safe_reject_sample("google", station, "below_min_power", power_kw=float(max_power)),
+                )
+                logger.debug(
+                    f"Google station filtered (AC charger, "
+                    f"power={max_power}kW < DC_THRESHOLD={DC_POWER_THRESHOLD_KW}kW): "
+                    f"{station.get('name')}"
+                )
+                continue
+            pre_filtered.append((station, station_lat, station_lng, distance))
+
+        if google_stations and not pre_filtered:
+            logger.warning(
+                f"Pre-filter eliminated all {len(google_stations)} Google stations | "
+                f"blocked={rej_blocked}, status={rej_status}, no_geo={rej_geo}, "
+                f"too_far={rej_far}, no_ev_data={rej_no_ev}, ac_charger={rej_ac}"
+            )
+
+        # Polyline-perpendicular filter (Roads API yerine, geometrik)
+        coords = [(lat, lng) for _, lat, lng, _ in pre_filtered]
+        on_route_flags = _check_stations_on_polyline(coords, hotspot.route_polyline_coords)
+
+        filtered_stations = []
+        for (station, station_lat, station_lng, distance), on_route in zip(pre_filtered, on_route_flags):
+            if not on_route:
+                _record_reject(
+                    reject_audit,
+                    "too_far_from_route",
+                    _safe_reject_sample("google", station, "too_far_from_route", distance_km=round(distance, 2)),
+                )
+                logger.debug(f"Google station filtered (off-route, perp > {PERP_DISTANCE_THRESHOLD_KM}km): {station.get('name')}")
+                continue
+            try:
+
                 # Rating al (Google doğrudan sağlar)
                 rating = station.get("rating", 4.0)
                 user_ratings_total = station.get("user_ratings_total", 0)
-                
-                # 🔧 V2.8: Google Places types'tan amenities çıkar
+
+                # Google Places types'tan amenities çıkar
                 place_types = station.get("types", [])
                 place_name = station.get("name", "").lower()
                 vicinity = station.get("vicinity", "").lower()
@@ -779,11 +724,18 @@ class CorridorSearcher:
                 # is_open_now (Google Places opening_hours'dan)
                 opening_hours = station.get("opening_hours", {})
                 is_open_now = opening_hours.get("open_now") if opening_hours else None
-                
-                # 🔧 V3.3: Google Places API (New) - evChargeOptions'dan gerçek güç bilgisi
-                # Akıllı fallback: 50 kW sabit değer yerine tipik DC şarj gücü (120 kW)
+
+                # Sprint 5: Google raw'u NormalizedStation'a indirgey (provider-neutral)
+                # power_known=False ise UNKNOWN_POWER_PLANNING_KW (=50 kW) konservatif
+                # planlama gücü kullanılır; istasyon adayda kalır ama düşük güven cezası alır.
+                # 120 kW iyimser fallback artık YOK — kontrat Sprint 5'te kilitlendi.
+                normalized = parse_google_place(station)
                 real_power_kw = station.get("max_power_kw", 0)
-                estimated_power_kw = real_power_kw if real_power_kw > 0 else 120.0  # Akıllı fallback
+                power_known = bool(normalized.power_known) or (real_power_kw > 0)
+                estimated_power_kw = (
+                    float(real_power_kw) if real_power_kw > 0
+                    else normalized.planning_power_kw  # = UNKNOWN_POWER_PLANNING_KW (50)
+                )
                 
                 # Station info'yu Google formatında oluştur (OCM uyumlu dict)
                 station_info = {
@@ -803,7 +755,7 @@ class CorridorSearcher:
                     "_rating": rating,
                     "_user_ratings_total": user_ratings_total,
                     "_place_id": station.get("place_id", ""),
-                    # 🔧 V2.8: Amenities bilgileri
+                    # Amenities bilgileri
                     "_has_toilet": has_toilet,
                     "_has_food": has_food,
                     "_has_shopping": has_shopping,
@@ -811,12 +763,17 @@ class CorridorSearcher:
                     "_is_open_now": is_open_now
                 }
                 
+                # is_dc gerçek güçten türetiliyor (≥40 kW DC, altı AC).
+                # Pre-filter zaten max_power>0 ve <40 kW olanları reddetti, yani burada ya
+                # estimated >= 40 kW (gerçek DC) ya da fallback 120 kW (DC varsayımı).
+                is_dc_charger = estimated_power_kw >= DC_POWER_THRESHOLD_KW
+
                 corridor_station = CorridorStation(
                     station_info=station_info,
                     distance_from_hotspot_km=round(distance, 2),
                     deviation_km=round(distance, 2),
                     power_kw=estimated_power_kw,
-                    is_dc=True,  # Google EV charging genelde DC
+                    is_dc=is_dc_charger,
                     is_compatible=True,
                     rating=rating,
                     user_ratings_total=user_ratings_total,
@@ -824,20 +781,28 @@ class CorridorSearcher:
                     has_food=has_food,
                     has_shopping=has_shopping,
                     has_parking=has_parking,
-                    is_open_now=is_open_now
+                    is_open_now=is_open_now,
+                    # Sprint 5 normalization alanları
+                    power_known=power_known,
+                    availability_status=normalized.availability_status.value,
+                    available_count=normalized.total_available_count,
+                    out_of_service_count=normalized.total_out_of_service_count,
+                    availability_last_update_time=normalized.availability_last_update_time,
+                    source_provider=normalized.source_provider,
+                    source_id=normalized.source_id or station.get("place_id", ""),
                 )
-                
+
                 filtered_stations.append(corridor_station)
-                
+
             except Exception as e:
                 logger.warning(f"Failed to process Google station: {e}")
                 continue
         
-        # 🔧 V2.8: Skorlama (weighted rating + amenities dahil)
+        # Skorlama (weighted rating + amenities dahil) — StationScorer kullaniyor
         max_power = max((s.power_kw for s in filtered_stations), default=50.0)
         for station in filtered_stations:
             deviation_minutes = (station.deviation_km / 50.0) * 60.0
-            station.score = _calculate_station_score(
+            base_score = _scorer.calculate_score(
                 deviation_minutes=deviation_minutes,
                 power_kw=station.power_kw,
                 max_power_kw=max_power,
@@ -849,76 +814,89 @@ class CorridorSearcher:
                 has_parking=station.has_parking,
                 is_open_now=station.is_open_now
             )
-        
+            # Sprint 5: Düşük güven cezası — unknown kW ve unknown availability
+            confidence_multiplier = 1.0
+            if not station.power_known:
+                confidence_multiplier *= (1.0 - DATA_CONFIDENCE_PENALTY_UNKNOWN_POWER)
+            if station.availability_status == AvailabilityStatus.UNKNOWN.value:
+                confidence_multiplier *= (1.0 - DATA_CONFIDENCE_PENALTY_UNKNOWN_AVAILABILITY)
+            station.score = base_score * confidence_multiplier
+
         logger.info(f"Filtered {len(filtered_stations)} Google stations (of {len(google_stations)} total)")
+        self._last_reject_audit = reject_audit
         return filtered_stations
     
-    def _filter_and_score_stations(
+    async def _filter_and_score_stations(
         self,
         raw_stations: List[Dict[str, Any]],
         hotspot: ChargeHotspot
     ) -> List[CorridorStation]:
         """İstasyonları filtrele ve skorla."""
-        filtered_stations = []
+        # Ön filtre: temel kriterler
+        pre_filtered = []
+        reject_audit = _new_reject_audit("ocm")
         max_power_in_batch = 0.0
-        
+
         for station in raw_stations:
-            # 🔧 V3.2: Feedback blok kontrolü (OCM)
             ocm_id = str(station.get("ID", ""))
             if ocm_id and feedback_manager.is_station_blocked(ocm_id):
-                logger.debug(f"OCM station filtered (blocked by feedback): {station.get('AddressInfo', {}).get('Title')}")
+                _record_reject(reject_audit, "blocked_by_feedback", _safe_reject_sample("ocm", station, "blocked_by_feedback"))
                 continue
-            
-            # Operasyonel kontrolü
             status_type = station.get("StatusType", {})
-            is_operational = status_type.get("IsOperational", True)
-            
-            if not is_operational:
+            if not status_type.get("IsOperational", True):
+                _record_reject(reject_audit, "out_of_service", _safe_reject_sample("ocm", station, "out_of_service"))
                 continue
-            
-            # Bağlayıcı bilgileri
             connections = station.get("Connections", [])
             if not connections:
+                _record_reject(reject_audit, "no_ev_charge_data", _safe_reject_sample("ocm", station, "no_ev_charge_data"))
                 continue
-            
-            # Güç kontrolü
             power_kw = _get_max_power_kw(connections)
             if power_kw < self.min_dc_power_kw:
+                _record_reject(
+                    reject_audit,
+                    "below_min_power",
+                    _safe_reject_sample("ocm", station, "below_min_power", power_kw=float(power_kw)),
+                )
                 continue
-            
-            max_power_in_batch = max(max_power_in_batch, power_kw)
-            
-            # Connector uyumluluk kontrolü
             is_compatible = _is_connector_compatible(connections, self.vehicle.connector_type)
             if not is_compatible:
+                _record_reject(reject_audit, "incompatible_connector", _safe_reject_sample("ocm", station, "incompatible_connector"))
                 continue
-            
-            # Mesafe hesapla
             address_info = station.get("AddressInfo", {})
             station_lat = address_info.get("Latitude", 0)
             station_lon = address_info.get("Longitude", 0)
-            
+            if not station_lat or not station_lon:
+                _record_reject(reject_audit, "invalid_geometry", _safe_reject_sample("ocm", station, "invalid_geometry"))
+                continue
             distance = haversine_km(
                 hotspot.location.lat, hotspot.location.lon,
                 station_lat, station_lon
             )
-            
             if distance > self.corridor_length_km:
-                continue
-            
-            # 🔧 V2.9: Otoyol yön filtresi - yolun karşı tarafındaki istasyonları filtrele
-            if hotspot.route_bearing > 0 and distance <= 5.0:
-                is_valid, perp_dist = _is_station_on_route_side(
-                    route_bearing=hotspot.route_bearing,
-                    hotspot_lat=hotspot.location.lat,
-                    hotspot_lon=hotspot.location.lon,
-                    station_lat=station_lat,
-                    station_lon=station_lon,
-                    max_perpendicular_distance_km=1.5
+                _record_reject(
+                    reject_audit,
+                    "too_far_from_route",
+                    _safe_reject_sample("ocm", station, "too_far_from_route", distance_km=round(distance, 2)),
                 )
-                if not is_valid:
-                    logger.debug(f"OCM station filtered (wrong side): {address_info.get('Title')} - perp_dist={perp_dist:.2f}km")
-                    continue
+                continue
+            max_power_in_batch = max(max_power_in_batch, power_kw)
+            pre_filtered.append((station, station_lat, station_lon, distance, power_kw, is_compatible))
+
+        # Polyline-perpendicular filter (Roads API yerine, geometrik)
+        coords = [(lat, lon) for _, lat, lon, _, _, _ in pre_filtered]
+        on_route_flags = _check_stations_on_polyline(coords, hotspot.route_polyline_coords)
+
+        filtered_stations = []
+        for (station, station_lat, station_lon, distance, power_kw, is_compatible), on_route in zip(pre_filtered, on_route_flags):
+            address_info = station.get("AddressInfo", {})
+            if not on_route:
+                _record_reject(
+                    reject_audit,
+                    "too_far_from_route",
+                    _safe_reject_sample("ocm", station, "too_far_from_route", distance_km=round(distance, 2)),
+                )
+                logger.debug(f"OCM station filtered (off-route, perp > {PERP_DISTANCE_THRESHOLD_KM}km): {address_info.get('Title')}")
+                continue
             
             # Rating
             user_comments = station.get("UserComments", [])
@@ -930,7 +908,7 @@ class CorridorSearcher:
                     rating = sum(ratings) / len(ratings)
                     user_ratings_total = len(ratings)
             
-            # 🔧 V2.8: OCM GeneralComments'ten amenities çıkar
+            # OCM GeneralComments'ten amenities çıkar
             general_comments = (station.get("GeneralComments") or "").lower()
             station_name = address_info.get("Title", "").lower()
             
@@ -949,6 +927,15 @@ class CorridorSearcher:
             # is_24_7 kontrolü
             is_24_7 = any(kw in general_comments for kw in ["24/7", "24h", "24 hour", "24 saat"])
             
+            # Sprint 5: OCM raw'u NormalizedStation'a indirgey (provider-neutral)
+            normalized_ocm = parse_ocm_station(station)
+            ocm_avail = (
+                normalized_ocm.availability_status.value
+                if normalized_ocm is not None
+                else AvailabilityStatus.UNKNOWN.value
+            )
+            ocm_source_id = normalized_ocm.source_id if normalized_ocm else str(station.get("ID", ""))
+
             corridor_station = CorridorStation(
                 station_info=station,
                 distance_from_hotspot_km=round(distance, 2),
@@ -962,15 +949,23 @@ class CorridorSearcher:
                 has_food=has_food,
                 has_shopping=has_shopping,
                 has_parking=has_parking,
-                is_open_now=True if is_24_7 else None  # 24/7 ise açık kabul et
+                is_open_now=True if is_24_7 else None,  # 24/7 ise açık kabul et
+                # Sprint 5 normalization alanları (OCM kaynaklı istasyon)
+                power_known=power_kw > 0,
+                availability_status=ocm_avail,
+                available_count=normalized_ocm.total_available_count if normalized_ocm else None,
+                out_of_service_count=normalized_ocm.total_out_of_service_count if normalized_ocm else None,
+                availability_last_update_time=None,
+                source_provider="ocm",
+                source_id=ocm_source_id,
             )
-            
+
             filtered_stations.append(corridor_station)
         
-        # 🔧 V2.8: Skorlama (weighted rating + amenities dahil)
+        # Skorlama (weighted rating + amenities dahil) — StationScorer kullaniyor
         for station in filtered_stations:
             deviation_minutes = (station.deviation_km / 50.0) * 60.0
-            station.score = _calculate_station_score(
+            base_score = _scorer.calculate_score(
                 deviation_minutes=deviation_minutes,
                 power_kw=station.power_kw,
                 max_power_kw=max_power_in_batch,
@@ -982,7 +977,15 @@ class CorridorSearcher:
                 has_parking=station.has_parking,
                 is_open_now=station.is_open_now
             )
-        
+            # Sprint 5: Düşük güven cezası — OCM tarafı için de uygulanır
+            confidence_multiplier = 1.0
+            if not station.power_known:
+                confidence_multiplier *= (1.0 - DATA_CONFIDENCE_PENALTY_UNKNOWN_POWER)
+            if station.availability_status == AvailabilityStatus.UNKNOWN.value:
+                confidence_multiplier *= (1.0 - DATA_CONFIDENCE_PENALTY_UNKNOWN_AVAILABILITY)
+            station.score = base_score * confidence_multiplier
+
+        self._last_reject_audit = reject_audit
         return filtered_stations
     
     def greedy_select(
@@ -991,9 +994,8 @@ class CorridorSearcher:
         current_soc: float
     ) -> Optional[CorridorStation]:
         """
-        🔧 V3.4: Greedy algoritma ile en iyi istasyonu seç.
-        
-        V3.4 Güncellemeleri:
+        Greedy algoritma ile en iyi istasyonu seç.
+
         - Adaptive Power Scoring: Araç kapasitesine göre güç puanlama
         - Fallback: Araç bilgisi yoksa 350kW referans
         """
@@ -1024,14 +1026,14 @@ class CorridorSearcher:
         best_station = None
         best_greedy_score = -1
         
-        # 🔧 V3.4: Adaptive Power Scoring için araç gücünü al
+        # Adaptive Power Scoring için araç gücünü al
         try:
             vehicle_max_kw = self.vehicle.max_charge_power_kw if self.vehicle else None
         except AttributeError:
             vehicle_max_kw = None
-        
+
         for station in stations:
-            # 🔧 V3.4: Adaptive Power Score
+            # Adaptive Power Score
             # Araç kapasitesi biliniyorsa: Efektif güç / Araç kapasitesi
             # Bilinmiyorsa: İstasyon gücü / 350kW (fallback)
             try:
@@ -1045,21 +1047,21 @@ class CorridorSearcher:
                 
             deviation_score = max(0, 1.0 - (station.deviation_km / self.corridor_length_km))
             
-            # Weighted rating kullan
-            weighted_rating = _calculate_weighted_rating(station.rating, station.user_ratings_total)
+            # Weighted rating kullan — StationScorer
+            weighted_rating = _scorer.calculate_weighted_rating(station.rating, station.user_ratings_total)
             rating_score = weighted_rating / 5.0
-            
+
             # Amenities skoru
-            amenities_score = _calculate_amenities_score(
+            amenities_score = _scorer.calculate_amenities_score(
                 station.has_toilet,
                 station.has_food,
                 station.has_shopping,
                 station.has_parking,
                 station.is_open_now
             )
-            
+
             # Popülerlik skoru
-            popularity_score = _calculate_popularity_score(station.user_ratings_total)
+            popularity_score = _scorer.calculate_popularity_score(station.user_ratings_total)
             
             greedy_score = (
                 power_weight * power_score +
@@ -1086,7 +1088,7 @@ class CorridorSearcher:
 
 
 # =============================================================================
-# V1.5 CONVENIENCE FUNCTIONS
+# CONVENIENCE FUNCTIONS
 # =============================================================================
 
 async def find_stations_for_hotspots(
@@ -1094,38 +1096,62 @@ async def find_stations_for_hotspots(
     vehicle_model_id: str,
     min_distance_between_stations_km: float = 50.0,
     preferences: Optional[Dict[str, Any]] = None,
-    vehicle_spec = None  # Zaten çözülmüş VehicleSpec (MSSQL'den geliyorsa)
+    vehicle_spec = None,  # Zaten çözülmüş VehicleSpec (MSSQL'den geliyorsa)
+    route_polyline: Optional[str] = None,  # Rota polyline (Roads API snap için)
 ) -> List[CorridorSearchResult]:
     """
     Birden fazla hotspot için akıllı istasyon seçimi.
-    
+
     Özellikler:
     - Aynı istasyonu tekrar seçmez
     - Birbirine çok yakın istasyonları önler
     - Her hotspot için alternatif istasyon bulur
-    - 🔧 V3.1: Kullanıcı tercihlerine göre filtreleme
-    
+    - Kullanıcı tercihlerine göre filtreleme
+    - Polyline-perpendicular filter (Roads API'nin yerini aldı)
+
     Args:
         hotspots: Şarj gerekli noktalar
         vehicle_model_id: Araç modeli
         min_distance_between_stations_km: İstasyonlar arası minimum mesafe
         preferences: Kullanıcı tercihleri (max_detour_km, preferred_operators, vb.)
         vehicle_spec: Zaten çözülmüş araç spesifikasyonu (MSSQL'den geliyorsa)
+        route_polyline: Google encoded polyline (perpendicular distance filter için)
     """
     if not hotspots:
         return []
-    
-    # 🔧 V3.1: Preferences'dan max_detour_km al
+
+    # Polyline'ı bir kere decode et, tüm hotspot'lar paylaşır.
+    # Roads API çağrısı yok — pure geometrik (haversine vertex distance).
+    polyline_coords: List[Tuple[float, float]] = _decode_route_polyline_coords(route_polyline or "")
+    if polyline_coords:
+        logger.info(
+            f"Polyline decoded: {len(polyline_coords)} sampled points "
+            f"(perp threshold = {PERP_DISTANCE_THRESHOLD_KM} km)"
+        )
+    elif route_polyline:
+        logger.warning("Polyline decode failed or empty — road-side filter disabled (fail-open)")
+
+    # Her hotspot'a polyline coords ata (filtre fonksiyonları buradan okur).
+    # Aynı liste referansı paylaşılıyor — read-only kullanıldığı için güvenli.
+    # bypass_perp_filter=True olan hotspot'lar (low-SOC origin) için boş liste ver
+    # → perp filter fail-open davranır, şehir içi istasyonlar kabul edilir.
+    for hotspot in hotspots:
+        if getattr(hotspot, "bypass_perp_filter", False):
+            hotspot.route_polyline_coords = []
+        else:
+            hotspot.route_polyline_coords = polyline_coords
+
+    # Preferences'dan max_detour_km al
     max_detour_km = CORRIDOR_LENGTH_KM  # Default: 50km
     if preferences and preferences.get("max_detour_km"):
         max_detour_km = min(preferences["max_detour_km"], CORRIDOR_LENGTH_KM)
-    
+
     searcher = CorridorSearcher(
         vehicle_model_id=vehicle_model_id,
         corridor_length_km=max_detour_km,
         vehicle_spec=vehicle_spec
     )
-    
+
     # Paralel arama yap (tüm istasyonları bul)
     tasks = [searcher.search_for_hotspot(hotspot) for hotspot in hotspots]
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1138,7 +1164,7 @@ async def find_stations_for_hotspots(
         if isinstance(result, Exception):
             import traceback
             logger.error(f"Hotspot {i+1} search failed: {result}\n{traceback.format_exception(type(result), result, result.__traceback__)}")
-            # 🔧 V3.3: Exception durumunda boş result ekle (liste boyutu korunsun)
+            # Exception durumunda boş result ekle (liste boyutu korunsun)
             empty_result = CorridorSearchResult(
                 hotspot=hotspots[i],
                 stations=[],
@@ -1157,7 +1183,7 @@ async def find_stations_for_hotspots(
                 if s.station_id not in used_station_ids
             ]
             
-            # 🔧 V3.1: Kullanıcı tercihlerine göre filtrele
+            # Kullanıcı tercihlerine göre filtrele
             if preferences and available_stations:
                 # Şarj tipi filtresi (HPC/DC/AC)
                 charger_type = preferences.get("preferred_charger_type", "")
@@ -1210,7 +1236,7 @@ async def find_stations_for_hotspots(
                         available_stations = filtered
                         logger.info(f"Amenities filter applied: {len(filtered)} stations have {req_amenities}")
                     else:
-                        # 🔧 V3.2: Uygun istasyon yoksa warning ekle (soft filter fallback)
+                        # Uygun istasyon yoksa warning ekle (soft filter fallback)
                         amenity_names = {
                             "toilet": "tuvalet", 
                             "food": "yiyecek", 
@@ -1227,7 +1253,7 @@ async def find_stations_for_hotspots(
                         result.amenities_warning = f"⚠️ İstenen imkanlara ({', '.join(missing_amenities)}) sahip istasyon bulunamadı. En yakın istasyonlar gösteriliyor."
                         logger.warning(f"No stations found with required amenities {req_amenities}, showing all stations")
             
-            # 🔧 V3.3: Akıllı mesafe filtresi - kademeli esnetme
+            # Akıllı mesafe filtresi - kademeli esnetme
             original_available = available_stations.copy()
             distance_filter_relaxed = False
             
@@ -1258,6 +1284,12 @@ async def find_stations_for_hotspots(
                     if filtered_half:
                         available_stations = filtered_half
                         distance_filter_relaxed = True
+                        # Kullanıcıya da bildir (sadece log değil)
+                        result.distance_warning = (
+                            f"⚠️ {i+1}. şarj durağı için minimum mesafe filtresi gevşetildi "
+                            f"({min_distance_between_stations_km:.0f}km → {half_distance:.0f}km). "
+                            f"Bu durağı bir öncekine yakın bulabilirsiniz."
+                        )
                         logger.warning(
                             f"Hotspot {i+1}: Distance filter relaxed from {min_distance_between_stations_km}km to {half_distance}km"
                         )
@@ -1265,6 +1297,12 @@ async def find_stations_for_hotspots(
                     elif original_available:
                         available_stations = original_available
                         distance_filter_relaxed = True
+                        # Mesafe filtresi tamamen kapalı — kullanıcı bilsin
+                        result.distance_warning = (
+                            f"⚠️ {i+1}. şarj durağı için uygun aralıklı istasyon bulunamadı; "
+                            f"mesafe filtresi devre dışı. Bu durak bir öncekine çok yakın olabilir, "
+                            f"alternatif istasyonları kontrol edin."
+                        )
                         logger.warning(
                             f"Hotspot {i+1}: Distance filter disabled - only duplicate filter active"
                         )
@@ -1311,116 +1349,6 @@ async def find_best_station_for_hotspot(
     return result.best_station, result
 
 
-# =============================================================================
-# LEGACY FUNCTION (V1.3 Uyumluluk)
-# =============================================================================
-
-async def find_best_station(
-    latitude: float,
-    longitude: float,
-    vehicle_model_id: str
-) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    """
-    V1.3 "Station Funnel" mantığı ile en uygun şarj istasyonunu bulur.
-    Legacy API uyumluluğu için korunuyor.
-    """
-    try:
-        vehicle = get_vehicle_model(vehicle_model_id)
-        
-        logger.info(
-            "Station search started (legacy)",
-            lat=latitude,
-            lon=longitude,
-            vehicle=vehicle.display_name
-        )
-        
-        # Paralel veri çekimi
-        stations_task = ocm_service.get_nearby_stations(
-            lat=latitude,
-            lon=longitude,
-            radius_km=30
-        )
-        
-        weather_task = weather_service.get_forecast_for_point(
-            lat=latitude,
-            lon=longitude
-        )
-        
-        stations_data, weather_forecast = await asyncio.gather(
-            stations_task,
-            weather_task,
-            return_exceptions=True
-        )
-        
-        if isinstance(stations_data, Exception):
-            logger.error("OCM station data fetch failed", error=str(stations_data))
-            stations_data = []
-        
-        if isinstance(weather_forecast, Exception):
-            logger.warning("Weather forecast fetch failed")
-            weather_forecast = None
-        
-        if not stations_data:
-            return None, weather_forecast
-        
-        # Filtrele
-        filtered_stations = []
-        for station in stations_data:
-            try:
-                status_type = station.get("StatusType", {})
-                if not status_type.get("IsOperational", True):
-                    continue
-                
-                connections = station.get("Connections", [])
-                if not _is_connector_compatible(connections, vehicle.connector_type):
-                    continue
-                
-                power_kw = _get_max_power_kw(connections)
-                if power_kw < DC_POWER_THRESHOLD_KW:
-                    continue
-                
-                station["_max_power_kw"] = power_kw
-                
-                address_info = station.get("AddressInfo", {})
-                station_lat = address_info.get("Latitude", 0)
-                station_lon = address_info.get("Longitude", 0)
-                
-                distance = haversine_km(latitude, longitude, station_lat, station_lon)
-                station["_haversine_distance_km"] = distance
-                
-                if distance <= MAX_HAVERSINE_DISTANCE_KM:
-                    filtered_stations.append(station)
-                    
-            except Exception as e:
-                continue
-        
-        if not filtered_stations:
-            return None, weather_forecast
-        
-        # En iyiyi seç
-        filtered_stations.sort(key=lambda x: x.get("_haversine_distance_km", 999))
-        best_station = filtered_stations[0] if filtered_stations else None
-        
-        if best_station:
-            logger.info(
-                "Best station selected (legacy)",
-                station_id=best_station.get("ID"),
-                station_name=best_station.get("AddressInfo", {}).get("Title"),
-                power_kw=best_station.get("_max_power_kw")
-            )
-        
-        return best_station, weather_forecast
-        
-    except Exception as e:
-        logger.exception("Station finder failed", error=str(e))
-        return None, None
-
-
-# Backward compatibility alias
-async def find_charging_station(
-    lat: float,
-    lon: float,
-    vehicle_model_id: str
-) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    """Alias for backward compatibility."""
-    return await find_best_station(lat, lon, vehicle_model_id)
+# Refactor 2 Stage 3 (2026-05-06): Legacy fonksiyonlar (find_best_station,
+# find_charging_station) kaldirildi. Tum cagrilar CorridorSearcher / find_best_station_for_hotspot
+# uzerinden yapilmalidir.

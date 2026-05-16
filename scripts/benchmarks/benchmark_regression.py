@@ -8,10 +8,10 @@ Sadece şu metrikler kaydedili ve kontrol edilir:
 
 Kullanım:
     # Baseline kaydet (B0 veya B1):
-    python tests/benchmark_regression.py --save benchmark/B0.json
+    python scripts/benchmarks/benchmark_regression.py --save benchmark/B0.json
 
     # Kaydedilmiş baseline'a (B1'e) karşı delta toleranslı test et:
-    python tests/benchmark_regression.py --compare benchmark/B1.json
+    python scripts/benchmarks/benchmark_regression.py --compare benchmark/B1.json
 """
 
 import json
@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 BENCHMARK_ROUTES = {

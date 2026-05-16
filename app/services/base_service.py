@@ -66,6 +66,7 @@ class BaseService:
         endpoint: str,
         params: Optional[dict] = None,
         headers: Optional[dict] = None,
+        json: Optional[dict] = None,
     ) -> Any:
         """
         Asıl API çağrı fonksiyonu:
@@ -84,6 +85,7 @@ class BaseService:
                         url=self.base_url + endpoint,
                         params=params,
                         headers=headers,
+                        json=json,
                     )
 
                 # HTTP 4xx veya 5xx

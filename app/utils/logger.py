@@ -28,6 +28,15 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from contextvars import ContextVar
 
+# Windows console default cp1254 → emoji/oklara takılıyor (UnicodeEncodeError).
+# Module yüklendiğinde stdout/stderr'ı UTF-8'e çevir. Python 3.7+ reconfigure() destekler.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # =============================================================================
 # CONTEXT VARIABLES (Request ID tracking için)
 # =============================================================================

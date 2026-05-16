@@ -6,7 +6,8 @@ class ElevationEffectCalculator:
     """
 
     GRAVITY = 9.81          # m/s^2
-    REGEN_EFFICIENCY = 0.65 # Yokuş iniş regen verimliliği
+    REGEN_EFFICIENCY = 0.65 # Yokuş iniş regen verimliliği (mekanik→batarya)
+    DRIVETRAIN_EFFICIENCY = 0.88  # Batarya→teker (motor + invertör + dişli kayıpları)
     JOULE_TO_KWH = 3_600_000.0
 
     @staticmethod

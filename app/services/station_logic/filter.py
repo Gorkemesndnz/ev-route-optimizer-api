@@ -13,7 +13,6 @@ Kullanım:
         # İstasyonu dahil et
 """
 
-import math
 from typing import List, Dict, Any, Optional
 from app.models import GeoPoint
 from app.utils.logger import get_logger
@@ -39,7 +38,7 @@ MIN_DC_POWER_KW = 50.0
 # GEO HELPER FUNCTIONS — app/utils/geo.py'den import
 # =============================================================================
 
-from app.utils.geo import haversine_km, calculate_bearing
+from app.utils.geo import haversine_km
 
 
 # =============================================================================
@@ -109,39 +108,6 @@ class StationFilter:
         """İstasyonun koridor içinde olup olmadığını kontrol et."""
         distance = haversine_km(hotspot_lat, hotspot_lon, station_lat, station_lon)
         return distance <= self.corridor_length_km
-    
-    def is_on_route_side(
-        self,
-        route_bearing: float,
-        hotspot_lat: float,
-        hotspot_lon: float,
-        station_lat: float,
-        station_lon: float,
-        max_perpendicular_distance_km: float = 1.5
-    ) -> tuple:
-        """
-        İstasyonun rota yönünde olup olmadığını kontrol et.
-        Otoyolda karşı taraftaki istasyonları filtrelemek için kullanılır.
-        
-        Returns:
-            (is_valid: bool, perpendicular_distance: float)
-        """
-        station_bearing = calculate_bearing(hotspot_lat, hotspot_lon, station_lat, station_lon)
-        bearing_diff = abs(station_bearing - route_bearing)
-        
-        if bearing_diff > 180:
-            bearing_diff = 360 - bearing_diff
-        
-        distance = haversine_km(hotspot_lat, hotspot_lon, station_lat, station_lon)
-        perpendicular_distance = distance * math.sin(math.radians(bearing_diff))
-        
-        if perpendicular_distance > max_perpendicular_distance_km:
-            return False, perpendicular_distance
-        
-        if bearing_diff > 90:
-            return False, perpendicular_distance
-        
-        return True, perpendicular_distance
     
     def matches_charger_type(self, power_kw: float, charger_type: str) -> bool:
         """

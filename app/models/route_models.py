@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import List, Optional, Union, Literal, Dict, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ======================================================
 # 1. ENUMLAR – Standartlaştırma
@@ -162,8 +162,10 @@ class StationInfo(BaseModel):
     """
     Şarj istasyonu detayları.
     Station Finder, Route Selector ve Response tarafında ortak kullanılacak.
-    
+
     V2.0: Google Places öncelikli + OCM fallback yapısı.
+    Sprint 5: Opsiyonel power_known/availability_status/source_* alanları
+    NormalizedStation katmanından üretilir; geriye uyumluluk için optional kalır.
     """
     id: str
     name: str
@@ -191,6 +193,41 @@ class StationInfo(BaseModel):
     )
     is_open_now: Optional[bool] = Field(
         None, description="Şu an açık mı (Google)"
+    )
+
+    # Sprint 5 — Provider-neutral normalization alanları (opsiyonel, geriye uyumlu)
+    power_known: Optional[bool] = Field(
+        None,
+        description=(
+            "Şarj gücü kaynak data'sında biliniyor mu? False ise gösterimde "
+            "'güç bilinmiyor' kalmalı; planlama UNKNOWN_POWER_PLANNING_KW kullanır."
+        ),
+    )
+    availability_status: Optional[Literal["available", "unavailable", "unknown"]] = Field(
+        None,
+        description=(
+            "Anlık kullanılabilirlik durumu. 'unknown' ise istasyon adayda "
+            "kalır ama düşük güven cezası alır."
+        ),
+    )
+    available_count: Optional[int] = Field(
+        None, description="Şu an boş soket sayısı."
+    )
+    out_of_service_count: Optional[int] = Field(
+        None, description="Out-of-service soket sayısı."
+    )
+    availability_last_update_time: Optional[str] = Field(
+        None, description="Google availabilityLastUpdateTime ISO string."
+    )
+    source_provider: Optional[Literal["google", "ocm"]] = Field(
+        None, description="Primer veri sağlayıcısı."
+    )
+    source_id: Optional[str] = Field(
+        None,
+        description=(
+            "Provider'ın kendi id'si. Google için place_id ile aynıdır; OCM ise "
+            "OCM ID'si. Kalıcı saved-route migration için Sprint 6'da kullanılır."
+        ),
     )
 
 
@@ -312,11 +349,25 @@ class WeatherInfo(BaseModel):
 
 class RoadAvoidances(BaseModel):
     """Yol tercihleri — kaçınılacak yol tipleri."""
+    # Google-native alanlar: bu üç tercih doğrudan Google avoid listesine gider.
     avoid_tolls: bool = Field(False, description="Ücretli yollardan kaçın")
     avoid_highways: bool = Field(False, description="Otoyollardan kaçın")
     avoid_ferries: bool = Field(False, description="Feribotlardan kaçın")
+
+    # Türkiye özel policy alanları: Google bunları ayrı kategori olarak sunmaz.
+    # Bu nedenle Google alternatifleri route_selector'da post-filter edilir.
     avoid_osmangazi_bridge: bool = Field(False, description="Osmangazi Köprüsü'nden kaçın")
     avoid_canakkale_bridge: bool = Field(False, description="1915 Çanakkale Köprüsü'nden kaçın")
+    # Sprint 3.5: Generic köprü kaçınması — tek toggle ile tüm yasaklı boğaz/körfez köprüleri
+    # (15 Temmuz, FSM, YSS, Osmangazi, 1915 Çanakkale) route_selector'da elenir;
+    # uygun alternatif yoksa NO_ROUTE_WITH_CONSTRAINTS üretilir.
+    # Spesifik osmangazi/canakkale alanları geriye uyumluluk için korunuyor;
+    # avoid_bridges=True bunlardan baskındır (UI tarafında zaten generic toggle gönderir).
+    avoid_bridges: bool = Field(False, description="Tüm boğaz/körfez köprülerinden kaçın")
+    # Sprint 3.5: Özel/ücretli özel sektör otoyolları (avoid_tolls'a ek özel kategori).
+    # avoid_tolls geleneksel KGM ücretli yolları kapsar; avoid_private_highways
+    # özel sektör (BOT) otoyollarını ayrı toggle ile route_selector'da eler.
+    avoid_private_highways: bool = Field(False, description="Özel sektör (BOT) otoyollarından kaçın")
 
 
 class RoutePreferences(BaseModel):
@@ -329,8 +380,8 @@ class RoutePreferences(BaseModel):
         description="Varışta istenen minimum şarj yüzdesi."
     )
     min_station_soc: int = Field(
-        10, ge=5, le=30,
-        description="İstasyona varırken olması gereken minimum güvenlik SOC (%)."
+        10, ge=5, le=80,
+        description="İstasyona varırken olması gereken minimum güvenlik SOC (%). Kullanıcı tercihine bırakılır."
     )
     preferred_operators: List[str] = Field(
         default_factory=list,
@@ -345,8 +396,8 @@ class RoutePreferences(BaseModel):
         description="Zorunlu istenen imkanlar (WC, yemek, wifi, otel, kafe, dinlenme tesisi vs.)."
     )
     max_detour_km: float = Field(
-        10.0,
-        description="Bir şarj için rotadan max sapma mesafesi (km)."
+        50.0,
+        description="Bir şarj için rotadan max sapma mesafesi (km). Default 50 — station_finder corridor genişliği ile uyumlu. Çok düşük tutulursa Google'dan dönen istasyonlar 'too_far' diye elenir."
     )
     # V4.0: Yol tercihleri
     road_avoidances: RoadAvoidances = Field(
@@ -377,12 +428,14 @@ class RouteRequest(BaseModel):
     vehicle_model_id: str = Field("", description="Araç ID (backward compat — vehicle_spec yoksa kullanılır)")
     current_soc_percent: float = Field(..., ge=0, le=100)
     target_arrival_soc_percent: Optional[float] = Field(
-        None, ge=5, le=80,
-        description="Varışta hedef batarya yüzdesi. None ise otomatik hesaplanır (10-25%)"
+        None, ge=5, le=50,
+        description="Varışta hedef batarya yüzdesi. None ise otomatik hesaplanır (10-25%). "
+                    "Üst sınır %50: daha yüksek değer kullanıcı seçerse calculate_base_soc_params clamp eder."
     )
     charge_min_soc_percent: Optional[float] = Field(
-        None, ge=10, le=40,
-        description="Şarj eşiği - bu %'e düşünce şarj et. None ise otomatik hesaplanır (15-25%)"
+        None, ge=5, le=40,
+        description="Şarj eşiği - bu %'e düşünce şarj et. None ise otomatik hesaplanır (15-25%). "
+                    "Üst sınır %40: bunun üstündeki değerler aşırı şarj durağına yol açıyor."
     )
     charge_target_soc_percent: Optional[float] = Field(
         None, ge=50, le=100,
@@ -439,6 +492,29 @@ class RouteRequest(BaseModel):
         description="Şarj sıklığı: optimal, less (az durak), frequent (sık durak)"
     )
 
+    # ====== FAZ 2: Pareto Karar Mekanizması ======
+    smart_plan_enabled: bool = Field(
+        True,
+        description="True = otomatik Pareto karar (manuel SOC alanları yok sayılır). "
+                    "False = manuel mod, kullanıcının verdiği charge_target_soc/arrival_soc kullanılır."
+    )
+    optimization_mode: str = Field(
+        "balanced",
+        description="Pareto ağırlık modu (smart_plan_enabled=True iken aktif): "
+                    "balanced, time_priority, cost_priority, battery_care"
+    )
+
+    @field_validator("optimization_mode")
+    @classmethod
+    def _validate_optimization_mode(cls, v: str) -> str:
+        from app.optimization.modes import OptimizationMode
+        try:
+            OptimizationMode(v)
+        except ValueError:
+            valid = ", ".join(m.value for m in OptimizationMode)
+            raise ValueError(f"optimization_mode geçersiz: {v}. Geçerli değerler: {valid}")
+        return v
+
     @field_validator("current_soc_percent")
     @classmethod
     def validate_soc_range(cls, v: float) -> float:
@@ -447,6 +523,35 @@ class RouteRequest(BaseModel):
         if v == 0:
             raise ValueError("Batarya tamamen boş (SOC=0) ile rota planlanamaz.")
         return v
+
+    @model_validator(mode="after")
+    def _validate_soc_field_consistency(self):
+        """
+        Cross-field tutarlılık:
+        - charge_min_soc < charge_target_soc - 20 (mantıksal sıralama, en az 20% spread)
+        - target_arrival_soc < charge_min_soc + 10 (varış hedefi, eşiğin çok üstünde olamaz)
+        Aksi halde kullanıcı saçma değerler girmiş demektir; engine kötü plan üretir.
+        """
+        cmin = self.charge_min_soc_percent
+        ctgt = self.charge_target_soc_percent
+        carr = self.target_arrival_soc_percent
+
+        if cmin is not None and ctgt is not None:
+            if cmin >= ctgt - 20:
+                raise ValueError(
+                    f"charge_min_soc ({cmin}%) ile charge_target_soc ({ctgt}%) arasında "
+                    f"en az 20% fark olmalı (sağlıklı şarj döngüsü için). "
+                    f"Önerilen: min ≤ {ctgt - 20:.0f}%."
+                )
+
+        if cmin is not None and carr is not None:
+            if carr > cmin + 10:
+                raise ValueError(
+                    f"target_arrival_soc ({carr}%) charge_min_soc'dan ({cmin}%) "
+                    f"en fazla 10% yüksek olabilir. Aksi halde rota gereksiz şarj durağı içerir."
+                )
+
+        return self
 
 
 # ======================================================
@@ -524,6 +629,70 @@ class RouteResponseStatus(str, Enum):
     IMPOSSIBLE = "impossible"  # Menziil/koşullar nedeniyle rota kurulamıyorsa
 
 
+class DecisionReason(str, Enum):
+    USER_OVERRIDE = "user_override"
+    ENERGY_REQUIRED = "energy_required"
+    SAFE_HARBOR = "safe_harbor"
+    PARETO_OPTIMAL = "pareto_optimal"
+    FALLBACK_GRID = "fallback_grid"
+    PROVIDER_FALLBACK = "provider_fallback"
+    NO_FEASIBLE_DIRECT_LEG = "no_feasible_direct_leg"
+    DATA_CONFIDENCE_PENALTY = "data_confidence_penalty"
+
+
+class PlanQuality(BaseModel):
+    warnings: List[str] = Field(default_factory=list)
+    fallback_used: bool = False
+    fallback_reasons: List[str] = Field(default_factory=list)
+    provider_versions: Dict[str, str] = Field(default_factory=dict)
+    call_counts: Dict[str, int] = Field(default_factory=dict)
+    cache: Dict[str, Any] = Field(default_factory=dict)
+    low_confidence_station_ratio: float = Field(0.0, ge=0.0, le=1.0)
+    validation_summary: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TripOutcomeRequest(BaseModel):
+    """
+    🎯 FAZ 2: Trip outcome backfill — kullanıcı yolculuğu bitirdiğinde
+    gerçek değerleri raporlar. Faz 3 ML eğitimi için kritik.
+    Tüm alanlar opsiyonel (kullanıcı sadece bildiklerini gönderebilir).
+    """
+    actual_arrival_soc: Optional[float] = Field(
+        None, ge=0.0, le=100.0,
+        description="Varış noktasındaki gerçek batarya yüzdesi"
+    )
+    actual_total_time_min: Optional[float] = Field(
+        None, ge=0.0,
+        description="Toplam yolculuk süresi (sürüş + şarj + bekleme), dakika"
+    )
+    actual_charge_time_min: Optional[float] = Field(
+        None, ge=0.0,
+        description="Toplam şarj süresi, dakika"
+    )
+    actual_total_cost_tl: Optional[float] = Field(
+        None, ge=0.0,
+        description="Toplam yolculuk maliyeti (TL)"
+    )
+    actual_num_charges: Optional[int] = Field(
+        None, ge=0,
+        description="Yolculuk sırasında yapılan gerçek şarj sayısı"
+    )
+    user_satisfaction: Optional[int] = Field(
+        None, ge=1, le=5,
+        description="Kullanıcı memnuniyeti (1-5)"
+    )
+    notes: Optional[str] = Field(None, max_length=500)
+
+
+class TripOutcomeResponse(BaseModel):
+    """Outcome kayıt yanıtı."""
+    success: bool
+    trip_id: str
+    message: str
+    persisted: bool = True
+    warning: Optional[str] = None
+
+
 class RouteResponse(BaseModel):
     """
     Kullanıcıya dönen nihai rota planı.
@@ -590,8 +759,13 @@ class MultiStopRouteResponse(BaseModel):
     # 🧠 V3.5: Akıllı Seyahat Asistanı
     insights: List[RouteInsight] = Field(default_factory=list, description="Akıllı seyahat ipuçları ve uyarıları")
     debug_info: Optional[dict] = Field(
-        default=None, 
+        default=None,
         description="Debug bilgileri (sadece development modunda)"
+    )
+    # 🎯 FAZ 2: Pareto karar takibi
+    trip_id: Optional[str] = Field(
+        None,
+        description="Bu rota için benzersiz tanımlayıcı. Outcome backfill için /trips/{trip_id}/outcome endpoint'inde kullanılır."
     )
     # 🏠 V4.0: Safe Harbor bilgisi
     safe_harbor_info: Optional[Dict[str, Any]] = Field(
@@ -599,6 +773,8 @@ class MultiStopRouteResponse(BaseModel):
         description="Varışta şarj istasyonu yoksa Safe Harbor bilgisi (dönüş tüketimi, kurtarıcı istasyonlar vb.)"
     )
     # Tüm rotayı kapsayan Google Maps encoded polyline (harita çizimi için)
+    decision_reason: Optional[DecisionReason] = Field(None, description="Plan kararının ana nedeni.")
+    plan_quality: Optional[PlanQuality] = Field(None, description="Plan güvenilirliği, fallback ve veri kalitesi özeti.")
     overview_polyline: Optional[str] = Field(None, description="Google Maps encoded polyline (tüm rota)")
 
 

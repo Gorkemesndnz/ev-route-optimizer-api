@@ -70,7 +70,7 @@ def build_warnings(
 ) -> List[str]:
     """Uyarı mesajları oluştur."""
     warnings = []
-    
+
     if end_soc < 15:
         warnings.append("⚠️ Varışta düşük batarya seviyesi. Dikkatli olun.")
     if charge_stops > 3:
@@ -79,18 +79,157 @@ def build_warnings(
         warnings.append("💡 Şarj durağı olmadan varılabilir ama batarya düşük kalacak.")
     if traffic_ratio and traffic_ratio > 1.3:
         warnings.append("🚗 Yoğun trafik bekleniyor. Süre uzayabilir.")
-    
+
     # Amenities warning'leri
     for sr in station_results:
         if sr.amenities_warning:
             warnings.append(sr.amenities_warning)
             break
-    
+
+    # Distance filter warning'leri (her stop için ayrı uyarı eklenir)
+    for sr in station_results:
+        if getattr(sr, "distance_warning", None):
+            warnings.append(sr.distance_warning)
+
     # İstasyon bulunamayan hotspot uyarıları
     if missing_station_warnings:
         warnings.extend(missing_station_warnings)
-    
+
     return warnings
+
+
+def validate_plan_sanity(
+    legs: list,
+    charge_stops: int,
+    total_distance_km: float,
+    total_consumption_kwh: float,
+    battery_kwh: float,
+    end_soc: float,
+) -> List[str]:
+    """
+    Post-route plan sanity check.
+
+    Plan üretildikten sonra mantıksız sonuçları yakalar; kullanıcıya warning olarak döner.
+    Engine'in sessizce kötü plan üretmesini önler.
+
+    Returns:
+        Saçma plan tespit edildiyse açıklayıcı warning string'leri (boş list = OK).
+    """
+    warnings: List[str] = []
+
+    # 1) Aşırı şarj durağı sayısı:
+    # Beklenen şarj sayısı = consumption / (kullanılabilir kapasite × %78)
+    # %78 = optimal bant (17-95 net %78 SOC, Pareto'nun favori target'ı)
+    # Threshold sıkılaştırıldı: expected * 1.25 + 0.5 (önceden 1.5 + 1 — çok yumuşaktı)
+    if battery_kwh > 0 and total_consumption_kwh > 0:
+        usable_per_charge = battery_kwh * 0.78
+        expected_stops = max(0, total_consumption_kwh / usable_per_charge - 1)  # ilk dolu→%17 seyahat hariç
+        if charge_stops > expected_stops * 1.25 + 0.5:
+            warnings.append(
+                f"⚠️ Plan {charge_stops} şarj durağı içeriyor; tüketime göre beklenen ~"
+                f"{expected_stops:.1f}. Aşırı sık şarj — kullanıcı eşiği fazla yüksek "
+                f"veya target_soc fazla düşük olabilir."
+            )
+
+    # 2) Çok yüksek SOC'ta şarj (overcharging trigger):
+    for leg in legs:
+        leg_type = getattr(leg, "type", None)
+        if leg_type == "charge":
+            arrival_soc = getattr(leg, "arrival_soc_percent", None) or getattr(leg, "soc_at_arrival", None)
+            if arrival_soc is not None and arrival_soc > 35:
+                warnings.append(
+                    f"⚠️ Şarj durağına %{arrival_soc:.0f} batarya ile varılıyor — gereksiz erken şarj."
+                )
+                break  # tek warning yeter
+
+    # 3) Çok kısa drive leg (50 km altı, başta/sonda değilse):
+    drive_legs = [l for l in legs if getattr(l, "type", None) == "drive"]
+    if len(drive_legs) >= 3:
+        for i, leg in enumerate(drive_legs[1:-1], start=1):
+            d = getattr(leg, "distance_km", 0)
+            if d > 0 and d < 50:
+                warnings.append(
+                    f"⚠️ Şarj durakları arası mesafe çok kısa ({d:.0f} km) — plan optimal değil."
+                )
+                break
+
+    # 4) Mantıksız varış SOC:
+    if end_soc < 5:
+        warnings.append(
+            f"🚨 Varış SOC çok düşük ({end_soc:.1f}%) — plan kritik. Manuel kontrol gerekebilir."
+        )
+    elif end_soc > 75 and charge_stops > 0:
+        warnings.append(
+            f"⚠️ Varış SOC çok yüksek ({end_soc:.0f}%) — son şarj durağı gereksiz olabilir."
+        )
+
+    # 5) Fiziksel imkansız leg tespiti:
+    # Bir DriveLeg start_soc düşük + distance büyük ise → SOC drop hesabı yap;
+    # hesaplanan tüketim mevcut bataryadan fazlaysa istasyon bulunamamış demektir.
+    for leg in legs:
+        if getattr(leg, "type", None) == "drive":
+            start_soc = float(getattr(leg, "start_soc_percent", 100) or 100)
+            end_soc_l = float(getattr(leg, "end_soc_percent", 100) or 100)
+            d = float(getattr(leg, "distance_km", 0) or 0)
+            # Fiziksel: 80km/h ortalama hızda en kötü case ~350 Wh/km
+            # Eğer leg start_soc < 20% AND distance > 60km → fiziksel imkansız
+            if start_soc < 20 and d > 60 and end_soc_l < start_soc + 5:
+                warnings.append(
+                    f"🚨 Fiziksel imkansız leg: %{start_soc:.0f} SOC ile {d:.0f}km. "
+                    f"Yeterli şarj istasyonu bulunamadı, rotada eksiklik var."
+                )
+                break
+
+    return warnings
+
+
+def validate_plan_feasibility(
+    legs: list,
+    missing_station_warnings: List[str],
+    battery_capacity_kwh: float = 50.0,
+    avg_consumption_wh_km: float = 250.0,
+) -> Optional[str]:
+    """
+    Plan fiziksel olarak yapılabilir mi? Hard validation.
+
+    Kontroller:
+    1. Tüm hotspot'lar istasyonsuz mu (hiç şarj leg yok ama warning var)?
+    2. Herhangi bir DriveLeg fiziksel imkansız mı (start_soc düşük + distance büyük)?
+
+    Returns:
+        Hata mesajı (str) → caller error_response döndürmeli.
+        None → plan OK.
+    """
+    if not legs:
+        return None
+
+    # 1) Tüm hotspot'lar istasyonsuz mu?
+    charge_legs = [l for l in legs if getattr(l, "type", None) == "charge"]
+    if missing_station_warnings and not charge_legs:
+        return (
+            "Rotada hiçbir şarj durağı için uygun istasyon bulunamadı. "
+            "Bataryanın tek seferde yetmediği bu rota tamamlanamıyor."
+        )
+
+    # 2) Fiziksel imkansız leg: start SOC × kapasite < gerekli enerji
+    # Tipik 250 Wh/km tüketimle: bir leg max distance = (start_soc/100 × battery) / 0.25 km
+    for leg in legs:
+        if getattr(leg, "type", None) == "drive":
+            start_soc = float(getattr(leg, "start_soc_percent", 100) or 100)
+            d = float(getattr(leg, "distance_km", 0) or 0)
+            if d <= 0 or start_soc >= 100:
+                continue
+            available_kwh = (start_soc / 100.0) * battery_capacity_kwh
+            required_kwh = d * (avg_consumption_wh_km / 1000.0)
+            # %10 buffer: gerçek tüketim kasıtla overshoot edebilir
+            if required_kwh > available_kwh * 1.1:
+                return (
+                    f"Fiziksel imkansız bir sürüş bacağı tespit edildi: "
+                    f"%{start_soc:.0f} batarya ile {d:.0f} km. "
+                    f"Yeterli şarj istasyonu bulunamadı, rota planlanamıyor."
+                )
+
+    return None
 
 
 def log_training_data(

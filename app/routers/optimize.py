@@ -4,6 +4,7 @@ import uuid
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from app.models.route_models import RouteRequest, MultiStopRouteResponse
 from app.services.route_service import plan_route
 from app.services.base_service import ExternalAPIError
@@ -76,13 +77,29 @@ async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteRes
         
     except ValueError as e:
         logger.warning(f"[{request_id}] Request validation failed", error=str(e))
-        return ApiResponse.fail(f"Geçersiz istek: {str(e)}")
-        
+        return JSONResponse(
+            status_code=400,
+            content=ApiResponse.fail(
+                f"Geçersiz istek: {str(e)}",
+                code="VALIDATION_ERROR",
+            ).model_dump(mode="json"),
+        )
+
     except ExternalAPIError as e:
         logger.error(f"[{request_id}] External API error", api_source=e.source, status_code=e.status_code, detail=str(e))
-        return ApiResponse.fail(f"Dış API hatası ({e.source}): {str(e)}")
-        
+        return JSONResponse(
+            status_code=502,
+            content=ApiResponse.fail(
+                f"Dış API hatası ({e.source}): {str(e)}",
+                code="EXTERNAL_API_ERROR",
+            ).model_dump(mode="json"),
+        )
+
     except Exception as e:
         error_traceback = traceback.format_exc()
         logger.critical(f"[{request_id}] Unexpected server error", error=str(e), traceback=error_traceback)
-        return ApiResponse.fail(f"Sunucu hatası: {str(e)}" if config.is_debug() else "İç sunucu hatası")
+        detail = f"Sunucu hatası: {str(e)}" if config.is_debug() else "İç sunucu hatası"
+        return JSONResponse(
+            status_code=500,
+            content=ApiResponse.fail(detail, code="INTERNAL_ERROR").model_dump(mode="json"),
+        )

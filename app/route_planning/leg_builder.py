@@ -17,6 +17,7 @@ from app.models import (
 from app.charging_model import calculate_charge_time
 from app.charging_tariffs import get_price_for_station
 from app.consumption_engine.v2_ml_model import ChargingTimeCalculator
+from app.infrastructure.station_catalog import UNKNOWN_POWER_PLANNING_KW
 from app.infrastructure.vehicle_catalog.models import VehicleSpec
 from app.utils.logger import get_logger
 from app.utils.charging_estimator import get_smart_dc_max, is_curve_suspicious
@@ -61,7 +62,19 @@ def _build_alternative_stations(
             has_parking=station.has_parking,
             is_24_7=station.is_open_now is True
         )
-        
+
+        # Sprint 5: 120 kW iyimser fallback yerine power_known + konservatif planlama
+        alt_power_known = bool(getattr(station, "power_known", station.power_kw > 0))
+        alt_power_kw = (
+            station.power_kw if station.power_kw and station.power_kw > 0
+            else UNKNOWN_POWER_PLANNING_KW
+        )
+        alt_source_provider = getattr(station, "source_provider", None) or (
+            station.station_info.get("_source")
+            if hasattr(station, "station_info") and station.station_info
+            else None
+        )
+
         alt_station = StationInfo(
             id=station.station_id,
             name=station.station_name,
@@ -71,16 +84,24 @@ def _build_alternative_stations(
                 ConnectorInfo(
                     plug_type=PlugType.CCS2,
                     charger_type=ChargerType.DC,
-                    power_kw=station.power_kw if station.power_kw > 0 else 120.0
+                    power_kw=alt_power_kw,
                 )
             ],
             amenities=alt_amenities,
-            data_source=station.station_info.get("_source", "ocm") if hasattr(station, 'station_info') and station.station_info else "ocm",
+            data_source=alt_source_provider or "ocm",
             distance_from_route_km=station.deviation_km,
-            is_open_now=station.is_open_now
+            is_open_now=station.is_open_now,
+            # Sprint 5 opsiyonel alanlar
+            power_known=alt_power_known,
+            availability_status=getattr(station, "availability_status", None),
+            available_count=getattr(station, "available_count", None),
+            out_of_service_count=getattr(station, "out_of_service_count", None),
+            availability_last_update_time=getattr(station, "availability_last_update_time", None),
+            source_provider=alt_source_provider if alt_source_provider in ("google", "ocm") else None,
+            source_id=getattr(station, "source_id", None) or station.station_id,
         )
         alternatives.append(alt_station)
-    
+
     return alternatives if alternatives else None
 
 
@@ -158,13 +179,19 @@ def _calculate_charge_duration(
 
 
 def _build_station_info(station, station_amenities=None) -> StationInfo:
-    """CorridorStation → StationInfo dönüşümü."""
+    """CorridorStation → StationInfo dönüşümü.
+
+    Sprint 5: Eğer station nesnesi normalize edilmiş alanlar (power_known,
+    availability_status, source_provider, source_id) taşıyorsa bunlar
+    response'a aktarılır. 120 kW iyimser fallback yerine
+    UNKNOWN_POWER_PLANNING_KW kullanılır.
+    """
     station_source = station.station_info.get("_source", "ocm")
     station_place_id = station.station_info.get("_place_id")
     station_rating = station.station_info.get("_rating", station.rating)
     station_user_ratings = station.station_info.get("_user_ratings_total")
     station_vicinity = station.station_info.get("AddressInfo", {}).get("AddressLine1", "")
-    
+
     if station_amenities is None:
         station_amenities = StationAmenity(
             has_toilet=station.has_toilet,
@@ -173,12 +200,20 @@ def _build_station_info(station, station_amenities=None) -> StationInfo:
             has_parking=station.has_parking,
             is_24_7=station.is_open_now is True
         )
-    
+
     connector_count = (
         station.station_info.get("connector_count")
         or len(station.station_info.get("Connections", []))
         or 1
     )
+
+    # Sprint 5: power_known ve konservatif planlama gücü
+    power_known = bool(getattr(station, "power_known", station.power_kw > 0))
+    connector_power_kw = (
+        station.power_kw if station.power_kw and station.power_kw > 0
+        else UNKNOWN_POWER_PLANNING_KW
+    )
+    source_provider = getattr(station, "source_provider", None) or station_source
 
     return StationInfo(
         id=station.station_id,
@@ -190,7 +225,7 @@ def _build_station_info(station, station_amenities=None) -> StationInfo:
             ConnectorInfo(
                 plug_type=PlugType.CCS2,
                 charger_type=ChargerType.DC,
-                power_kw=station.power_kw if station.power_kw > 0 else 120.0,
+                power_kw=connector_power_kw,
                 count=connector_count
             )
         ],
@@ -199,7 +234,15 @@ def _build_station_info(station, station_amenities=None) -> StationInfo:
         place_id=station_place_id,
         vicinity=station_vicinity,
         distance_from_route_km=station.deviation_km,
-        is_open_now=station.is_open_now
+        is_open_now=station.is_open_now,
+        # Sprint 5 opsiyonel alanlar
+        power_known=power_known,
+        availability_status=getattr(station, "availability_status", None),
+        available_count=getattr(station, "available_count", None),
+        out_of_service_count=getattr(station, "out_of_service_count", None),
+        availability_last_update_time=getattr(station, "availability_last_update_time", None),
+        source_provider=source_provider if source_provider in ("google", "ocm") else None,
+        source_id=getattr(station, "source_id", None) or station.station_id,
     )
 
 
@@ -259,13 +302,35 @@ def build_multi_legs(
     
     for i, (hotspot, station_result) in enumerate(zip(hotspots, station_results)):
         if not station_result.best_station:
+            # 🔧 V4.3 (CB-6 fix): İstasyon bulunamadı → eskiden `continue` ile atlanıyordu;
+            # current_soc ve current_point güncellenmiyor, sonraki leg fiziksel olarak
+            # imkansız mesafe gösteriyordu (örn. start_soc=15% iken DRIVE 216km @ 15→17%).
+            #
+            # Düzeltme: physics state'i ilerlet — sürüş YAŞANIYOR ama şarj YAPILMIYOR.
+            # Bu, sonraki leg'in doğru başlangıç koşullarıyla devam etmesini sağlar.
+            # Tüm hotspot'lar boş gelirse final SOC < 0 olarak yansır → orchestrator
+            # post-validate (validate_plan_sanity) bunu yakalar.
             warning_msg = (
                 f"⚠️ {hotspot.distance_from_start_km:.0f}. km'de şarj durağı gerekiyor "
                 f"(SOC: %{hotspot.soc_at_point:.0f}) ancak yakında uygun istasyon bulunamadı. "
                 f"Rotanız eksik olabilir, manuel şarj planlaması önerilir."
             )
             missing_station_warnings.append(warning_msg)
-            logger.warning(f"Hotspot {i+1}: No station found at {hotspot.distance_from_start_km:.0f}km (SOC: {hotspot.soc_at_point:.0f}%)")
+            logger.warning(
+                f"Hotspot {i+1}: No station found at {hotspot.distance_from_start_km:.0f}km "
+                f"(SOC: {hotspot.soc_at_point:.0f}%) — advancing physics state without charging"
+            )
+
+            # Physics state'i ilerlet:
+            # - Konum: hotspot lokasyonuna ilerle (rota üzerinde)
+            # - SOC: bu hotspot'a kadar olan tüketimi düş (current_soc → hotspot.soc_at_point)
+            # - remaining_distance/duration: bu leg'i düş
+            advanced_distance = max(0, hotspot.distance_from_start_km - (total_distance_km - remaining_distance))
+            advanced_duration = (advanced_distance / total_distance_km) * total_duration_min if total_distance_km > 0 else 0
+            current_point = hotspot.location  # Konum ilerle
+            current_soc = hotspot.soc_at_point  # SOC bu seviyeye düşmüş durumda
+            remaining_distance = max(0, remaining_distance - advanced_distance)
+            remaining_duration = max(0, remaining_duration - advanced_duration)
             continue
         
         station = station_result.best_station
@@ -304,7 +369,11 @@ def build_multi_legs(
         
         # 2. ChargeLeg
         hotspot_target_soc = hotspot.recommended_charge_to
-        charge_power_kw = station.power_kw if station.power_kw > 0 else 120.0
+        # Sprint 5: 120 kW iyimser fallback yerine konservatif planlama gücü
+        charge_power_kw = (
+            station.power_kw if station.power_kw and station.power_kw > 0
+            else UNKNOWN_POWER_PLANNING_KW
+        )
         
         charge_duration, kwh_to_add = _calculate_charge_duration(
             end_soc=end_soc,
@@ -334,7 +403,11 @@ def build_multi_legs(
         )
         
         # Şarj maliyeti
-        station_power = station.power_kw if station.power_kw > 0 else 120.0
+        # Sprint 5: 120 kW iyimser fallback yerine konservatif planlama gücü
+        station_power = (
+            station.power_kw if station.power_kw and station.power_kw > 0
+            else UNKNOWN_POWER_PLANNING_KW
+        )
         is_dc_charger = station.is_dc or station_power >= 50
         price_per_kwh, detected_operator = get_price_for_station(
             station_name=station.station_name,
