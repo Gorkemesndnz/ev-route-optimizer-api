@@ -140,6 +140,27 @@ def _get_ttl(prefix: str) -> int:
     return 3600  # Default 1 saat
 
 
+def _normalize_key_part(value: Any) -> str:
+    """Normalize cache key values with stable handling for route models."""
+    if hasattr(value, 'lat') and hasattr(value, 'lon'):
+        return f"{value.lat},{value.lon}"
+
+    if isinstance(value, dict):
+        items = [
+            f"{k}:{_normalize_key_part(value[k])}"
+            for k in sorted(value.keys())
+        ]
+        return "{" + ",".join(items) + "}"
+
+    if isinstance(value, (list, tuple)):
+        return "[" + ",".join(_normalize_key_part(item) for item in value) + "]"
+
+    if hasattr(value, "model_dump"):
+        return _normalize_key_part(value.model_dump(mode="json"))
+
+    return str(value)
+
+
 def _make_key(prefix: str, args: tuple, kwargs: dict) -> str:
     """Cache key oluştur."""
     parts = [prefix]
@@ -150,14 +171,10 @@ def _make_key(prefix: str, args: tuple, kwargs: dict) -> str:
             cls_name = arg.__class__.__name__
             if any(x in cls_name for x in ('Service', 'Manager', 'Calculator', 'Planner')):
                 continue
-        # GeoPoint desteği
-        if hasattr(arg, 'lat') and hasattr(arg, 'lon'):
-            parts.append(f"{arg.lat},{arg.lon}")
-        else:
-            parts.append(str(arg))
+        parts.append(_normalize_key_part(arg))
     
     for k, v in sorted(kwargs.items()):
-        parts.append(f"{k}={v}")
+        parts.append(f"{k}={_normalize_key_part(v)}")
     
     return ":".join(parts)
 

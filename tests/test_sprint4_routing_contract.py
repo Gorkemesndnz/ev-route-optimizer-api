@@ -289,6 +289,30 @@ def test_align_station_results_to_hotspots_reorders_by_route_distance():
     assert aligned == [near_early, near_late]
 
 
+def test_align_station_results_to_hotspots_fails_when_station_result_missing():
+    hotspots = [
+        SimpleNamespace(distance_from_start_km=25.0),
+        SimpleNamespace(distance_from_start_km=80.0),
+    ]
+    only_early = SimpleNamespace(hotspot=SimpleNamespace(distance_from_start_km=22.0), best_station=object())
+
+    with pytest.raises(ValueError, match="alignment incomplete"):
+        _align_station_results_to_hotspots(hotspots, [only_early])
+
+
+def test_align_station_results_to_hotspots_fails_when_match_is_stale():
+    hotspots = [
+        SimpleNamespace(distance_from_start_km=25.0),
+    ]
+    stale_result = SimpleNamespace(
+        hotspot=SimpleNamespace(distance_from_start_km=250.0),
+        best_station=object(),
+    )
+
+    with pytest.raises(ValueError, match="drift exceeds tolerance"):
+        _align_station_results_to_hotspots(hotspots, [stale_result])
+
+
 @pytest.mark.asyncio
 async def test_find_best_route_passes_user_waypoints_to_initial_provider(monkeypatch):
     calls = {}

@@ -93,6 +93,7 @@ logger = get_logger("route_planner")
 weather_service = WeatherService()
 DEFAULT_MAX_LOGGED_STATION_CANDIDATES = 50
 DEFAULT_MAX_LOGGED_SEGMENT_FEATURES = 80
+MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM = 120.0
 
 
 # =============================================================================
@@ -178,13 +179,17 @@ def _align_station_results_to_hotspots(hotspots, station_results):
         )
         return []
     if len(hotspots) == len(station_results):
+        _validate_station_alignment(hotspots, station_results)
         return station_results
 
     remaining = list(station_results)
     aligned = []
     for hotspot in hotspots:
         if not remaining:
-            break
+            raise ValueError(
+                "Hotspot/station alignment incomplete: "
+                f"{len(hotspots)} final hotspots but only {len(station_results)} station results"
+            )
         target_km = float(getattr(hotspot, "distance_from_start_km", 0.0) or 0.0)
         selected = min(
             remaining,
@@ -193,6 +198,13 @@ def _align_station_results_to_hotspots(hotspots, station_results):
                 - target_km
             ),
         )
+        drift_km = abs(_station_result_hotspot_distance_km(selected, target_km) - target_km)
+        if drift_km > MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:
+            raise ValueError(
+                "Hotspot/station alignment drift exceeds tolerance: "
+                f"target={target_km:.1f}km drift={drift_km:.1f}km "
+                f"tolerance={MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:.1f}km"
+            )
         aligned.append(selected)
         remaining.remove(selected)
 
@@ -203,6 +215,94 @@ def _align_station_results_to_hotspots(hotspots, station_results):
         aligned_station_results=len(aligned),
     )
     return aligned
+
+
+def _station_result_hotspot_distance_km(station_result, fallback_km: float) -> float:
+    return float(
+        getattr(getattr(station_result, "hotspot", None), "distance_from_start_km", fallback_km)
+        or fallback_km
+    )
+
+
+def _validate_station_alignment(hotspots, station_results) -> None:
+    if len(hotspots) != len(station_results):
+        raise ValueError(
+            "Hotspot/station alignment count mismatch: "
+            f"{len(hotspots)} final hotspots vs {len(station_results)} station results"
+        )
+
+    for hotspot, station_result in zip(hotspots, station_results):
+        target_km = float(getattr(hotspot, "distance_from_start_km", 0.0) or 0.0)
+        drift_km = abs(_station_result_hotspot_distance_km(station_result, target_km) - target_km)
+        if drift_km > MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:
+            raise ValueError(
+                "Hotspot/station alignment drift exceeds tolerance: "
+                f"target={target_km:.1f}km drift={drift_km:.1f}km "
+                f"tolerance={MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:.1f}km"
+            )
+
+
+def _combine_final_route_waypoints(user_waypoints, station_points) -> List[GeoPoint]:
+    """Final reroute order is user-defined waypoints first, then charging stops."""
+    return list(user_waypoints or []) + list(station_points or [])
+
+
+async def _snap_display_polyline_for_roads(polyline: str, snap_to_roads) -> tuple[str, bool]:
+    """Return the display polyline after a successful Roads snap, preserving fail-soft behavior."""
+    display_polyline = polyline
+    snap_called = False
+    if not polyline:
+        return display_polyline, snap_called
+
+    try:
+        import polyline as polyline_lib
+
+        decoded = polyline_lib.decode(polyline)
+        if not decoded:
+            return display_polyline, snap_called
+
+        sample_interval_km = 5.0
+        max_snap_points = 400
+
+        sampled_points: List[GeoPoint] = []
+        if len(decoded) <= max_snap_points:
+            sampled_points = [GeoPoint(lat=lat, lon=lon) for lat, lon in decoded]
+        else:
+            from app.utils.geo import haversine_km
+
+            accumulated = 0.0
+            sampled_points.append(GeoPoint(lat=decoded[0][0], lon=decoded[0][1]))
+            last_pt = decoded[0]
+            for lat, lon in decoded[1:]:
+                accumulated += haversine_km(last_pt[0], last_pt[1], lat, lon)
+                if accumulated >= sample_interval_km:
+                    sampled_points.append(GeoPoint(lat=lat, lon=lon))
+                    accumulated = 0.0
+                last_pt = (lat, lon)
+
+            if (decoded[-1][0], decoded[-1][1]) != (sampled_points[-1].lat, sampled_points[-1].lon):
+                sampled_points.append(GeoPoint(lat=decoded[-1][0], lon=decoded[-1][1]))
+
+        snap_called = True
+        snapped = await snap_to_roads(sampled_points, interpolate=True)
+        if not snapped:
+            return display_polyline, snap_called
+
+        snapped_coords = [
+            (sp["location"]["latitude"], sp["location"]["longitude"])
+            for sp in snapped
+            if "location" in sp
+        ]
+        if snapped_coords:
+            display_polyline = polyline_lib.encode(snapped_coords)
+            logger.info(
+                f"Polyline snapped to roads: {len(decoded)} -> {len(sampled_points)} sampled "
+                f"-> {len(snapped_coords)} snapped points"
+            )
+    except Exception as e:
+        logger.warning(f"Snap-to-roads failed, keeping original polyline: {e}")
+
+    return display_polyline, snap_called
 
 
 def _station_charger_type(station) -> str:
@@ -1202,7 +1302,7 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         if selected_station_points:
             try:
                 user_waypoints = list(request.waypoints or [])
-                combined_waypoints = user_waypoints + selected_station_points
+                combined_waypoints = _combine_final_route_waypoints(user_waypoints, selected_station_points)
                 logger.info(
                     f"Re-routing through {len(selected_station_points)} charging stations "
                     f"(+ {len(user_waypoints)} user waypoints) to refresh polyline"
@@ -1328,56 +1428,9 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         # Ham Directions polyline'ı bazen yol çizgisinden saparak görünür; snapToRoads
         # noktaları en yakın yol segmentine oturtur. Fail-soft: API başarısız olursa
         # canonical energy polyline korunur, sadece display_polyline güncellenir.
-        display_polyline = polyline
-        if polyline:
-            try:
-                import polyline as polyline_lib
-
-                decoded = polyline_lib.decode(polyline)  # List[(lat, lon)]
-                if decoded:
-                    # Roads API max 100 nokta/istek, snap_to_roads içinde chunking var.
-                    # Çok uzun rotalarda perf için 5 km'de bir örnekle (~200 nokta @ 1000 km).
-                    SAMPLE_INTERVAL_KM = 5.0
-                    MAX_SNAP_POINTS = 400  # üst sınır — Roads API kotası koruması
-
-                    sampled_points: List[GeoPoint] = []
-                    if len(decoded) <= MAX_SNAP_POINTS:
-                        sampled_points = [GeoPoint(lat=lat, lon=lon) for lat, lon in decoded]
-                    else:
-                        from app.utils.geo import haversine_km
-                        accumulated = 0.0
-                        last_pt = None
-                        # İlk noktayı her zaman ekle
-                        sampled_points.append(GeoPoint(lat=decoded[0][0], lon=decoded[0][1]))
-                        last_pt = decoded[0]
-                        for lat, lon in decoded[1:]:
-                            accumulated += haversine_km(last_pt[0], last_pt[1], lat, lon)
-                            if accumulated >= SAMPLE_INTERVAL_KM:
-                                sampled_points.append(GeoPoint(lat=lat, lon=lon))
-                                accumulated = 0.0
-                            last_pt = (lat, lon)
-                        # Son noktayı her zaman ekle
-                        if (decoded[-1][0], decoded[-1][1]) != (sampled_points[-1].lat, sampled_points[-1].lon):
-                            sampled_points.append(GeoPoint(lat=decoded[-1][0], lon=decoded[-1][1]))
-
-                    snapped = await google_maps.snap_to_roads(sampled_points, interpolate=True)
-                    _increment_call_count(call_counts, "google_roads_snap_to_roads")
-
-                    if snapped:
-                        snapped_coords = [
-                            (sp["location"]["latitude"], sp["location"]["longitude"])
-                            for sp in snapped
-                            if "location" in sp
-                        ]
-                        if snapped_coords:
-                            new_polyline = polyline_lib.encode(snapped_coords)
-                            display_polyline = new_polyline
-                            logger.info(
-                                f"Polyline snapped to roads: {len(decoded)} → {len(sampled_points)} sampled "
-                                f"→ {len(snapped_coords)} snapped points"
-                            )
-            except Exception as e:
-                logger.warning(f"Snap-to-roads failed, keeping original polyline: {e}")
+        display_polyline, snap_called = await _snap_display_polyline_for_roads(polyline, google_maps.snap_to_roads)
+        if snap_called:
+            _increment_call_count(call_counts, "google_roads_snap_to_roads")
 
         # STEP 11: Multi-Leg Builder
         legs, missing_station_warnings = build_multi_legs(

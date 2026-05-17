@@ -430,6 +430,37 @@ class TestRoadAvoidanceContract:
 
 
 # =============================================================================
+# 1A: MANUAL SOC CONTRACT
+# =============================================================================
+
+class TestManualSocContract:
+    """
+    Kademe 1A kapanis kontrati: manual varis SOC siniri backend ve UI kararina
+    gore bagimsiz %5-%50 araliginda kalir.
+    """
+
+    @pytest.mark.parametrize("arrival_soc", [5.0, 25.0, 50.0])
+    def test_manual_arrival_soc_5_to_50_is_not_limited_by_charge_min(
+        self,
+        istanbul_ankara_request_payload,
+        arrival_soc,
+    ):
+        payload = {
+            **istanbul_ankara_request_payload,
+            "smart_plan_enabled": False,
+            "target_arrival_soc_percent": arrival_soc,
+            "charge_min_soc_percent": 5.0,
+            "charge_target_soc_percent": 80.0,
+        }
+
+        req = RouteRequest(**payload)
+
+        assert req.target_arrival_soc_percent == arrival_soc
+        assert req.charge_min_soc_percent == 5.0
+        assert req.charge_target_soc_percent == 80.0
+
+
+# =============================================================================
 # F9: PARETO REGRESSION GATE
 # =============================================================================
 

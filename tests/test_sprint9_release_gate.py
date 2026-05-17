@@ -27,6 +27,10 @@ from app.infrastructure.station_catalog import (
 from app.models import GeoPoint, RoadAvoidances, RouteStrategy
 from app.optimization.modes import OptimizationMode
 from app.optimization.pareto_solver import ParetoSolver, StationOptimizationInput
+from app.route_planning.orchestrator import (
+    _combine_final_route_waypoints,
+    _snap_display_polyline_for_roads,
+)
 from app.route_planning.safe_harbor import (
     RescueStation,
     SafeHarborResult,
@@ -248,6 +252,50 @@ async def test_bridge_forbidden_fixture_filters_recorded_alternative(monkeypatch
 
     assert result["selected_route"]["summary"] == "D100 no bridge"
     assert len(result["route_analyses"]) == 1
+
+
+def test_final_reroute_keeps_user_waypoints_before_charging_station_waypoints():
+    user_waypoints = [
+        GeoPoint(lat=40.8438, lon=31.1565),
+        GeoPoint(lat=40.7650, lon=30.3940),
+    ]
+    station_waypoints = [
+        GeoPoint(lat=40.9000, lon=31.0000),
+        GeoPoint(lat=39.9500, lon=32.7000),
+    ]
+
+    combined = _combine_final_route_waypoints(user_waypoints, station_waypoints)
+
+    assert combined == user_waypoints + station_waypoints
+    assert combined[0].lat == pytest.approx(40.8438)
+    assert combined[1].lon == pytest.approx(30.3940)
+    assert combined[2].lat == pytest.approx(40.9000)
+
+
+@pytest.mark.asyncio
+async def test_snap_to_roads_success_updates_display_polyline_offline_fixture():
+    original_coords = [(41.0000, 29.0000), (41.0100, 29.0100)]
+    snapped_coords = [(41.0005, 29.0005), (41.0105, 29.0105)]
+    original_polyline = polyline.encode(original_coords)
+    calls = {}
+
+    async def fake_snap_to_roads(points, interpolate):
+        calls["points"] = points
+        calls["interpolate"] = interpolate
+        return [
+            {"location": {"latitude": lat, "longitude": lon}}
+            for lat, lon in snapped_coords
+        ]
+
+    display_polyline, snap_called = await _snap_display_polyline_for_roads(
+        original_polyline,
+        fake_snap_to_roads,
+    )
+
+    assert snap_called is True
+    assert calls["interpolate"] is True
+    assert len(calls["points"]) == len(original_coords)
+    assert display_polyline == polyline.encode(snapped_coords)
 
 
 def test_unknown_kw_station_remains_candidate_with_conservative_planning_power():

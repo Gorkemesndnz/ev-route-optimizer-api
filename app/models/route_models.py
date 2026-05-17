@@ -529,12 +529,10 @@ class RouteRequest(BaseModel):
         """
         Cross-field tutarlılık:
         - charge_min_soc < charge_target_soc - 20 (mantıksal sıralama, en az 20% spread)
-        - target_arrival_soc < charge_min_soc + 10 (varış hedefi, eşiğin çok üstünde olamaz)
         Aksi halde kullanıcı saçma değerler girmiş demektir; engine kötü plan üretir.
         """
         cmin = self.charge_min_soc_percent
         ctgt = self.charge_target_soc_percent
-        carr = self.target_arrival_soc_percent
 
         if cmin is not None and ctgt is not None:
             if cmin >= ctgt - 20:
@@ -542,13 +540,6 @@ class RouteRequest(BaseModel):
                     f"charge_min_soc ({cmin}%) ile charge_target_soc ({ctgt}%) arasında "
                     f"en az 20% fark olmalı (sağlıklı şarj döngüsü için). "
                     f"Önerilen: min ≤ {ctgt - 20:.0f}%."
-                )
-
-        if cmin is not None and carr is not None:
-            if carr > cmin + 10:
-                raise ValueError(
-                    f"target_arrival_soc ({carr}%) charge_min_soc'dan ({cmin}%) "
-                    f"en fazla 10% yüksek olabilir. Aksi halde rota gereksiz şarj durağı içerir."
                 )
 
         return self
