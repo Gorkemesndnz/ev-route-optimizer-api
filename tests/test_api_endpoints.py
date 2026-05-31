@@ -99,6 +99,57 @@ class TestRouteOptimizationValidation:
         })
         assert response.status_code == 422
 
+    def test_optimize_route_error_status_plan_is_non_2xx(self, client, monkeypatch):
+        """plan_route hata statulu plan dondururse 200 success zarfina sarilmamali."""
+        from app.models.route_models import MultiStopRouteResponse
+        from app.routers import optimize as optimize_router
+
+        async def fake_plan_route(request):
+            return MultiStopRouteResponse(
+                status="error_unknown",
+                total_distance_km=0,
+                total_duration_minutes=0,
+                total_co2_savings_kg=0,
+                legs=[],
+                message="alignment failed",
+            )
+
+        monkeypatch.setattr(optimize_router, "plan_route", fake_plan_route)
+
+        response = client.post("/optimize_route", json={
+            "start_location": {"lat": ISTANBUL_LAT, "lon": ISTANBUL_LON},
+            "end_location": {"lat": ANKARA_LAT, "lon": ANKARA_LON},
+            "vehicle_model_id": "test_vehicle",
+            "current_soc_percent": 80,
+        })
+
+        assert response.status_code == 502
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "ROUTE_PLANNING_FAILED"
+
+    def test_optimize_route_hotspot_alignment_error_has_typed_code(self, client, monkeypatch):
+        """Hotspot alignment upstream error olarak non-2xx donmeli."""
+        from app.routers import optimize as optimize_router
+        from app.services.base_service import ExternalAPIError
+
+        async def fake_plan_route(request):
+            raise ExternalAPIError("HotspotAlignment", 502, "drift exceeds tolerance")
+
+        monkeypatch.setattr(optimize_router, "plan_route", fake_plan_route)
+
+        response = client.post("/optimize_route", json={
+            "start_location": {"lat": ISTANBUL_LAT, "lon": ISTANBUL_LON},
+            "end_location": {"lat": ANKARA_LAT, "lon": ANKARA_LON},
+            "vehicle_model_id": "test_vehicle",
+            "current_soc_percent": 80,
+        })
+
+        assert response.status_code == 502
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "HOTSPOT_ALIGNMENT_FAILED"
+
 
 # =============================================================================
 # GRUP 3: FEEDBACK & SWITCH — Validation

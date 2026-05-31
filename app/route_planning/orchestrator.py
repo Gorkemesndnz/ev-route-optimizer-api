@@ -187,9 +187,11 @@ def _align_station_results_to_hotspots(hotspots, station_results):
     aligned = []
     for hotspot in hotspots:
         if not remaining:
-            raise ValueError(
+            raise ExternalAPIError(
+                "HotspotAlignment",
+                502,
                 "Hotspot/station alignment incomplete: "
-                f"{len(hotspots)} final hotspots but only {len(station_results)} station results"
+                f"{len(hotspots)} final hotspots but only {len(station_results)} station results",
             )
         target_km = float(getattr(hotspot, "distance_from_start_km", 0.0) or 0.0)
         selected = min(
@@ -201,10 +203,12 @@ def _align_station_results_to_hotspots(hotspots, station_results):
         )
         drift_km = abs(_station_result_hotspot_distance_km(selected, target_km) - target_km)
         if drift_km > MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:
-            raise ValueError(
+            raise ExternalAPIError(
+                "HotspotAlignment",
+                502,
                 "Hotspot/station alignment drift exceeds tolerance: "
                 f"target={target_km:.1f}km drift={drift_km:.1f}km "
-                f"tolerance={MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:.1f}km"
+                f"tolerance={MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:.1f}km",
             )
         aligned.append(selected)
         remaining.remove(selected)
@@ -227,19 +231,23 @@ def _station_result_hotspot_distance_km(station_result, fallback_km: float) -> f
 
 def _validate_station_alignment(hotspots, station_results) -> None:
     if len(hotspots) != len(station_results):
-        raise ValueError(
+        raise ExternalAPIError(
+            "HotspotAlignment",
+            502,
             "Hotspot/station alignment count mismatch: "
-            f"{len(hotspots)} final hotspots vs {len(station_results)} station results"
+            f"{len(hotspots)} final hotspots vs {len(station_results)} station results",
         )
 
     for hotspot, station_result in zip(hotspots, station_results):
         target_km = float(getattr(hotspot, "distance_from_start_km", 0.0) or 0.0)
         drift_km = abs(_station_result_hotspot_distance_km(station_result, target_km) - target_km)
         if drift_km > MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:
-            raise ValueError(
+            raise ExternalAPIError(
+                "HotspotAlignment",
+                502,
                 "Hotspot/station alignment drift exceeds tolerance: "
                 f"target={target_km:.1f}km drift={drift_km:.1f}km "
-                f"tolerance={MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:.1f}km"
+                f"tolerance={MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:.1f}km",
             )
 
 

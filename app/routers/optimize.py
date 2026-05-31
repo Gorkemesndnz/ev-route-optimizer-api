@@ -51,6 +51,8 @@ def _external_api_error_code(error: ExternalAPIError) -> str:
         return "SNAP_TO_ROADS_FAILED"
     if error.source == "PolylineCorridor":
         return "POLYLINE_DECODE_FAILED"
+    if error.source == "HotspotAlignment":
+        return "HOTSPOT_ALIGNMENT_FAILED"
     return "EXTERNAL_API_ERROR"
 
 @router.post("/optimize_route", response_model=ApiResponse[MultiStopRouteResponse])
@@ -66,7 +68,22 @@ async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteRes
         logger.debug(f"[{request_id}] Starting route planning", step="planning_start")
         plan = await plan_route(request)
         planning_duration = time.time() - request_start_time
-        
+
+        if plan.status.startswith("error"):
+            logger.error(
+                f"[{request_id}] Route planning returned error status",
+                status=plan.status,
+                message=plan.message,
+                processing_time_ms=round(planning_duration * 1000, 1),
+            )
+            return JSONResponse(
+                status_code=502,
+                content=ApiResponse.fail(
+                    plan.message or "Rota hesaplanamadi",
+                    code="ROUTE_PLANNING_FAILED",
+                ).model_dump(mode="json"),
+            )
+
         logger.info(
             f"[{request_id}] Route planning completed successfully",
             status=plan.status,

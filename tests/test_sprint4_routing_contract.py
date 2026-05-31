@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models import GeoPoint
+from app.services.base_service import ExternalAPIError
 from app.routing import (
     CanonicalRoute,
     ConsumptionEngineEnergyEstimator,
@@ -296,8 +297,9 @@ def test_align_station_results_to_hotspots_fails_when_station_result_missing():
     ]
     only_early = SimpleNamespace(hotspot=SimpleNamespace(distance_from_start_km=22.0), best_station=object())
 
-    with pytest.raises(ValueError, match="alignment incomplete"):
+    with pytest.raises(ExternalAPIError, match="alignment incomplete") as exc_info:
         _align_station_results_to_hotspots(hotspots, [only_early])
+    assert exc_info.value.source == "HotspotAlignment"
 
 
 def test_align_station_results_to_hotspots_fails_when_match_is_stale():
@@ -309,8 +311,9 @@ def test_align_station_results_to_hotspots_fails_when_match_is_stale():
         best_station=object(),
     )
 
-    with pytest.raises(ValueError, match="drift exceeds tolerance"):
+    with pytest.raises(ExternalAPIError, match="drift exceeds tolerance") as exc_info:
         _align_station_results_to_hotspots(hotspots, [stale_result])
+    assert exc_info.value.source == "HotspotAlignment"
 
 
 @pytest.mark.parametrize("drift_km", [50.0, 80.0])
@@ -323,8 +326,9 @@ def test_align_station_results_to_hotspots_fails_for_practical_bad_drift(drift_k
         best_station=object(),
     )
 
-    with pytest.raises(ValueError, match="drift exceeds tolerance"):
+    with pytest.raises(ExternalAPIError, match="drift exceeds tolerance") as exc_info:
         _align_station_results_to_hotspots(hotspots, [stale_result])
+    assert exc_info.value.source == "HotspotAlignment"
 
 
 @pytest.mark.asyncio
