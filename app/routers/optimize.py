@@ -45,6 +45,14 @@ def _create_error_response(
         debug_info=debug_info or {}
     )
 
+
+def _external_api_error_code(error: ExternalAPIError) -> str:
+    if error.source == "SnapToRoads":
+        return "SNAP_TO_ROADS_FAILED"
+    if error.source == "PolylineCorridor":
+        return "POLYLINE_DECODE_FAILED"
+    return "EXTERNAL_API_ERROR"
+
 @router.post("/optimize_route", response_model=ApiResponse[MultiStopRouteResponse])
 async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteResponse]:
     """Ana rota optimizasyonu endpoint'i"""
@@ -91,7 +99,7 @@ async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteRes
             status_code=502,
             content=ApiResponse.fail(
                 f"Dış API hatası ({e.source}): {str(e)}",
-                code="EXTERNAL_API_ERROR",
+                code=_external_api_error_code(e),
             ).model_dump(mode="json"),
         )
 

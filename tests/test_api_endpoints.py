@@ -120,6 +120,49 @@ class TestFeedbackValidation:
         assert response.status_code == 422
 
 
+class TestMapStationsStatusSemantics:
+    def test_map_stations_empty_result_is_success(self, client, monkeypatch):
+        from app.routers import stations as stations_router
+
+        async def fake_get_map_stations(**kwargs):
+            return []
+
+        monkeypatch.setattr(stations_router.google_maps, "get_map_stations", fake_get_map_stations)
+
+        response = client.get("/api/map_stations", params={
+            "lat": ISTANBUL_LAT,
+            "lon": ISTANBUL_LON,
+            "radius_km": 10,
+            "zoom": 12,
+        })
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["data"] == []
+
+    def test_map_stations_provider_error_is_non_2xx(self, client, monkeypatch):
+        from app.routers import stations as stations_router
+        from app.services.base_service import ExternalAPIError
+
+        async def fake_get_map_stations(**kwargs):
+            raise ExternalAPIError("GooglePlaces", 503, "provider down")
+
+        monkeypatch.setattr(stations_router.google_maps, "get_map_stations", fake_get_map_stations)
+
+        response = client.get("/api/map_stations", params={
+            "lat": ISTANBUL_LAT,
+            "lon": ISTANBUL_LON,
+            "radius_km": 10,
+            "zoom": 12,
+        })
+
+        assert response.status_code == 502
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "STATION_PROVIDER_ERROR"
+
+
 # =============================================================================
 # GRUP 4: API RESPONSE WRAPPER CONTRACT
 # =============================================================================

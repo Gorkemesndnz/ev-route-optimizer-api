@@ -24,6 +24,7 @@ bilinçli tradeoff (Seçenek B).
 
 from typing import List, Optional, Tuple
 
+from app.services.base_service import ExternalAPIError
 from app.utils.geo import haversine_km
 from app.utils.logger import get_logger
 
@@ -57,16 +58,16 @@ def decode_route_polyline_coords(route_polyline: str) -> List[Tuple[float, float
     istasyonlar kabul edilir → fail-open davranış).
     """
     if not route_polyline:
-        return []
+        raise ExternalAPIError("PolylineCorridor", 502, "Route polyline is empty")
     try:
         import polyline as polyline_lib
         coords = polyline_lib.decode(route_polyline)
     except Exception as e:
         logger.warning(f"Polyline decode failed: {e}")
-        return []
+        raise ExternalAPIError("PolylineCorridor", 502, "Route polyline could not be decoded") from e
 
     if not coords:
-        return []
+        raise ExternalAPIError("PolylineCorridor", 502, "Route polyline decoded to zero points")
 
     # Mesafe bazlı seyreltme — her ~500 m'de bir nokta.
     sampled: List[Tuple[float, float]] = []
@@ -114,7 +115,7 @@ def min_distance_to_polyline_km(
 
 def check_stations_on_polyline(
     station_coords: List[Tuple[float, float]],
-    polyline_coords: List[Tuple[float, float]],
+    polyline_coords: Optional[List[Tuple[float, float]]],
     max_perp_km: float = PERP_DISTANCE_THRESHOLD_KM,
 ) -> List[bool]:
     """
@@ -127,8 +128,10 @@ def check_stations_on_polyline(
     """
     if not station_coords:
         return []
-    if not polyline_coords:
+    if polyline_coords is None:
         return [True] * len(station_coords)
+    if not polyline_coords:
+        raise ExternalAPIError("PolylineCorridor", 502, "Polyline corridor filter has no route geometry")
 
     return [
         min_distance_to_polyline_km(slat, slon, polyline_coords) <= max_perp_km

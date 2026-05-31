@@ -176,16 +176,22 @@ class TestDefaultSpeedConsistency:
 # vertex distance from polyline). Aşağıdaki testler yeni helper'ları kapsar.
 
 class TestPolylinePerpendicularFilter:
-    def test_decode_empty_polyline_returns_empty_list(self):
+    def test_decode_empty_polyline_raises_typed_error(self):
         from app.station_finder import _decode_route_polyline_coords
-        assert _decode_route_polyline_coords("") == []
-        assert _decode_route_polyline_coords(None) == []  # type: ignore[arg-type]
+        from app.services.base_service import ExternalAPIError
 
-    def test_decode_invalid_polyline_returns_empty_list(self):
+        with pytest.raises(ExternalAPIError, match="Route polyline is empty"):
+            _decode_route_polyline_coords("")
+        with pytest.raises(ExternalAPIError, match="Route polyline is empty"):
+            _decode_route_polyline_coords(None)  # type: ignore[arg-type]
+
+    def test_decode_invalid_polyline_raises_typed_error(self):
         """Bozuk polyline → boş liste, exception fırlatmamalı."""
         from app.station_finder import _decode_route_polyline_coords
-        result = _decode_route_polyline_coords("THIS_IS_NOT_A_POLYLINE@@@")
-        assert result == []
+        from app.services.base_service import ExternalAPIError
+
+        with pytest.raises(ExternalAPIError, match="could not be decoded"):
+            _decode_route_polyline_coords("THIS_IS_NOT_A_POLYLINE@@@")
 
     def test_decode_valid_polyline_returns_coords(self):
         """Geçerli polyline → en az 1 (lat, lon) tuple içeren liste."""
@@ -195,12 +201,23 @@ class TestPolylinePerpendicularFilter:
         assert len(result) >= 1
         assert all(isinstance(p, tuple) and len(p) == 2 for p in result)
 
-    def test_check_stations_empty_polyline_bypasses(self):
+    def test_check_stations_empty_polyline_raises_typed_error(self):
         """Polyline boşsa tüm istasyonlar kabul (fail-open)."""
         from app.station_finder import _check_stations_on_polyline
+        from app.services.base_service import ExternalAPIError
+
+        with pytest.raises(ExternalAPIError, match="no route geometry"):
+            _check_stations_on_polyline(
+                station_coords=[(41.0, 29.0), (41.1, 29.1)],
+                polyline_coords=[],
+            )
+
+    def test_check_stations_none_polyline_is_explicit_bypass(self):
+        from app.station_finder import _check_stations_on_polyline
+
         flags = _check_stations_on_polyline(
             station_coords=[(41.0, 29.0), (41.1, 29.1)],
-            polyline_coords=[],
+            polyline_coords=None,
         )
         assert flags == [True, True]
 

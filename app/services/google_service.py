@@ -16,8 +16,52 @@ logger = get_logger("GoogleMapsService")
 TrafficModel = Literal["best_guess", "pessimistic", "optimistic"]
 
 # Kendi Google Places önbelleğimiz (Backend Map Caching)
+GLOBAL_GOOGLE_STATIONS_CACHE_TTL_SECONDS = 3600
+GLOBAL_GOOGLE_STATIONS_CACHE_MAX_SIZE = 1000
 GLOBAL_GOOGLE_STATIONS_CACHE: Dict[str, dict] = {}
 GLOBAL_GOOGLE_STATIONS_CACHE_LOCK = asyncio.Lock()
+
+
+def _make_global_station_cache_entry(station: dict, now: Optional[float] = None) -> dict:
+    return {
+        "station": station,
+        "cached_at": time.time() if now is None else now,
+    }
+
+
+def _unwrap_global_station_cache_entry(entry: dict) -> Tuple[dict, float]:
+    if "station" in entry and "cached_at" in entry:
+        return entry["station"], float(entry["cached_at"])
+
+    # Backward/test compatibility for raw station dicts seeded before the TTL wrapper.
+    return entry, time.time()
+
+
+def _prune_global_station_cache_locked(now: Optional[float] = None) -> None:
+    current_time = time.time() if now is None else now
+    expired_keys = []
+
+    for place_id, entry in GLOBAL_GOOGLE_STATIONS_CACHE.items():
+        if "station" not in entry or "cached_at" not in entry:
+            continue
+        _, cached_at = _unwrap_global_station_cache_entry(entry)
+        if current_time - cached_at > GLOBAL_GOOGLE_STATIONS_CACHE_TTL_SECONDS:
+            expired_keys.append(place_id)
+
+    for place_id in expired_keys:
+        GLOBAL_GOOGLE_STATIONS_CACHE.pop(place_id, None)
+
+    overflow = len(GLOBAL_GOOGLE_STATIONS_CACHE) - GLOBAL_GOOGLE_STATIONS_CACHE_MAX_SIZE
+    if overflow <= 0:
+        return
+
+    oldest_keys = sorted(
+        GLOBAL_GOOGLE_STATIONS_CACHE.keys(),
+        key=lambda key: _unwrap_global_station_cache_entry(GLOBAL_GOOGLE_STATIONS_CACHE[key])[1],
+    )[:overflow]
+
+    for place_id in oldest_keys:
+        GLOBAL_GOOGLE_STATIONS_CACHE.pop(place_id, None)
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0 # Dünya yarıçapı (km)
@@ -398,7 +442,9 @@ class GoogleMapsService(BaseService):
                 # Global Cache'e ekle (Map için)
                 if legacy_place["place_id"]:
                     async with GLOBAL_GOOGLE_STATIONS_CACHE_LOCK:
-                        GLOBAL_GOOGLE_STATIONS_CACHE[legacy_place["place_id"]] = legacy_place
+                        now = time.time()
+                        GLOBAL_GOOGLE_STATIONS_CACHE[legacy_place["place_id"]] = _make_global_station_cache_entry(legacy_place, now)
+                        _prune_global_station_cache_locked(now)
                     
                 results.append(legacy_place)
             
@@ -638,7 +684,12 @@ class GoogleMapsService(BaseService):
 
         matched_stations = []
         async with GLOBAL_GOOGLE_STATIONS_CACHE_LOCK:
-            cache_snapshot = list(GLOBAL_GOOGLE_STATIONS_CACHE.items())
+            now = time.time()
+            _prune_global_station_cache_locked(now)
+            cache_snapshot = [
+                (place_id, _unwrap_global_station_cache_entry(entry)[0])
+                for place_id, entry in GLOBAL_GOOGLE_STATIONS_CACHE.items()
+            ]
 
         for place_id, st in cache_snapshot:
             loc = st.get("geometry", {}).get("location", {})
@@ -687,11 +738,11 @@ class GoogleMapsService(BaseService):
                 "interpolate": "true" if interpolate else "false",
                 "key": self.api_key,
             }
-            try:
-                data = await self._roads_request("/snapToRoads", params)
-                all_snapped.extend(data.get("snappedPoints", []))
-            except Exception as e:
-                logger.warning(f"snap_to_roads chunk {i}-{i+CHUNK_SIZE} failed: {e}")
+            data = await self._roads_request("/snapToRoads", params)
+            snapped_points = data.get("snappedPoints")
+            if not isinstance(snapped_points, list):
+                raise ExternalAPIError("GoogleRoadsAPI", 502, "snapToRoads response missing snappedPoints")
+            all_snapped.extend(snapped_points)
 
         return all_snapped
 

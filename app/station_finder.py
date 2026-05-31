@@ -1122,14 +1122,15 @@ async def find_stations_for_hotspots(
 
     # Polyline'ı bir kere decode et, tüm hotspot'lar paylaşır.
     # Roads API çağrısı yok — pure geometrik (haversine vertex distance).
-    polyline_coords: List[Tuple[float, float]] = _decode_route_polyline_coords(route_polyline or "")
+    all_hotspots_bypass = all(getattr(hotspot, "bypass_perp_filter", False) for hotspot in hotspots)
+    polyline_coords: List[Tuple[float, float]] = [] if all_hotspots_bypass else _decode_route_polyline_coords(route_polyline or "")
     if polyline_coords:
         logger.info(
             f"Polyline decoded: {len(polyline_coords)} sampled points "
             f"(perp threshold = {PERP_DISTANCE_THRESHOLD_KM} km)"
         )
-    elif route_polyline:
-        logger.warning("Polyline decode failed or empty — road-side filter disabled (fail-open)")
+    elif all_hotspots_bypass:
+        logger.info("Polyline corridor filter bypassed for low-SOC origin hotspots")
 
     # Her hotspot'a polyline coords ata (filtre fonksiyonları buradan okur).
     # Aynı liste referansı paylaşılıyor — read-only kullanıldığı için güvenli.
@@ -1137,7 +1138,7 @@ async def find_stations_for_hotspots(
     # → perp filter fail-open davranır, şehir içi istasyonlar kabul edilir.
     for hotspot in hotspots:
         if getattr(hotspot, "bypass_perp_filter", False):
-            hotspot.route_polyline_coords = []
+            hotspot.route_polyline_coords = None
         else:
             hotspot.route_polyline_coords = polyline_coords
 

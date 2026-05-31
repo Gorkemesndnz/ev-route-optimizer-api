@@ -298,6 +298,49 @@ async def test_snap_to_roads_success_updates_display_polyline_offline_fixture():
     assert display_polyline == polyline.encode(snapped_coords)
 
 
+@pytest.mark.asyncio
+async def test_snap_to_roads_empty_response_hard_fails():
+    from app.services.base_service import ExternalAPIError
+
+    original_polyline = polyline.encode([(41.0000, 29.0000), (41.0100, 29.0100)])
+
+    async def fake_snap_to_roads(points, interpolate):
+        return []
+
+    with pytest.raises(ExternalAPIError, match="zero points"):
+        await _snap_display_polyline_for_roads(original_polyline, fake_snap_to_roads)
+
+
+@pytest.mark.asyncio
+async def test_snap_to_roads_malformed_response_hard_fails():
+    from app.services.base_service import ExternalAPIError
+
+    original_polyline = polyline.encode([(41.0000, 29.0000), (41.0100, 29.0100)])
+
+    async def fake_snap_to_roads(points, interpolate):
+        return [{"placeId": "missing-location"}]
+
+    with pytest.raises(ExternalAPIError, match="malformed point"):
+        await _snap_display_polyline_for_roads(original_polyline, fake_snap_to_roads)
+
+
+@pytest.mark.asyncio
+async def test_snap_to_roads_partial_response_hard_fails():
+    from app.services.base_service import ExternalAPIError
+
+    original_polyline = polyline.encode([
+        (41.0000, 29.0000),
+        (41.0100, 29.0100),
+        (41.0200, 29.0200),
+    ])
+
+    async def fake_snap_to_roads(points, interpolate):
+        return [{"location": {"latitude": 41.0005, "longitude": 29.0005}}]
+
+    with pytest.raises(ExternalAPIError, match="partial geometry"):
+        await _snap_display_polyline_for_roads(original_polyline, fake_snap_to_roads)
+
+
 def test_unknown_kw_station_remains_candidate_with_conservative_planning_power():
     station = NormalizedStation(
         source_provider="google",

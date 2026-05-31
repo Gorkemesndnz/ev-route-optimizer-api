@@ -313,6 +313,20 @@ def test_align_station_results_to_hotspots_fails_when_match_is_stale():
         _align_station_results_to_hotspots(hotspots, [stale_result])
 
 
+@pytest.mark.parametrize("drift_km", [50.0, 80.0])
+def test_align_station_results_to_hotspots_fails_for_practical_bad_drift(drift_km):
+    hotspots = [
+        SimpleNamespace(distance_from_start_km=100.0),
+    ]
+    stale_result = SimpleNamespace(
+        hotspot=SimpleNamespace(distance_from_start_km=100.0 + drift_km),
+        best_station=object(),
+    )
+
+    with pytest.raises(ValueError, match="drift exceeds tolerance"):
+        _align_station_results_to_hotspots(hotspots, [stale_result])
+
+
 @pytest.mark.asyncio
 async def test_find_best_route_passes_user_waypoints_to_initial_provider(monkeypatch):
     calls = {}

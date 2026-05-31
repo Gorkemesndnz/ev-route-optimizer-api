@@ -47,6 +47,7 @@ from app.routing import (
 )
 from app.services.weather_service import WeatherService
 from app.services.google_service import google_maps
+from app.services.base_service import ExternalAPIError
 from app.utils.logger import get_logger
 from app.constants import (
     HARD_MIN_SOC,
@@ -93,7 +94,7 @@ logger = get_logger("route_planner")
 weather_service = WeatherService()
 DEFAULT_MAX_LOGGED_STATION_CANDIDATES = 50
 DEFAULT_MAX_LOGGED_SEGMENT_FEATURES = 80
-MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM = 120.0
+MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM = 40.0
 
 
 # =============================================================================
@@ -248,61 +249,72 @@ def _combine_final_route_waypoints(user_waypoints, station_points) -> List[GeoPo
 
 
 async def _snap_display_polyline_for_roads(polyline: str, snap_to_roads) -> tuple[str, bool]:
-    """Return the display polyline after a successful Roads snap, preserving fail-soft behavior."""
-    display_polyline = polyline
-    snap_called = False
+    """Return the display polyline after an all-or-nothing Roads snap."""
     if not polyline:
-        return display_polyline, snap_called
+        raise ExternalAPIError("SnapToRoads", 502, "Route polyline is empty")
 
     try:
         import polyline as polyline_lib
 
         decoded = polyline_lib.decode(polyline)
-        if not decoded:
-            return display_polyline, snap_called
-
-        sample_interval_km = 5.0
-        max_snap_points = 400
-
-        sampled_points: List[GeoPoint] = []
-        if len(decoded) <= max_snap_points:
-            sampled_points = [GeoPoint(lat=lat, lon=lon) for lat, lon in decoded]
-        else:
-            from app.utils.geo import haversine_km
-
-            accumulated = 0.0
-            sampled_points.append(GeoPoint(lat=decoded[0][0], lon=decoded[0][1]))
-            last_pt = decoded[0]
-            for lat, lon in decoded[1:]:
-                accumulated += haversine_km(last_pt[0], last_pt[1], lat, lon)
-                if accumulated >= sample_interval_km:
-                    sampled_points.append(GeoPoint(lat=lat, lon=lon))
-                    accumulated = 0.0
-                last_pt = (lat, lon)
-
-            if (decoded[-1][0], decoded[-1][1]) != (sampled_points[-1].lat, sampled_points[-1].lon):
-                sampled_points.append(GeoPoint(lat=decoded[-1][0], lon=decoded[-1][1]))
-
-        snap_called = True
-        snapped = await snap_to_roads(sampled_points, interpolate=True)
-        if not snapped:
-            return display_polyline, snap_called
-
-        snapped_coords = [
-            (sp["location"]["latitude"], sp["location"]["longitude"])
-            for sp in snapped
-            if "location" in sp
-        ]
-        if snapped_coords:
-            display_polyline = polyline_lib.encode(snapped_coords)
-            logger.info(
-                f"Polyline snapped to roads: {len(decoded)} -> {len(sampled_points)} sampled "
-                f"-> {len(snapped_coords)} snapped points"
-            )
     except Exception as e:
-        logger.warning(f"Snap-to-roads failed, keeping original polyline: {e}")
+        raise ExternalAPIError("SnapToRoads", 502, "Route polyline could not be decoded") from e
 
-    return display_polyline, snap_called
+    if not decoded:
+        raise ExternalAPIError("SnapToRoads", 502, "Route polyline decoded to zero points")
+
+    sample_interval_km = 5.0
+    max_snap_points = 400
+
+    sampled_points: List[GeoPoint] = []
+    if len(decoded) <= max_snap_points:
+        sampled_points = [GeoPoint(lat=lat, lon=lon) for lat, lon in decoded]
+    else:
+        from app.utils.geo import haversine_km
+
+        accumulated = 0.0
+        sampled_points.append(GeoPoint(lat=decoded[0][0], lon=decoded[0][1]))
+        last_pt = decoded[0]
+        for lat, lon in decoded[1:]:
+            accumulated += haversine_km(last_pt[0], last_pt[1], lat, lon)
+            if accumulated >= sample_interval_km:
+                sampled_points.append(GeoPoint(lat=lat, lon=lon))
+                accumulated = 0.0
+            last_pt = (lat, lon)
+
+        if (decoded[-1][0], decoded[-1][1]) != (sampled_points[-1].lat, sampled_points[-1].lon):
+            sampled_points.append(GeoPoint(lat=decoded[-1][0], lon=decoded[-1][1]))
+
+    snapped = await snap_to_roads(sampled_points, interpolate=True)
+    if not snapped:
+        raise ExternalAPIError("SnapToRoads", 502, "snapToRoads returned zero points")
+
+    snapped_coords = []
+    for sp in snapped:
+        location = sp.get("location") if isinstance(sp, dict) else None
+        if not isinstance(location, dict):
+            raise ExternalAPIError("SnapToRoads", 502, "snapToRoads returned malformed point")
+        try:
+            snapped_coords.append((location["latitude"], location["longitude"]))
+        except KeyError as e:
+            raise ExternalAPIError("SnapToRoads", 502, "snapToRoads point is missing coordinates") from e
+
+    if len(snapped_coords) < max(2, len(sampled_points)):
+        raise ExternalAPIError(
+            "SnapToRoads",
+            502,
+            (
+                "snapToRoads returned partial geometry: "
+                f"{len(snapped_coords)} snapped for {len(sampled_points)} sampled points"
+            )
+        )
+
+    display_polyline = polyline_lib.encode(snapped_coords)
+    logger.info(
+        f"Polyline snapped to roads: {len(decoded)} -> {len(sampled_points)} sampled "
+        f"-> {len(snapped_coords)} snapped points"
+    )
+    return display_polyline, True
 
 
 def _station_charger_type(station) -> str:
@@ -1645,6 +1657,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
 
         return response
         
+    except ExternalAPIError:
+        raise
     except Exception as e:
         logger.exception(f"Route planning failed: {e}")
         return create_error_response("error_unknown", str(e))
