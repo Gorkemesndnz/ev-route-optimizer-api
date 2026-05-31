@@ -459,6 +459,54 @@ class TestManualSocContract:
         assert req.charge_min_soc_percent == 5.0
         assert req.charge_target_soc_percent == 80.0
 
+    @pytest.mark.parametrize("charge_min", [5.0, 25.0, 40.0])
+    def test_manual_station_arrival_soc_5_to_40_is_accepted(
+        self,
+        istanbul_ankara_request_payload,
+        charge_min,
+    ):
+        payload = {
+            **istanbul_ankara_request_payload,
+            "smart_plan_enabled": False,
+            "charge_min_soc_percent": charge_min,
+            "charge_target_soc_percent": 80.0,
+        }
+
+        req = RouteRequest(**payload)
+
+        assert req.charge_min_soc_percent == charge_min
+
+    @pytest.mark.parametrize("charge_target", [50.0, 80.0, 100.0])
+    def test_manual_station_departure_soc_50_to_100_is_accepted(
+        self,
+        istanbul_ankara_request_payload,
+        charge_target,
+    ):
+        payload = {
+            **istanbul_ankara_request_payload,
+            "smart_plan_enabled": False,
+            "charge_min_soc_percent": 5.0,
+            "charge_target_soc_percent": charge_target,
+        }
+
+        req = RouteRequest(**payload)
+
+        assert req.charge_target_soc_percent == charge_target
+
+    def test_manual_station_soc_requires_20_point_spread(
+        self,
+        istanbul_ankara_request_payload,
+    ):
+        payload = {
+            **istanbul_ankara_request_payload,
+            "smart_plan_enabled": False,
+            "charge_min_soc_percent": 35.0,
+            "charge_target_soc_percent": 50.0,
+        }
+
+        with pytest.raises(ValidationError):
+            RouteRequest(**payload)
+
 
 # =============================================================================
 # F9: PARETO REGRESSION GATE

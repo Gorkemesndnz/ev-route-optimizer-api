@@ -1,6 +1,7 @@
 import urllib.parse
 import time
 import math
+import asyncio
 from dataclasses import dataclass, field
 from typing import List, Optional, Literal, Dict, Any, Set, Tuple
 from app.services.base_service import BaseService, ExternalAPIError
@@ -16,6 +17,7 @@ TrafficModel = Literal["best_guess", "pessimistic", "optimistic"]
 
 # Kendi Google Places önbelleğimiz (Backend Map Caching)
 GLOBAL_GOOGLE_STATIONS_CACHE: Dict[str, dict] = {}
+GLOBAL_GOOGLE_STATIONS_CACHE_LOCK = asyncio.Lock()
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0 # Dünya yarıçapı (km)
@@ -395,7 +397,8 @@ class GoogleMapsService(BaseService):
                 
                 # Global Cache'e ekle (Map için)
                 if legacy_place["place_id"]:
-                    GLOBAL_GOOGLE_STATIONS_CACHE[legacy_place["place_id"]] = legacy_place
+                    async with GLOBAL_GOOGLE_STATIONS_CACHE_LOCK:
+                        GLOBAL_GOOGLE_STATIONS_CACHE[legacy_place["place_id"]] = legacy_place
                     
                 results.append(legacy_place)
             
@@ -634,7 +637,10 @@ class GoogleMapsService(BaseService):
                 logger.warning(f"Map fetch places api failed: {e}")
 
         matched_stations = []
-        for place_id, st in GLOBAL_GOOGLE_STATIONS_CACHE.items():
+        async with GLOBAL_GOOGLE_STATIONS_CACHE_LOCK:
+            cache_snapshot = list(GLOBAL_GOOGLE_STATIONS_CACHE.items())
+
+        for place_id, st in cache_snapshot:
             loc = st.get("geometry", {}).get("location", {})
             st_lat, st_lon = loc.get("lat"), loc.get("lng")
             if st_lat is None or st_lon is None:
