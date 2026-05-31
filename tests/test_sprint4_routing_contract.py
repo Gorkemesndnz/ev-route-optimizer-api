@@ -152,6 +152,30 @@ async def test_google_directions_provider_returns_canonical_routes():
     assert calls["alternatives"] is True
 
 
+@pytest.mark.asyncio
+async def test_google_directions_provider_maps_waypoint_limit_to_typed_error():
+    async def fake_get_route_alternatives_cached(**_kwargs):
+        return {
+            "status": "MAX_WAYPOINTS_EXCEEDED",
+            "error_message": "Too many waypoints in request",
+            "routes": [],
+        }
+
+    provider = GoogleDirectionsProvider(
+        maps_service=SimpleNamespace(get_route_alternatives_cached=fake_get_route_alternatives_cached)
+    )
+
+    with pytest.raises(ExternalAPIError) as exc_info:
+        await provider.get_route_alternatives(
+            start=GeoPoint(lat=41.0, lon=29.0),
+            end=GeoPoint(lat=41.2, lon=29.2),
+            waypoints=[GeoPoint(lat=41.1, lon=29.1)],
+        )
+
+    assert exc_info.value.code == "TOO_MANY_WAYPOINTS"
+    assert exc_info.value.status_code == 400
+
+
 def test_route_selector_analysis_exposes_canonical_route():
     analysis = route_selector._analyze_route(_google_route(), index=0)
 
@@ -274,6 +298,45 @@ async def test_route_selector_falls_back_to_directions_when_routes_primary_fails
 
     assert result["selected_route"]["summary"] == "fallback"
     assert result["routing_provider"] == "google_directions"
+
+
+@pytest.mark.asyncio
+async def test_route_selector_does_not_fallback_when_primary_reports_waypoint_limit(monkeypatch):
+    class WaypointLimitedPrimary:
+        provider_name = "google_routes"
+
+        async def get_route_alternatives(self, **_kwargs):
+            raise ExternalAPIError(
+                "GoogleRoutes",
+                400,
+                "MAX_WAYPOINTS_EXCEEDED: intermediates limit exceeded",
+            )
+
+    class UnexpectedFallback:
+        provider_name = "google_directions"
+
+        async def get_route_alternatives(self, **_kwargs):
+            raise AssertionError("fallback should not be called for waypoint limit")
+
+    monkeypatch.setattr(
+        route_selector,
+        "pricing_service",
+        SimpleNamespace(get_average_dc_price=lambda: 1.0),
+    )
+
+    with pytest.raises(ExternalAPIError) as exc_info:
+        await route_selector.find_best_route(
+            origin=GeoPoint(lat=41.0, lon=29.0),
+            destination=GeoPoint(lat=41.2, lon=29.2),
+            vehicle_model_id="test",
+            strategy=route_selector.RouteStrategy.FASTEST,
+            routing_provider=WaypointLimitedPrimary(),
+            fallback_provider=UnexpectedFallback(),
+            waypoints=[GeoPoint(lat=41.1, lon=29.1)],
+            vehicle_spec=SimpleNamespace(battery_capacity_kwh=60),
+        )
+
+    assert exc_info.value.code == "TOO_MANY_WAYPOINTS"
 
 
 def test_align_station_results_to_hotspots_reorders_by_route_distance():

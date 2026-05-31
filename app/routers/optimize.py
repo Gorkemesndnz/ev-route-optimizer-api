@@ -47,6 +47,8 @@ def _create_error_response(
 
 
 def _external_api_error_code(error: ExternalAPIError) -> str:
+    if getattr(error, "code", None):
+        return error.code
     if error.source == "SnapToRoads":
         return "SNAP_TO_ROADS_FAILED"
     if error.source == "PolylineCorridor":

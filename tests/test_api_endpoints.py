@@ -150,6 +150,33 @@ class TestRouteOptimizationValidation:
         assert body["success"] is False
         assert body["error"]["code"] == "HOTSPOT_ALIGNMENT_FAILED"
 
+    def test_optimize_route_too_many_waypoints_error_has_typed_code(self, client, monkeypatch):
+        from app.routers import optimize as optimize_router
+        from app.services.base_service import ExternalAPIError
+
+        async def fake_plan_route(request):
+            raise ExternalAPIError(
+                "GoogleDirections",
+                400,
+                "MAX_WAYPOINTS_EXCEEDED",
+                code="TOO_MANY_WAYPOINTS",
+            )
+
+        monkeypatch.setattr(optimize_router, "plan_route", fake_plan_route)
+
+        response = client.post("/optimize_route", json={
+            "start_location": {"lat": ISTANBUL_LAT, "lon": ISTANBUL_LON},
+            "end_location": {"lat": ANKARA_LAT, "lon": ANKARA_LON},
+            "waypoints": [{"lat": 40.8438, "lon": 31.1565}],
+            "vehicle_model_id": "test_vehicle",
+            "current_soc_percent": 80,
+        })
+
+        assert response.status_code == 502
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "TOO_MANY_WAYPOINTS"
+
 
 # =============================================================================
 # GRUP 3: FEEDBACK & SWITCH — Validation

@@ -7,7 +7,7 @@ from typing import List, Optional, Protocol
 
 from app.models import GeoPoint
 from app.routing.canonical import CanonicalRoute
-from app.services.base_service import BaseService
+from app.services.base_service import BaseService, ExternalAPIError
 from app.services.google_service import google_maps
 from app.utils.config_manager import config
 
@@ -78,6 +78,13 @@ class GoogleDirectionsProvider:
         status = response.get("status")
         if status != "OK":
             error_msg = response.get("error_message", "Unknown route provider error")
+            if _is_waypoint_limit_status(status, error_msg):
+                raise ExternalAPIError(
+                    self.provider_name,
+                    400,
+                    f"status={status}, error={error_msg}",
+                    code="TOO_MANY_WAYPOINTS",
+                )
             raise ValueError(f"Google Directions API error: {status} - {error_msg}")
 
         return [
@@ -146,6 +153,13 @@ class GoogleRoutesProvider:
 
         routes = response.get("routes", []) if isinstance(response, dict) else []
         if not routes:
+            if isinstance(response, dict) and _is_waypoint_limit_status("", response.get("error", "")):
+                raise ExternalAPIError(
+                    self.provider_name,
+                    400,
+                    "Routes API waypoint/intermediate limit exceeded",
+                    code="TOO_MANY_WAYPOINTS",
+                )
             raise ValueError("Google Routes API returned no routes")
 
         canonical_routes = [
@@ -202,6 +216,15 @@ def _build_google_routes_body(
         body["intermediates"] = [_routes_waypoint(point) for point in waypoints]
 
     return body
+
+
+def _is_waypoint_limit_status(status: object, detail: object = "") -> bool:
+    text = f"{status or ''} {detail or ''}".upper()
+    return (
+        "MAX_WAYPOINTS_EXCEEDED" in text
+        or ("WAYPOINT" in text and "EXCEEDED" in text)
+        or ("INTERMEDIATE" in text and ("EXCEEDED" in text or "LIMIT" in text))
+    )
 
 
 def _routes_waypoint(point: GeoPoint) -> dict:

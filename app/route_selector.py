@@ -37,6 +37,7 @@ from app.routing import (
     GoogleRoutesProvider,
     SegmentFeatureBuilder,
 )
+from app.services.base_service import ExternalAPIError
 from app.services.pricing_service import pricing_service
 from app.infrastructure.vehicle_catalog import get_vehicle_model
 from app.utils.config_manager import config
@@ -467,6 +468,8 @@ async def _get_canonical_routes_with_fallback(
             return routes, getattr(primary, "provider_name", "routing_provider")
         raise ValueError("primary provider returned no routes")
     except Exception as exc:
+        if _is_waypoint_limit_exception(exc):
+            raise _to_waypoint_limit_error(exc) from exc
         if routing_provider is not None and fallback_provider is None:
             raise
         logger.warning(
@@ -475,18 +478,45 @@ async def _get_canonical_routes_with_fallback(
             error=str(exc),
         )
 
-    routes = await fallback.get_route_alternatives(
-        start=start,
-        end=end,
-        alternatives=alternatives,
-        departure_time=departure_time,
-        traffic_model="best_guess",
-        avoidances=avoidances,
-        waypoints=waypoints,
-    )
+    try:
+        routes = await fallback.get_route_alternatives(
+            start=start,
+            end=end,
+            alternatives=alternatives,
+            departure_time=departure_time,
+            traffic_model="best_guess",
+            avoidances=avoidances,
+            waypoints=waypoints,
+        )
+    except Exception as exc:
+        if _is_waypoint_limit_exception(exc):
+            raise _to_waypoint_limit_error(exc) from exc
+        raise
     if not routes:
         raise ValueError("Fallback routing provider returned no routes")
     return routes, getattr(fallback, "provider_name", "fallback_provider")
+
+
+def _is_waypoint_limit_exception(exc: Exception) -> bool:
+    if isinstance(exc, ExternalAPIError) and exc.code == "TOO_MANY_WAYPOINTS":
+        return True
+    text = f"{getattr(exc, 'detail', '')} {str(exc)}".upper()
+    return (
+        "MAX_WAYPOINTS_EXCEEDED" in text
+        or ("WAYPOINT" in text and "EXCEEDED" in text)
+        or ("INTERMEDIATE" in text and ("EXCEEDED" in text or "LIMIT" in text))
+    )
+
+
+def _to_waypoint_limit_error(exc: Exception) -> ExternalAPIError:
+    source = getattr(exc, "source", "GoogleRoutes")
+    status_code = getattr(exc, "status_code", 400)
+    return ExternalAPIError(
+        str(source),
+        int(status_code) if isinstance(status_code, int) else 400,
+        "Waypoint limit exceeded by routing provider",
+        code="TOO_MANY_WAYPOINTS",
+    )
 
 
 async def find_best_route(
@@ -706,6 +736,8 @@ async def find_best_route(
             "routing_provider": routing_provider_name,
         }
         
+    except ExternalAPIError:
+        raise
     except ValueError:
         # Bilinen hatalar - tekrar raise et
         raise

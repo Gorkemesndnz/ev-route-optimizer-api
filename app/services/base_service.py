@@ -34,11 +34,12 @@ async def close_global_client():
 # ÖZEL HATA SINIFI
 # ==========================================
 class ExternalAPIError(Exception):
-    def __init__(self, source: str, status_code: int, detail: str):
+    def __init__(self, source: str, status_code: int, detail: str, code: str | None = None):
         super().__init__(f"[{source}] API Error {status_code}: {detail}")
         self.source = source
         self.status_code = status_code
         self.detail = detail
+        self.code = code
 
 
 # ==========================================
