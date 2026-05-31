@@ -299,35 +299,39 @@ async def test_snap_to_roads_success_updates_display_polyline_offline_fixture():
 
 
 @pytest.mark.asyncio
-async def test_snap_to_roads_empty_response_hard_fails():
-    from app.services.base_service import ExternalAPIError
-
+async def test_snap_to_roads_empty_response_falls_back_to_canonical_polyline():
     original_polyline = polyline.encode([(41.0000, 29.0000), (41.0100, 29.0100)])
 
     async def fake_snap_to_roads(points, interpolate):
         return []
 
-    with pytest.raises(ExternalAPIError, match="zero points"):
-        await _snap_display_polyline_for_roads(original_polyline, fake_snap_to_roads)
+    display_polyline, snap_called = await _snap_display_polyline_for_roads(
+        original_polyline,
+        fake_snap_to_roads,
+    )
+
+    assert snap_called is False
+    assert display_polyline == original_polyline
 
 
 @pytest.mark.asyncio
-async def test_snap_to_roads_malformed_response_hard_fails():
-    from app.services.base_service import ExternalAPIError
-
+async def test_snap_to_roads_malformed_response_falls_back_to_canonical_polyline():
     original_polyline = polyline.encode([(41.0000, 29.0000), (41.0100, 29.0100)])
 
     async def fake_snap_to_roads(points, interpolate):
         return [{"placeId": "missing-location"}]
 
-    with pytest.raises(ExternalAPIError, match="malformed point"):
-        await _snap_display_polyline_for_roads(original_polyline, fake_snap_to_roads)
+    display_polyline, snap_called = await _snap_display_polyline_for_roads(
+        original_polyline,
+        fake_snap_to_roads,
+    )
+
+    assert snap_called is False
+    assert display_polyline == original_polyline
 
 
 @pytest.mark.asyncio
-async def test_snap_to_roads_partial_response_hard_fails():
-    from app.services.base_service import ExternalAPIError
-
+async def test_snap_to_roads_partial_response_falls_back_to_canonical_polyline():
     original_polyline = polyline.encode([
         (41.0000, 29.0000),
         (41.0100, 29.0100),
@@ -337,8 +341,42 @@ async def test_snap_to_roads_partial_response_hard_fails():
     async def fake_snap_to_roads(points, interpolate):
         return [{"location": {"latitude": 41.0005, "longitude": 29.0005}}]
 
-    with pytest.raises(ExternalAPIError, match="partial geometry"):
-        await _snap_display_polyline_for_roads(original_polyline, fake_snap_to_roads)
+    display_polyline, snap_called = await _snap_display_polyline_for_roads(
+        original_polyline,
+        fake_snap_to_roads,
+    )
+
+    assert snap_called is False
+    assert display_polyline == original_polyline
+
+
+@pytest.mark.asyncio
+async def test_snap_to_roads_provider_error_falls_back_to_canonical_polyline():
+    from app.services.base_service import ExternalAPIError
+
+    original_polyline = polyline.encode([(41.0000, 29.0000), (41.0100, 29.0100)])
+
+    async def fake_snap_to_roads(points, interpolate):
+        raise ExternalAPIError("GoogleRoadsAPI", 503, "chunk failed")
+
+    display_polyline, snap_called = await _snap_display_polyline_for_roads(
+        original_polyline,
+        fake_snap_to_roads,
+    )
+
+    assert snap_called is False
+    assert display_polyline == original_polyline
+
+
+@pytest.mark.asyncio
+async def test_snap_to_roads_empty_canonical_polyline_hard_fails():
+    from app.services.base_service import ExternalAPIError
+
+    async def fake_snap_to_roads(points, interpolate):
+        return []
+
+    with pytest.raises(ExternalAPIError, match="Route polyline is empty"):
+        await _snap_display_polyline_for_roads("", fake_snap_to_roads)
 
 
 def test_unknown_kw_station_remains_candidate_with_conservative_planning_power():

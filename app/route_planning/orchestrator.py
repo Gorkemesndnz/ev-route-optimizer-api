@@ -257,7 +257,7 @@ def _combine_final_route_waypoints(user_waypoints, station_points) -> List[GeoPo
 
 
 async def _snap_display_polyline_for_roads(polyline: str, snap_to_roads) -> tuple[str, bool]:
-    """Return the display polyline after an all-or-nothing Roads snap."""
+    """Return snapped display polyline, falling back to canonical polyline on Roads failures."""
     if not polyline:
         raise ExternalAPIError("SnapToRoads", 502, "Route polyline is empty")
 
@@ -293,28 +293,32 @@ async def _snap_display_polyline_for_roads(polyline: str, snap_to_roads) -> tupl
         if (decoded[-1][0], decoded[-1][1]) != (sampled_points[-1].lat, sampled_points[-1].lon):
             sampled_points.append(GeoPoint(lat=decoded[-1][0], lon=decoded[-1][1]))
 
-    snapped = await snap_to_roads(sampled_points, interpolate=True)
+    def fallback_to_canonical(reason: str) -> tuple[str, bool]:
+        logger.warning(f"snapToRoads display fallback to canonical polyline: {reason}")
+        return polyline, False
+
+    try:
+        snapped = await snap_to_roads(sampled_points, interpolate=True)
+    except Exception as e:
+        return fallback_to_canonical(f"provider error: {e}")
+
     if not snapped:
-        raise ExternalAPIError("SnapToRoads", 502, "snapToRoads returned zero points")
+        return fallback_to_canonical("snapToRoads returned zero points")
 
     snapped_coords = []
     for sp in snapped:
         location = sp.get("location") if isinstance(sp, dict) else None
         if not isinstance(location, dict):
-            raise ExternalAPIError("SnapToRoads", 502, "snapToRoads returned malformed point")
+            return fallback_to_canonical("snapToRoads returned malformed point")
         try:
             snapped_coords.append((location["latitude"], location["longitude"]))
-        except KeyError as e:
-            raise ExternalAPIError("SnapToRoads", 502, "snapToRoads point is missing coordinates") from e
+        except KeyError:
+            return fallback_to_canonical("snapToRoads point is missing coordinates")
 
     if len(snapped_coords) < max(2, len(sampled_points)):
-        raise ExternalAPIError(
-            "SnapToRoads",
-            502,
-            (
-                "snapToRoads returned partial geometry: "
-                f"{len(snapped_coords)} snapped for {len(sampled_points)} sampled points"
-            )
+        return fallback_to_canonical(
+            "snapToRoads returned partial geometry: "
+            f"{len(snapped_coords)} snapped for {len(sampled_points)} sampled points"
         )
 
     display_polyline = polyline_lib.encode(snapped_coords)

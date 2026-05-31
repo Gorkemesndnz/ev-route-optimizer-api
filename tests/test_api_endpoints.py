@@ -170,6 +170,91 @@ class TestFeedbackValidation:
         })
         assert response.status_code == 422
 
+    def test_station_feedback_recompute_error_keeps_feedback_before_502(self, client, monkeypatch):
+        from app.routers import stations as stations_router
+        from app.services.base_service import ExternalAPIError
+
+        events = []
+
+        async def fake_report_station(station_id, user_id, reason):
+            events.append(("feedback", station_id, reason))
+            return {"message": "Feedback kaydedildi.", "is_blocked": False}
+
+        async def fake_plan_route(request):
+            events.append(("plan_route", request.vehicle_model_id))
+            raise ExternalAPIError("SnapToRoads", 502, "snap failed")
+
+        monkeypatch.setattr(stations_router.feedback_manager, "report_station", fake_report_station)
+        monkeypatch.setattr(stations_router, "plan_route", fake_plan_route)
+
+        response = client.post("/station_feedback", json={
+            "station_id": "station_123",
+            "feedback_type": "station_broken",
+            "current_location": {"lat": ISTANBUL_LAT, "lon": ISTANBUL_LON},
+            "current_soc_percent": 80,
+            "destination": {"lat": ANKARA_LAT, "lon": ANKARA_LON},
+            "vehicle_model_id": "test_vehicle",
+        })
+
+        assert response.status_code == 502
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "EXTERNAL_API_ERROR"
+        assert events == [
+            ("feedback", "station_123", "station_broken"),
+            ("plan_route", "test_vehicle"),
+        ]
+
+    def test_switch_station_recompute_error_keeps_feedback_before_502(self, client, monkeypatch):
+        from app.routers import stations as stations_router
+        from app.services.base_service import ExternalAPIError
+
+        events = []
+
+        async def fake_report_station(station_id, user_id, reason):
+            events.append(("feedback", station_id, reason))
+            return {"message": "Feedback kaydedildi.", "is_blocked": False}
+
+        async def fake_plan_route(request):
+            events.append(("plan_route", request.vehicle_model_id))
+            raise ExternalAPIError("PolylineCorridor", 502, "corridor failed")
+
+        monkeypatch.setattr(stations_router.feedback_manager, "report_station", fake_report_station)
+        monkeypatch.setattr(stations_router, "plan_route", fake_plan_route)
+
+        response = client.post("/switch_station", json={
+            "original_station_id": "old_station",
+            "new_station_id": "new_station",
+            "new_station": {
+                "id": "new_station",
+                "name": "New Station",
+                "location": {"lat": ISTANBUL_LAT, "lon": ISTANBUL_LON},
+                "connectors": [
+                    {
+                        "plug_type": "CCS2",
+                        "charger_type": "DC",
+                        "power_kw": 120,
+                        "status": "Available",
+                    }
+                ],
+            },
+            "leg_index": 0,
+            "current_location": {"lat": ISTANBUL_LAT, "lon": ISTANBUL_LON},
+            "current_soc_percent": 80,
+            "destination": {"lat": ANKARA_LAT, "lon": ANKARA_LON},
+            "vehicle_model_id": "test_vehicle",
+            "battery_capacity_kwh": 60,
+        })
+
+        assert response.status_code == 502
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "EXTERNAL_API_ERROR"
+        assert events == [
+            ("feedback", "old_station", "user_switched"),
+            ("plan_route", "test_vehicle"),
+        ]
+
 
 class TestMapStationsStatusSemantics:
     def test_map_stations_empty_result_is_success(self, client, monkeypatch):
