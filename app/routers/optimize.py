@@ -58,6 +58,12 @@ def _external_api_error_code(error: ExternalAPIError) -> str:
     return "EXTERNAL_API_ERROR"
 
 
+def _external_api_status_code(error: ExternalAPIError) -> int:
+    if _external_api_error_code(error) == "TOO_MANY_WAYPOINTS":
+        return 400
+    return 502
+
+
 def _route_plan_error_status(plan: MultiStopRouteResponse) -> Optional[tuple[int, str]]:
     if plan.status == "NO_ROUTE_WITH_CONSTRAINTS":
         return 422, "NO_ROUTE_WITH_CONSTRAINTS"
@@ -125,7 +131,7 @@ async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteRes
     except ExternalAPIError as e:
         logger.error(f"[{request_id}] External API error", api_source=e.source, status_code=e.status_code, detail=str(e))
         return JSONResponse(
-            status_code=502,
+            status_code=_external_api_status_code(e),
             content=ApiResponse.fail(
                 f"Dış API hatası ({e.source}): {str(e)}",
                 code=_external_api_error_code(e),

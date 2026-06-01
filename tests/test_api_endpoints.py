@@ -203,7 +203,7 @@ class TestRouteOptimizationValidation:
             "current_soc_percent": 80,
         })
 
-        assert response.status_code == 502
+        assert response.status_code == 400
         body = response.json()
         assert body["success"] is False
         assert body["error"]["code"] == "TOO_MANY_WAYPOINTS"

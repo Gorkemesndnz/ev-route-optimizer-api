@@ -221,12 +221,22 @@ def _build_google_routes_body(
 
 
 def _is_waypoint_limit_status(status: object, detail: object = "") -> bool:
-    text = f"{status or ''} {detail or ''}".upper()
+    text = f"{_error_text(status)} {_error_text(detail)}".upper()
     return (
         "MAX_WAYPOINTS_EXCEEDED" in text
         or ("WAYPOINT" in text and "EXCEEDED" in text)
         or ("INTERMEDIATE" in text and ("EXCEEDED" in text or "LIMIT" in text))
     )
+
+
+def _error_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return " ".join(_error_text(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return " ".join(_error_text(v) for v in value)
+    return str(value)
 
 
 def _routes_waypoint(point: GeoPoint) -> dict:

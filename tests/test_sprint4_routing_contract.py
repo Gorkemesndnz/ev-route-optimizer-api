@@ -240,6 +240,31 @@ async def test_google_directions_provider_maps_waypoint_limit_to_typed_error():
     assert exc_info.value.status_code == 400
 
 
+@pytest.mark.asyncio
+async def test_google_routes_provider_maps_nested_waypoint_limit_error():
+    class FakeService:
+        async def request(self, **_kwargs):
+            return {
+                "error": {
+                    "code": 400,
+                    "status": "INVALID_ARGUMENT",
+                    "message": "Number of intermediates exceeds the supported limit.",
+                }
+            }
+
+    provider = GoogleRoutesProvider(service=FakeService(), api_key="test-key")
+
+    with pytest.raises(ExternalAPIError) as exc_info:
+        await provider.get_route_alternatives(
+            start=GeoPoint(lat=41.0, lon=29.0),
+            end=GeoPoint(lat=41.2, lon=29.2),
+            waypoints=[GeoPoint(lat=41.1, lon=29.1)],
+        )
+
+    assert exc_info.value.code == "TOO_MANY_WAYPOINTS"
+    assert exc_info.value.status_code == 400
+
+
 def test_route_selector_analysis_exposes_canonical_route():
     analysis = route_selector._analyze_route(_google_route(), index=0)
 
