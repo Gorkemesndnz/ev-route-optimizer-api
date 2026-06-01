@@ -733,6 +733,7 @@ async def find_best_route(
             "traffic_ratio": selected["traffic_ratio"],
             "estimated_consumption_kwh": selected["estimated_consumption_kwh"],
             "polyline": selected["polyline"],
+            "polyline_quality": getattr(selected.get("canonical_route"), "polyline_quality", "overview"),
             "routing_provider": routing_provider_name,
         }
         

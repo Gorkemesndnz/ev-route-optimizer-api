@@ -329,6 +329,19 @@ async def _snap_display_polyline_for_roads(polyline: str, snap_to_roads) -> tupl
     return display_polyline, True
 
 
+async def _resolve_display_polyline(
+    polyline: str,
+    polyline_quality: str,
+    snap_to_roads,
+) -> tuple[str, bool]:
+    """Use provider-grade geometry directly; snap only low-detail overview fallback."""
+    quality = (polyline_quality or "overview").lower()
+    if quality in {"high_quality", "step"}:
+        logger.info(f"Using provider {quality} polyline for display; Roads snap skipped")
+        return polyline, False
+    return await _snap_display_polyline_for_roads(polyline, snap_to_roads)
+
+
 def _station_charger_type(station) -> str:
     power_kw = float(getattr(station, "power_kw", 0.0) or 0.0)
     if getattr(station, "is_dc", False):
@@ -981,6 +994,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         if not canonical_route:
             canonical_route = CanonicalRoute.from_google_directions_route(selected_route, index=0)
         polyline = canonical_route.polyline or route_result.get("polyline", "")
+        polyline_quality = getattr(canonical_route, "polyline_quality", route_result.get("polyline_quality", "overview"))
+        provider_versions["route_polyline_quality"] = str(polyline_quality)
         google_legs = selected_route["legs"]
         first_leg = google_legs[0]
         last_leg = google_legs[-1]
@@ -1360,6 +1375,8 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                     start_coords = first_leg["start_location"]
                     end_coords = last_leg["end_location"]
                     polyline = canonical_route.polyline
+                    polyline_quality = getattr(canonical_route, "polyline_quality", rerouted.get("polyline_quality", "overview"))
+                    provider_versions["route_polyline_quality"] = str(polyline_quality)
                     route_distance_km = canonical_route.distance_km
                     route_duration_min = canonical_route.duration_in_traffic_min or canonical_route.duration_min
                     traffic_ratio = canonical_route.traffic_ratio
@@ -1452,7 +1469,11 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
         # Ham Directions polyline'ı bazen yol çizgisinden saparak görünür; snapToRoads
         # noktaları en yakın yol segmentine oturtur. Fail-soft: API başarısız olursa
         # canonical energy polyline korunur, sadece display_polyline güncellenir.
-        display_polyline, snap_called = await _snap_display_polyline_for_roads(polyline, google_maps.snap_to_roads)
+        display_polyline, snap_called = await _resolve_display_polyline(
+            polyline,
+            str(polyline_quality),
+            google_maps.snap_to_roads,
+        )
         if snap_called:
             _increment_call_count(call_counts, "google_roads_snap_to_roads")
 

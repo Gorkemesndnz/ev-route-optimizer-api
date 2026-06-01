@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import polyline
 import pytest
 
 from app.models import GeoPoint
@@ -78,8 +79,39 @@ def test_canonical_route_preserves_google_distance_duration_and_polyline():
     assert canonical.duration_in_traffic_min == pytest.approx(21.0)
     assert canonical.traffic_ratio == pytest.approx(21.0 / 18.0)
     assert canonical.polyline == "_p~iF~ps|U_ulLnnqC"
+    assert canonical.polyline_quality == "overview"
     assert len(canonical.legs) == 2
     assert canonical.legs[0].distance_km == pytest.approx(12.0)
+
+
+def test_canonical_route_prefers_directions_step_polylines_when_available():
+    step1 = polyline.encode([(41.0, 29.0), (41.05, 29.05), (41.1, 29.1)])
+    step2 = polyline.encode([(41.1, 29.1), (41.15, 29.15), (41.2, 29.2)])
+    route = _google_route()
+    route["overview_polyline"] = {"points": polyline.encode([(41.0, 29.0), (41.2, 29.2)])}
+    route["legs"][0]["steps"] = [{"polyline": {"points": step1}}]
+    route["legs"][1]["steps"] = [{"polyline": {"points": step2}}]
+
+    canonical = CanonicalRoute.from_google_directions_route(route, index=0)
+
+    assert canonical.polyline_quality == "step"
+    assert polyline.decode(canonical.polyline) == [
+        (41.0, 29.0),
+        (41.05, 29.05),
+        (41.1, 29.1),
+        (41.15, 29.15),
+        (41.2, 29.2),
+    ]
+
+
+def test_canonical_route_invalid_step_polyline_falls_back_to_overview_quality():
+    route = _google_route()
+    route["legs"][0]["steps"] = [{"polyline": {"points": "not-a-valid-polyline@@@"}}]
+
+    canonical = CanonicalRoute.from_google_directions_route(route, index=0)
+
+    assert canonical.polyline == "_p~iF~ps|U_ulLnnqC"
+    assert canonical.polyline_quality == "overview"
 
 
 def test_canonical_route_maps_google_routes_response():
@@ -93,6 +125,7 @@ def test_canonical_route_maps_google_routes_response():
     assert canonical.duration_min == pytest.approx(18.0)
     assert canonical.duration_in_traffic_min == pytest.approx(21.0)
     assert canonical.polyline == "_p~iF~ps|U_ulLnnqC"
+    assert canonical.polyline_quality == "high_quality"
     assert len(canonical.legs) == 2
     assert legacy["legs"][0]["steps"][0]["html_instructions"] == "O-5 Istanbul-Izmir Otoyolu"
 
@@ -122,6 +155,8 @@ async def test_google_routes_provider_request_body_and_field_mask():
     assert calls["headers"]["X-Goog-FieldMask"] == GOOGLE_ROUTES_FIELD_MASK
     assert calls["json"]["origin"]["location"]["latLng"]["latitude"] == pytest.approx(41.0)
     assert calls["json"]["destination"]["location"]["latLng"]["longitude"] == pytest.approx(29.2)
+    assert calls["json"]["polylineQuality"] == "HIGH_QUALITY"
+    assert calls["json"]["polylineEncoding"] == "ENCODED_POLYLINE"
     assert calls["json"]["routeModifiers"]["avoidTolls"] is True
     assert calls["json"]["routeModifiers"]["avoidHighways"] is False
     assert calls["json"]["routeModifiers"]["avoidFerries"] is True

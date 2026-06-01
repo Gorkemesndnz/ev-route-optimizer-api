@@ -195,6 +195,8 @@ def _build_google_routes_body(
         "origin": _routes_waypoint(start),
         "destination": _routes_waypoint(end),
         "travelMode": "DRIVE",
+        "polylineQuality": "HIGH_QUALITY",
+        "polylineEncoding": "ENCODED_POLYLINE",
         "routingPreference": "TRAFFIC_AWARE_OPTIMAL" if departure_time else "TRAFFIC_UNAWARE",
         "computeAlternativeRoutes": bool(alternatives and not waypoints),
         "routeModifiers": {

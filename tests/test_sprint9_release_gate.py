@@ -29,6 +29,7 @@ from app.optimization.modes import OptimizationMode
 from app.optimization.pareto_solver import ParetoSolver, StationOptimizationInput
 from app.route_planning.orchestrator import (
     _combine_final_route_waypoints,
+    _resolve_display_polyline,
     _snap_display_polyline_for_roads,
 )
 from app.route_planning.leg_builder import build_multi_legs
@@ -326,6 +327,48 @@ def test_final_reroute_keeps_user_waypoints_before_charging_station_waypoints():
     assert combined[0].lat == pytest.approx(40.8438)
     assert combined[1].lon == pytest.approx(30.3940)
     assert combined[2].lat == pytest.approx(40.9000)
+
+
+@pytest.mark.asyncio
+async def test_high_quality_provider_polyline_skips_roads_snap():
+    original_polyline = polyline.encode([(41.0000, 29.0000), (41.0100, 29.0100)])
+
+    async def fake_snap_to_roads(points, interpolate):
+        raise AssertionError("HIGH_QUALITY route geometry must not be overwritten by Roads snap")
+
+    display_polyline, snap_called = await _resolve_display_polyline(
+        original_polyline,
+        "high_quality",
+        fake_snap_to_roads,
+    )
+
+    assert snap_called is False
+    assert display_polyline == original_polyline
+
+
+@pytest.mark.asyncio
+async def test_overview_polyline_still_uses_roads_snap_fallback_path():
+    original_coords = [(41.0000, 29.0000), (41.0100, 29.0100)]
+    snapped_coords = [(41.0005, 29.0005), (41.0105, 29.0105)]
+    original_polyline = polyline.encode(original_coords)
+    calls = {"count": 0}
+
+    async def fake_snap_to_roads(points, interpolate):
+        calls["count"] += 1
+        return [
+            {"location": {"latitude": lat, "longitude": lon}}
+            for lat, lon in snapped_coords
+        ]
+
+    display_polyline, snap_called = await _resolve_display_polyline(
+        original_polyline,
+        "overview",
+        fake_snap_to_roads,
+    )
+
+    assert snap_called is True
+    assert calls["count"] == 1
+    assert display_polyline == polyline.encode(snapped_coords)
 
 
 @pytest.mark.asyncio

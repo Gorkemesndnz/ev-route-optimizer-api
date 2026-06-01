@@ -30,6 +30,7 @@ class CanonicalRoute:
     traffic_ratio: float
     polyline: str
     legs: List[CanonicalLeg]
+    polyline_quality: str = "overview"
     raw_route: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
@@ -39,6 +40,7 @@ class CanonicalRoute:
         index: int,
         provider: str = "google_directions",
     ) -> "CanonicalRoute":
+        route_polyline, route_polyline_quality = _directions_route_polyline_with_quality(route)
         legs = [
             _canonical_leg_from_google(leg=leg, index=leg_index)
             for leg_index, leg in enumerate(route.get("legs", []))
@@ -61,8 +63,9 @@ class CanonicalRoute:
             duration_min=duration_min,
             duration_in_traffic_min=duration_in_traffic_min,
             traffic_ratio=traffic_ratio,
-            polyline=route.get("overview_polyline", {}).get("points", ""),
+            polyline=route_polyline,
             legs=legs,
+            polyline_quality=route_polyline_quality,
             raw_route=route,
         )
 
@@ -116,6 +119,7 @@ class CanonicalRoute:
             traffic_ratio=traffic_ratio,
             polyline=route.get("polyline", {}).get("encodedPolyline", ""),
             legs=legs,
+            polyline_quality="high_quality",
             raw_route=route,
         )
 
@@ -159,6 +163,50 @@ def _canonical_leg_from_google(leg: Dict[str, Any], index: int) -> CanonicalLeg:
         duration_in_traffic_min=duration_in_traffic_min,
         raw_leg=leg,
     )
+
+
+def _directions_step_polylines(route: Dict[str, Any]) -> List[str]:
+    points: List[str] = []
+    for leg in route.get("legs", []) or []:
+        if not isinstance(leg, dict):
+            continue
+        for step in leg.get("steps", []) or []:
+            if not isinstance(step, dict):
+                continue
+            encoded = (step.get("polyline") or {}).get("points")
+            if encoded:
+                points.append(str(encoded))
+    return points
+
+
+def _directions_route_polyline_with_quality(route: Dict[str, Any]) -> tuple[str, str]:
+    overview = route.get("overview_polyline", {}).get("points", "")
+    step_polylines = _directions_step_polylines(route)
+    if not step_polylines:
+        return overview, "overview"
+
+    try:
+        import polyline as polyline_lib
+
+        coords = []
+        for encoded in step_polylines:
+            decoded = polyline_lib.decode(encoded)
+            if any(not _valid_lat_lng(lat, lon) for lat, lon in decoded):
+                return overview, "overview"
+            if coords and decoded and coords[-1] == decoded[0]:
+                coords.extend(decoded[1:])
+            else:
+                coords.extend(decoded)
+        if coords:
+            return polyline_lib.encode(coords), "step"
+    except Exception:
+        return overview, "overview"
+
+    return overview, "overview"
+
+
+def _valid_lat_lng(lat: float, lon: float) -> bool:
+    return -90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0
 
 
 def _canonical_leg_from_google_routes(leg: Dict[str, Any], index: int) -> CanonicalLeg:
