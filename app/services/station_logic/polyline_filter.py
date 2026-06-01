@@ -35,8 +35,13 @@ logger = get_logger("polyline_filter")
 # CONSTANTS
 # =============================================================================
 
-# Polyline'a maksimum dik mesafe (km).
+# Preferred strict route corridor distance (km).
 PERP_DISTANCE_THRESHOLD_KM = 1.0
+
+# If strict filtering removes every candidate, progressively relax the corridor.
+# Highway service areas and access roads can be a few km away from Google's
+# canonical road polyline, especially on sparse long-distance routes.
+RELAXED_PERP_DISTANCE_THRESHOLDS_KM = (PERP_DISTANCE_THRESHOLD_KM, 3.0, 5.0, 10.0)
 
 # Polyline örnekleme aralığı (km). 500 m: 1 km eşik için yeterli granularite,
 # perf için ham polyline'ı (5–15 bin nokta) seyrekleştirir.
@@ -137,3 +142,40 @@ def check_stations_on_polyline(
         min_distance_to_polyline_km(slat, slon, polyline_coords) <= max_perp_km
         for slat, slon in station_coords
     ]
+
+
+def check_stations_on_polyline_with_relaxed_fallback(
+    station_coords: List[Tuple[float, float]],
+    polyline_coords: Optional[List[Tuple[float, float]]],
+    thresholds_km: Tuple[float, ...] = RELAXED_PERP_DISTANCE_THRESHOLDS_KM,
+) -> Tuple[List[bool], Optional[float]]:
+    """
+    Apply the strict corridor first, then relax only if every candidate fails.
+
+    Returns:
+        (flags, threshold_used)
+
+    ``threshold_used`` is None when the route geometry is intentionally bypassed.
+    """
+    if not thresholds_km:
+        raise ValueError("At least one polyline corridor threshold is required")
+
+    if not station_coords:
+        return [], thresholds_km[0]
+    if polyline_coords is None:
+        return [True] * len(station_coords), None
+    if not polyline_coords:
+        raise ExternalAPIError("PolylineCorridor", 502, "Polyline corridor filter has no route geometry")
+
+    last_flags: List[bool] = []
+    for threshold_km in thresholds_km:
+        flags = check_stations_on_polyline(
+            station_coords,
+            polyline_coords,
+            max_perp_km=threshold_km,
+        )
+        if any(flags):
+            return flags, threshold_km
+        last_flags = flags
+
+    return last_flags, thresholds_km[-1]

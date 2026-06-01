@@ -172,9 +172,11 @@ class CorridorSearchResult:
 
 from app.services.station_logic.polyline_filter import (  # noqa: E402
     PERP_DISTANCE_THRESHOLD_KM,
+    RELAXED_PERP_DISTANCE_THRESHOLDS_KM,
     decode_route_polyline_coords as _decode_route_polyline_coords,
     min_distance_to_polyline_km as _min_distance_to_polyline_km,
     check_stations_on_polyline as _check_stations_on_polyline,
+    check_stations_on_polyline_with_relaxed_fallback as _check_stations_on_polyline_with_relaxed_fallback,
 )
 
 
@@ -673,7 +675,20 @@ class CorridorSearcher:
 
         # Polyline-perpendicular filter (Roads API yerine, geometrik)
         coords = [(lat, lng) for _, lat, lng, _ in pre_filtered]
-        on_route_flags = _check_stations_on_polyline(coords, hotspot.route_polyline_coords)
+        on_route_flags, corridor_threshold_km = _check_stations_on_polyline_with_relaxed_fallback(
+            coords,
+            hotspot.route_polyline_coords,
+        )
+        if (
+            corridor_threshold_km is not None
+            and corridor_threshold_km > PERP_DISTANCE_THRESHOLD_KM
+            and any(on_route_flags)
+        ):
+            logger.warning(
+                "Google station route corridor relaxed: "
+                f"{PERP_DISTANCE_THRESHOLD_KM}km -> {corridor_threshold_km}km "
+                f"(thresholds={RELAXED_PERP_DISTANCE_THRESHOLDS_KM})"
+            )
 
         filtered_stations = []
         for (station, station_lat, station_lng, distance), on_route in zip(pre_filtered, on_route_flags):
@@ -683,7 +698,11 @@ class CorridorSearcher:
                     "too_far_from_route",
                     _safe_reject_sample("google", station, "too_far_from_route", distance_km=round(distance, 2)),
                 )
-                logger.debug(f"Google station filtered (off-route, perp > {PERP_DISTANCE_THRESHOLD_KM}km): {station.get('name')}")
+                logger.debug(
+                    "Google station filtered "
+                    f"(off-route, perp > {corridor_threshold_km or PERP_DISTANCE_THRESHOLD_KM}km): "
+                    f"{station.get('name')}"
+                )
                 continue
             try:
 
@@ -884,7 +903,20 @@ class CorridorSearcher:
 
         # Polyline-perpendicular filter (Roads API yerine, geometrik)
         coords = [(lat, lon) for _, lat, lon, _, _, _ in pre_filtered]
-        on_route_flags = _check_stations_on_polyline(coords, hotspot.route_polyline_coords)
+        on_route_flags, corridor_threshold_km = _check_stations_on_polyline_with_relaxed_fallback(
+            coords,
+            hotspot.route_polyline_coords,
+        )
+        if (
+            corridor_threshold_km is not None
+            and corridor_threshold_km > PERP_DISTANCE_THRESHOLD_KM
+            and any(on_route_flags)
+        ):
+            logger.warning(
+                "OCM station route corridor relaxed: "
+                f"{PERP_DISTANCE_THRESHOLD_KM}km -> {corridor_threshold_km}km "
+                f"(thresholds={RELAXED_PERP_DISTANCE_THRESHOLDS_KM})"
+            )
 
         filtered_stations = []
         for (station, station_lat, station_lon, distance, power_kw, is_compatible), on_route in zip(pre_filtered, on_route_flags):
@@ -895,7 +927,11 @@ class CorridorSearcher:
                     "too_far_from_route",
                     _safe_reject_sample("ocm", station, "too_far_from_route", distance_km=round(distance, 2)),
                 )
-                logger.debug(f"OCM station filtered (off-route, perp > {PERP_DISTANCE_THRESHOLD_KM}km): {address_info.get('Title')}")
+                logger.debug(
+                    "OCM station filtered "
+                    f"(off-route, perp > {corridor_threshold_km or PERP_DISTANCE_THRESHOLD_KM}km): "
+                    f"{address_info.get('Title')}"
+                )
                 continue
             
             # Rating

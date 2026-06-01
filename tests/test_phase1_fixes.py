@@ -256,6 +256,56 @@ class TestPolylinePerpendicularFilter:
         # 1.0 km eşik → kabul
         assert _check_stations_on_polyline([station], polyline, max_perp_km=1.0) == [True]
 
+    def test_relaxed_corridor_keeps_strict_threshold_when_possible(self):
+        from app.services.station_logic.polyline_filter import (
+            check_stations_on_polyline_with_relaxed_fallback,
+        )
+
+        polyline = [(41.0000, 29.0000)]
+        strict_station = (41.0040, 29.0000)  # ~445m north
+        relaxed_station = (41.0300, 29.0000)  # ~3.3km north
+
+        flags, threshold = check_stations_on_polyline_with_relaxed_fallback(
+            [strict_station, relaxed_station],
+            polyline,
+        )
+
+        assert threshold == 1.0
+        assert flags == [True, False]
+
+    def test_relaxed_corridor_expands_when_strict_filter_eliminates_all_candidates(self):
+        from app.services.station_logic.polyline_filter import (
+            check_stations_on_polyline_with_relaxed_fallback,
+        )
+
+        polyline = [(41.0000, 29.0000)]
+        service_area_station = (41.0250, 29.0000)  # ~2.8km north
+        far_station = (41.1200, 29.0000)  # ~13km north
+
+        flags, threshold = check_stations_on_polyline_with_relaxed_fallback(
+            [service_area_station, far_station],
+            polyline,
+        )
+
+        assert threshold == 3.0
+        assert flags == [True, False]
+
+    def test_relaxed_corridor_still_rejects_excessive_detours(self):
+        from app.services.station_logic.polyline_filter import (
+            check_stations_on_polyline_with_relaxed_fallback,
+        )
+
+        polyline = [(41.0000, 29.0000)]
+        far_station = (41.1200, 29.0000)  # ~13km north
+
+        flags, threshold = check_stations_on_polyline_with_relaxed_fallback(
+            [far_station],
+            polyline,
+        )
+
+        assert threshold == 10.0
+        assert flags == [False]
+
 
 # =============================================================================
 # FIX #7 — DEFAULT_CHARGE_TARGET_SOC constant

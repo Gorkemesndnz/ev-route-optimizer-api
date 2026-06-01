@@ -128,6 +128,37 @@ class TestRouteOptimizationValidation:
         assert body["success"] is False
         assert body["error"]["code"] == "ROUTE_PLANNING_FAILED"
 
+    def test_optimize_route_no_route_with_constraints_is_typed_422(self, client, monkeypatch):
+        """Yol tercihi nedeniyle rota bulunamazsa bos legs success zarfina sarilmamali."""
+        from app.models.route_models import MultiStopRouteResponse
+        from app.routers import optimize as optimize_router
+
+        async def fake_plan_route(request):
+            return MultiStopRouteResponse(
+                status="NO_ROUTE_WITH_CONSTRAINTS",
+                total_distance_km=0,
+                total_duration_minutes=0,
+                total_co2_savings_kg=0,
+                legs=[],
+                message="Yol/köprü tercihlerine uyan rota bulunamadı",
+            )
+
+        monkeypatch.setattr(optimize_router, "plan_route", fake_plan_route)
+
+        response = client.post("/optimize_route", json={
+            "start_location": {"lat": ISTANBUL_LAT, "lon": ISTANBUL_LON},
+            "end_location": {"lat": ANKARA_LAT, "lon": ANKARA_LON},
+            "vehicle_model_id": "test_vehicle",
+            "current_soc_percent": 80,
+        })
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["success"] is False
+        assert body["data"] is None
+        assert body["error"]["code"] == "NO_ROUTE_WITH_CONSTRAINTS"
+        assert "Yol/köprü tercihlerine uyan rota bulunamadı" in body["error"]["message"]
+
     def test_optimize_route_hotspot_alignment_error_has_typed_code(self, client, monkeypatch):
         """Hotspot alignment upstream error olarak non-2xx donmeli."""
         from app.routers import optimize as optimize_router

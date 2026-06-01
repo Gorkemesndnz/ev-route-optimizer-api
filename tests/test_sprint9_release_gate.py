@@ -31,6 +31,7 @@ from app.route_planning.orchestrator import (
     _combine_final_route_waypoints,
     _snap_display_polyline_for_roads,
 )
+from app.route_planning.leg_builder import build_multi_legs
 from app.route_planning.safe_harbor import (
     RescueStation,
     SafeHarborResult,
@@ -110,6 +111,61 @@ def test_golden_route_fixture_contract_is_stable():
     charge_legs = [leg for leg in response["legs"] if leg["type"] == "charge"]
     assert charge_legs[0]["station"]["id"] == baseline["charge_profile"][0]["station_id"]
     assert charge_legs[0]["station"]["connectors"][0]["power_kw"] == baseline["charge_profile"][0]["power_kw"]
+
+
+def test_multi_leg_builder_keeps_later_drive_leg_polyline_optional():
+    station = SimpleNamespace(
+        station_id="station-1",
+        station_name="Station 1",
+        location=GeoPoint(lat=40.8, lon=30.2),
+        station_info={"_source": "google", "_place_id": "place-1", "connector_count": 1},
+        rating=4.4,
+        has_toilet=False,
+        has_food=False,
+        has_shopping=False,
+        has_parking=True,
+        is_open_now=True,
+        power_kw=120.0,
+        power_known=True,
+        deviation_km=0.4,
+        source_provider="google",
+        source_id="place-1",
+        is_dc=True,
+    )
+    hotspot = SimpleNamespace(
+        segment_index=1,
+        soc_at_point=35.0,
+        distance_from_start_km=160.0,
+        location=station.location,
+        remaining_distance_km=240.0,
+        min_required_soc=15.0,
+        recommended_charge_to=80.0,
+    )
+    station_result = SimpleNamespace(
+        best_station=station,
+        stations=[station],
+        weather_forecast=[],
+    )
+
+    legs, warnings = build_multi_legs(
+        start_point=GeoPoint(lat=41.0, lon=29.0),
+        end_point=GeoPoint(lat=39.9, lon=32.8),
+        total_distance_km=400.0,
+        total_duration_min=240.0,
+        segments_with_consumption=_segments(count=4, km_each=100.0, kwh_each=8.0),
+        start_soc=80.0,
+        final_soc=20.0,
+        hotspots=[hotspot],
+        station_results=[station_result],
+        polyline="_p~iF~ps|U_ulLnnqC",
+        battery_capacity_kwh=75.0,
+    )
+
+    drive_legs = [leg for leg in legs if leg.type == "drive"]
+    assert warnings == []
+    assert len(drive_legs) == 2
+    assert drive_legs[0].polyline == "_p~iF~ps|U_ulLnnqC"
+    assert drive_legs[1].polyline == ""
 
 
 def test_long_route_1250km_pareto_normalization_does_not_saturate_time_or_cost():

@@ -57,6 +57,14 @@ def _external_api_error_code(error: ExternalAPIError) -> str:
         return "HOTSPOT_ALIGNMENT_FAILED"
     return "EXTERNAL_API_ERROR"
 
+
+def _route_plan_error_status(plan: MultiStopRouteResponse) -> Optional[tuple[int, str]]:
+    if plan.status == "NO_ROUTE_WITH_CONSTRAINTS":
+        return 422, "NO_ROUTE_WITH_CONSTRAINTS"
+    if plan.status.startswith("error"):
+        return 502, "ROUTE_PLANNING_FAILED"
+    return None
+
 @router.post("/optimize_route", response_model=ApiResponse[MultiStopRouteResponse])
 async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteResponse]:
     """Ana rota optimizasyonu endpoint'i"""
@@ -71,7 +79,9 @@ async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteRes
         plan = await plan_route(request)
         planning_duration = time.time() - request_start_time
 
-        if plan.status.startswith("error"):
+        error_status = _route_plan_error_status(plan)
+        if error_status:
+            status_code, error_code = error_status
             logger.error(
                 f"[{request_id}] Route planning returned error status",
                 status=plan.status,
@@ -79,10 +89,10 @@ async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteRes
                 processing_time_ms=round(planning_duration * 1000, 1),
             )
             return JSONResponse(
-                status_code=502,
+                status_code=status_code,
                 content=ApiResponse.fail(
                     plan.message or "Rota hesaplanamadi",
-                    code="ROUTE_PLANNING_FAILED",
+                    code=error_code,
                 ).model_dump(mode="json"),
             )
 
