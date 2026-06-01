@@ -155,7 +155,10 @@ def check_stations_on_polyline_with_relaxed_fallback(
     Returns:
         (flags, threshold_used)
 
-    ``threshold_used`` is None when the route geometry is intentionally bypassed.
+    ``polyline_coords is None`` is an explicit caller bypass and returns every
+    candidate as accepted with ``threshold_used=None``. An empty list is not a
+    bypass: it means decoded route geometry was invalid and remains a typed
+    upstream contract error.
     """
     if not thresholds_km:
         raise ValueError("At least one polyline corridor threshold is required")

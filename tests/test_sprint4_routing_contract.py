@@ -104,6 +104,35 @@ def test_canonical_route_prefers_directions_step_polylines_when_available():
     ]
 
 
+def test_directions_step_polyline_is_valid_route_corridor_geometry():
+    from app.services.station_logic.polyline_filter import (
+        check_stations_on_polyline_with_relaxed_fallback,
+    )
+
+    step1 = polyline.encode([(41.0, 29.0), (41.05, 29.10), (41.0, 29.2)])
+    route = _google_route()
+    route["overview_polyline"] = {"points": polyline.encode([(41.0, 29.0), (41.0, 29.2)])}
+    route["legs"][0]["steps"] = [{"polyline": {"points": step1}}]
+
+    canonical = CanonicalRoute.from_google_directions_route(route, index=0)
+    station_near_step_geometry = (41.05, 29.10)
+
+    step_flags, step_threshold = check_stations_on_polyline_with_relaxed_fallback(
+        [station_near_step_geometry],
+        polyline.decode(canonical.polyline),
+    )
+    overview_flags, overview_threshold = check_stations_on_polyline_with_relaxed_fallback(
+        [station_near_step_geometry],
+        polyline.decode(route["overview_polyline"]["points"]),
+    )
+
+    assert canonical.polyline_quality == "step"
+    assert step_threshold == 1.0
+    assert step_flags == [True]
+    assert overview_threshold == 10.0
+    assert overview_flags == [False]
+
+
 def test_canonical_route_invalid_step_polyline_falls_back_to_overview_quality():
     route = _google_route()
     route["legs"][0]["steps"] = [{"polyline": {"points": "not-a-valid-polyline@@@"}}]

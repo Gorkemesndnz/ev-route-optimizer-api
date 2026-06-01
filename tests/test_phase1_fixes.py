@@ -221,6 +221,31 @@ class TestPolylinePerpendicularFilter:
         )
         assert flags == [True, True]
 
+    def test_relaxed_corridor_none_polyline_is_explicit_bypass(self):
+        from app.services.station_logic.polyline_filter import (
+            check_stations_on_polyline_with_relaxed_fallback,
+        )
+
+        flags, threshold = check_stations_on_polyline_with_relaxed_fallback(
+            station_coords=[(41.0, 29.0), (41.1, 29.1)],
+            polyline_coords=None,
+        )
+
+        assert flags == [True, True]
+        assert threshold is None
+
+    def test_relaxed_corridor_empty_polyline_raises_typed_error(self):
+        from app.services.base_service import ExternalAPIError
+        from app.services.station_logic.polyline_filter import (
+            check_stations_on_polyline_with_relaxed_fallback,
+        )
+
+        with pytest.raises(ExternalAPIError, match="no route geometry"):
+            check_stations_on_polyline_with_relaxed_fallback(
+                station_coords=[(41.0, 29.0), (41.1, 29.1)],
+                polyline_coords=[],
+            )
+
     def test_check_stations_empty_input_returns_empty(self):
         from app.station_finder import _check_stations_on_polyline
         assert _check_stations_on_polyline(
