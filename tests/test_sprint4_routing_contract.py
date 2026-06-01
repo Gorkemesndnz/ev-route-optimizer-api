@@ -173,7 +173,7 @@ async def test_google_routes_provider_request_body_and_field_mask():
     routes = await provider.get_route_alternatives(
         start=GeoPoint(lat=41.0, lon=29.0),
         end=GeoPoint(lat=41.2, lon=29.2),
-        avoidances=["tolls", "ferries"],
+        avoidances=["tolls", "highways", "ferries"],
         waypoints=[GeoPoint(lat=41.1, lon=29.1)],
     )
 
@@ -187,7 +187,7 @@ async def test_google_routes_provider_request_body_and_field_mask():
     assert calls["json"]["polylineQuality"] == "HIGH_QUALITY"
     assert calls["json"]["polylineEncoding"] == "ENCODED_POLYLINE"
     assert calls["json"]["routeModifiers"]["avoidTolls"] is True
-    assert calls["json"]["routeModifiers"]["avoidHighways"] is False
+    assert calls["json"]["routeModifiers"]["avoidHighways"] is True
     assert calls["json"]["routeModifiers"]["avoidFerries"] is True
     assert calls["json"]["computeAlternativeRoutes"] is False
     assert len(calls["json"]["intermediates"]) == 1
