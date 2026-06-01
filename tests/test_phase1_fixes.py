@@ -12,6 +12,7 @@ Run: pytest tests/test_phase1_fixes.py -v
 import math
 import pytest
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Optional
 
 from app.models import WeatherInfo, WeatherCondition
@@ -349,6 +350,50 @@ class TestDefaultChargeTargetSOC:
         assert "or 80," not in source and "or 80)" not in source, \
             "Orchestrator hâlâ magic number 'or 80' kullanıyor"
         assert "DEFAULT_CHARGE_TARGET_SOC" in source
+
+
+class TestCorridorSearchRadiusExpansion:
+    @pytest.mark.asyncio
+    async def test_google_station_filter_uses_expanded_search_radius_as_distance_cap(self):
+        from app.models import GeoPoint
+        from app.station_finder import CorridorSearcher
+
+        searcher = CorridorSearcher(
+            vehicle_model_id="test",
+            corridor_length_km=50.0,
+            vehicle_spec=SimpleNamespace(display_name="Test EV", connector_type="CCS"),
+        )
+        hotspot = SimpleNamespace(
+            location=GeoPoint(lat=40.0, lon=29.0),
+            route_polyline_coords=None,
+            soc_at_point=20.0,
+        )
+        station_around_67_km_away = {
+            "place_id": "google-far-but-in-expanded-radius",
+            "name": "Expanded Radius DC",
+            "business_status": "OPERATIONAL",
+            "geometry": {"location": {"lat": 40.60, "lng": 29.0}},
+            "connector_count": 2,
+            "max_power_kw": 150,
+            "types": ["electric_vehicle_charging_station"],
+            "rating": 4.5,
+            "user_ratings_total": 10,
+        }
+
+        strict = await searcher._filter_and_score_google_stations(
+            [station_around_67_km_away],
+            hotspot,
+            max_distance_km=50.0,
+        )
+        expanded = await searcher._filter_and_score_google_stations(
+            [station_around_67_km_away],
+            hotspot,
+            max_distance_km=80.0,
+        )
+
+        assert strict == []
+        assert len(expanded) == 1
+        assert expanded[0].station_name == "Expanded Radius DC"
 
 
 # =============================================================================

@@ -381,9 +381,17 @@ class CorridorSearcher:
                 if raw_stations:
                     # Kaynak bazlı filtreleme ve skorlama
                     if source == "google":
-                        corridor_stations = await self._filter_and_score_google_stations(raw_stations, hotspot)
+                        corridor_stations = await self._filter_and_score_google_stations(
+                            raw_stations,
+                            hotspot,
+                            max_distance_km=radius,
+                        )
                     else:
-                        corridor_stations = await self._filter_and_score_stations(raw_stations, hotspot)
+                        corridor_stations = await self._filter_and_score_stations(
+                            raw_stations,
+                            hotspot,
+                            max_distance_km=radius,
+                        )
                     result.reject_audit = _merge_reject_audit(
                         result.reject_audit,
                         self._last_reject_audit,
@@ -417,6 +425,12 @@ class CorridorSearcher:
             
             # Greedy selection
             result.best_station = self.greedy_select(result.stations, hotspot.soc_at_point)
+            if result.best_station and used_radius > self.corridor_length_km:
+                result.distance_warning = (
+                    f"⚠️ Bu şarj durağı için istasyon arama yarıçapı "
+                    f"{self.corridor_length_km:.0f}km → {used_radius:.0f}km genişletildi. "
+                    f"Rota tercihleri nedeniyle istasyon ana koridordan daha uzakta olabilir."
+                )
             
             logger.info(
                 "Corridor search completed",
@@ -586,7 +600,8 @@ class CorridorSearcher:
     async def _filter_and_score_google_stations(
         self,
         google_stations: List[Dict[str, Any]],
-        hotspot: ChargeHotspot
+        hotspot: ChargeHotspot,
+        max_distance_km: Optional[float] = None,
     ) -> List[CorridorStation]:
         """
         Google Places verilerini filtrele ve skorla.
@@ -629,7 +644,8 @@ class CorridorSearcher:
                 hotspot.location.lat, hotspot.location.lon,
                 station_lat, station_lng
             )
-            if distance > self.corridor_length_km:
+            effective_max_distance_km = max_distance_km or self.corridor_length_km
+            if distance > effective_max_distance_km:
                 rej_far += 1
                 _record_reject(
                     reject_audit,
@@ -848,7 +864,8 @@ class CorridorSearcher:
     async def _filter_and_score_stations(
         self,
         raw_stations: List[Dict[str, Any]],
-        hotspot: ChargeHotspot
+        hotspot: ChargeHotspot,
+        max_distance_km: Optional[float] = None,
     ) -> List[CorridorStation]:
         """İstasyonları filtrele ve skorla."""
         # Ön filtre: temel kriterler
@@ -891,7 +908,8 @@ class CorridorSearcher:
                 hotspot.location.lat, hotspot.location.lon,
                 station_lat, station_lon
             )
-            if distance > self.corridor_length_km:
+            effective_max_distance_km = max_distance_km or self.corridor_length_km
+            if distance > effective_max_distance_km:
                 _record_reject(
                     reject_audit,
                     "too_far_from_route",
