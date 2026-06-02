@@ -300,6 +300,23 @@ class TestOutcomeEndpoint:
         assert parsed["actual_arrival_soc"] == 18.5
         assert parsed["user_satisfaction"] == 5
 
+    def test_post_outcome_internal_canonical_endpoint(self, client, tmp_path, monkeypatch):
+        """Canonical internal outcome endpoint legacy endpoint ile aynı davranmalı."""
+        from app.optimization import decision_logger as dl
+        custom = DecisionLogger(log_dir=tmp_path)
+        monkeypatch.setattr(dl, "_default_logger", custom)
+
+        payload = {
+            "actual_arrival_soc": 18.5,
+            "actual_total_time_min": 310,
+            "user_satisfaction": 5,
+        }
+        response = client.post("/internal/trips/test_trip_internal/outcome", json=payload)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["success"] is True
+        assert data["data"]["trip_id"] == "test_trip_internal"
+
     def test_post_outcome_partial_fields(self, client, tmp_path, monkeypatch):
         """Tüm alanlar opsiyonel — sadece arrival_soc gönderilse de kabul etmeli."""
         from app.optimization import decision_logger as dl

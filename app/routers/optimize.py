@@ -71,7 +71,12 @@ def _route_plan_error_status(plan: MultiStopRouteResponse) -> Optional[tuple[int
         return 502, "ROUTE_PLANNING_FAILED"
     return None
 
-@router.post("/optimize_route", response_model=ApiResponse[MultiStopRouteResponse])
+@router.post("/internal/routes/optimize", response_model=ApiResponse[MultiStopRouteResponse])
+@router.post(
+    "/optimize_route",
+    response_model=ApiResponse[MultiStopRouteResponse],
+    include_in_schema=False,
+)
 async def optimize_route(request: RouteRequest) -> ApiResponse[MultiStopRouteResponse]:
     """Ana rota optimizasyonu endpoint'i"""
     request_start_time = time.time()

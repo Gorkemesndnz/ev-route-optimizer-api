@@ -111,6 +111,10 @@ class ConfigManager:
             logger.warning("Config key missing: OPENWEATHER_API_KEY or WEATHER_API_KEY")
         return key
 
+    @staticmethod
+    def internal_auth_secret() -> str:
+        return ConfigManager._get("FASTAPI_INTERNAL_AUTH_SECRET", "")
+
     # Alias
     @staticmethod
     def get_openweather_api_key() -> str:
@@ -217,6 +221,7 @@ class ConfigManager:
     get_google_api_key = google_api_key
     get_ocm_api_key = ocm_api_key
     get_weather_api_key = weather_api_key
+    get_internal_auth_secret = internal_auth_secret
     
     # Cache TTL
     get_cache_ttl_ocm = ttl_ocm

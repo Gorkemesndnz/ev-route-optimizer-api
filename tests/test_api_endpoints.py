@@ -68,6 +68,11 @@ class TestRouteOptimizationValidation:
         response = client.post("/optimize_route", json={})
         assert response.status_code == 422
 
+    def test_internal_optimize_route_missing_fields(self, client):
+        """POST /internal/routes/optimize boş body → 422 Validation Error."""
+        response = client.post("/internal/routes/optimize", json={})
+        assert response.status_code == 422
+
     def test_optimize_route_invalid_soc_negative(self, client):
         """POST /optimize_route SOC=-5 → 422 (Pydantic ge=0 kısıtı)."""
         response = client.post("/optimize_route", json={
@@ -228,6 +233,26 @@ class TestFeedbackValidation:
         })
         assert response.status_code == 422
 
+    def test_internal_feedback_invalid_type(self, client):
+        """POST /internal/stations/feedback geçersiz feedback_type → 422."""
+        response = client.post("/internal/stations/feedback", json={
+            "station_id": "station_123",
+            "feedback_type": "invalid",
+            "original_route_request": {
+                "start_location": {"lat": ISTANBUL_LAT, "lon": ISTANBUL_LON},
+                "end_location": {"lat": ANKARA_LAT, "lon": ANKARA_LON},
+                "vehicle_model_id": "test_vehicle",
+            },
+            "destination": {"lat": ANKARA_LAT, "lon": ANKARA_LON},
+            "vehicle_model_id": "test_vehicle",
+        })
+        assert response.status_code == 422
+
+    def test_internal_switch_station_missing_fields(self, client):
+        """POST /internal/stations/switch boş body → 422."""
+        response = client.post("/internal/stations/switch", json={})
+        assert response.status_code == 422
+
     def test_station_feedback_recompute_error_keeps_feedback_before_502(self, client, monkeypatch):
         from app.routers import stations as stations_router
         from app.services.base_service import ExternalAPIError
@@ -379,3 +404,87 @@ class TestApiResponseContract:
         # Global validation handler ApiResponse.fail döner
         assert body["success"] is False
         assert body["error"] is not None
+
+
+class TestInternalServiceAuth:
+    def test_internal_auth_secret_is_not_required_when_not_configured(self, client, monkeypatch):
+        monkeypatch.delenv("FASTAPI_INTERNAL_AUTH_SECRET", raising=False)
+
+        response = client.post("/optimize_route", json={})
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["success"] is False
+
+    def test_internal_auth_secret_rejects_protected_route_without_header(self, client, monkeypatch):
+        monkeypatch.setenv("FASTAPI_INTERNAL_AUTH_SECRET", "test-secret")
+
+        response = client.post("/optimize_route", json={})
+
+        assert response.status_code == 401
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "INTERNAL_AUTH_REQUIRED"
+
+    def test_internal_auth_secret_rejects_canonical_route_without_header(self, client, monkeypatch):
+        monkeypatch.setenv("FASTAPI_INTERNAL_AUTH_SECRET", "test-secret")
+
+        response = client.post("/internal/routes/optimize", json={})
+
+        assert response.status_code == 401
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "INTERNAL_AUTH_REQUIRED"
+
+    @pytest.mark.parametrize("path", [
+        "/optimize_route",
+        "/internal/routes/optimize",
+        "/station_feedback",
+        "/internal/stations/feedback",
+        "/switch_station",
+        "/internal/stations/switch",
+        "/trips/test_trip/outcome",
+        "/internal/trips/test_trip/outcome",
+    ])
+    def test_internal_auth_secret_rejects_all_protected_paths_without_header(self, client, monkeypatch, path):
+        monkeypatch.setenv("FASTAPI_INTERNAL_AUTH_SECRET", "test-secret")
+
+        response = client.post(path, json={})
+
+        assert response.status_code == 401
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "INTERNAL_AUTH_REQUIRED"
+
+    def test_internal_auth_secret_allows_protected_route_with_valid_header(self, client, monkeypatch):
+        monkeypatch.setenv("FASTAPI_INTERNAL_AUTH_SECRET", "test-secret")
+
+        response = client.post(
+            "/optimize_route",
+            json={},
+            headers={"X-IYONTREE-Internal-Secret": "test-secret"},
+        )
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["success"] is False
+
+    def test_internal_auth_secret_allows_canonical_route_with_valid_header(self, client, monkeypatch):
+        monkeypatch.setenv("FASTAPI_INTERNAL_AUTH_SECRET", "test-secret")
+
+        response = client.post(
+            "/internal/routes/optimize",
+            json={},
+            headers={"X-IYONTREE-Internal-Secret": "test-secret"},
+        )
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["success"] is False
+
+    def test_internal_auth_does_not_protect_health_endpoint(self, client, monkeypatch):
+        monkeypatch.setenv("FASTAPI_INTERNAL_AUTH_SECRET", "test-secret")
+
+        response = client.get("/health")
+
+        assert response.status_code == 200

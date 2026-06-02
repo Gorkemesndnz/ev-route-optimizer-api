@@ -4,6 +4,7 @@ Akıllı EV Rota Asistanı API - v2.0
 V2.0 Core: Stateless Computation Engine
 Endpoints are now separated using APIRouter for maintainability.
 """
+import secrets
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -22,6 +23,7 @@ from app.core.api_response import ApiResponse
 from app.routers import optimize, stations, dev, trips
 
 logger = get_logger("main_api")
+INTERNAL_AUTH_HEADER = "X-IYONTREE-Internal-Secret"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -72,8 +74,46 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", INTERNAL_AUTH_HEADER],
 )
+
+
+def _requires_internal_auth(path: str) -> bool:
+    if path in {
+        "/internal/routes/optimize",
+        "/internal/stations/feedback",
+        "/internal/stations/switch",
+        "/optimize_route",
+        "/station_feedback",
+        "/switch_station",
+    }:
+        return True
+    return (
+        path.startswith("/internal/trips/") and path.endswith("/outcome")
+    ) or (
+        path.startswith("/trips/") and path.endswith("/outcome")
+    )
+
+
+@app.middleware("http")
+async def internal_service_auth_middleware(request: Request, call_next):
+    internal_secret = config.get_internal_auth_secret().strip()
+    if not internal_secret or request.method == "OPTIONS" or not _requires_internal_auth(request.url.path):
+        return await call_next(request)
+
+    provided_secret = request.headers.get(INTERNAL_AUTH_HEADER, "")
+    if not secrets.compare_digest(provided_secret, internal_secret):
+        logger.warning(
+            "Internal FastAPI request rejected",
+            path=str(request.url.path),
+            method=request.method,
+        )
+        return JSONResponse(
+            status_code=401,
+            content=ApiResponse.fail("Yetkisiz internal servis istegi", code="INTERNAL_AUTH_REQUIRED").model_dump(),
+        )
+
+    return await call_next(request)
 
 # Global Exception Handlers
 @app.exception_handler(RequestValidationError)

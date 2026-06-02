@@ -30,6 +30,15 @@ logger = get_logger("trips_router")
 
 
 @router.post(
+    "/internal/trips/{trip_id}/outcome",
+    response_model=ApiResponse[TripOutcomeResponse],
+    summary="Yolculuk gerçekleşen değerlerini geri bildir",
+    description=(
+        "Kullanıcı yolculuğu bitirdiğinde gerçek arrival_soc, total_time, cost vb. "
+        "değerleri raporlar. Faz 3 ML eğitimi için kullanılır. Tüm alanlar opsiyoneldir."
+    ),
+)
+@router.post(
     "/trips/{trip_id}/outcome",
     response_model=ApiResponse[TripOutcomeResponse],
     summary="Yolculuk gerçekleşen değerlerini geri bildir",
@@ -37,6 +46,7 @@ logger = get_logger("trips_router")
         "Kullanıcı yolculuğu bitirdiğinde gerçek arrival_soc, total_time, cost vb. "
         "değerleri raporlar. Faz 3 ML eğitimi için kullanılır. Tüm alanlar opsiyoneldir."
     ),
+    include_in_schema=False,
 )
 async def submit_trip_outcome(
     payload: TripOutcomeRequest,

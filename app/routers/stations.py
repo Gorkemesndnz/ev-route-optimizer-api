@@ -97,7 +97,12 @@ async def get_map_stations(
         return _fail(500, "Istasyonlar getirilemedi", "INTERNAL_ERROR")
 
 
-@router.post("/station_feedback", response_model=ApiResponse[RecalculateResponse])
+@router.post("/internal/stations/feedback", response_model=ApiResponse[RecalculateResponse])
+@router.post(
+    "/station_feedback",
+    response_model=ApiResponse[RecalculateResponse],
+    include_in_schema=False,
+)
 async def station_feedback(request: StationFeedbackRequest) -> ApiResponse[RecalculateResponse]:
     """User station feedback and full-route recalculation."""
     request_id = f"feedback_{int(time.time() * 1000)}"
@@ -143,7 +148,12 @@ async def station_feedback(request: StationFeedbackRequest) -> ApiResponse[Recal
         return _fail(500, f"Rota yeniden hesaplanamadi: {str(e)}", "INTERNAL_ERROR")
 
 
-@router.post("/switch_station", response_model=ApiResponse[RecalculateResponse])
+@router.post("/internal/stations/switch", response_model=ApiResponse[RecalculateResponse])
+@router.post(
+    "/switch_station",
+    response_model=ApiResponse[RecalculateResponse],
+    include_in_schema=False,
+)
 async def switch_station(request: SwitchStationRequest) -> ApiResponse[RecalculateResponse]:
     """Switch station by recalculating the full route."""
     request_id = f"switch_{int(time.time() * 1000)}"
