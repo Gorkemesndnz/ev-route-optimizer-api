@@ -644,7 +644,7 @@ class CorridorSearcher:
                 hotspot.location.lat, hotspot.location.lon,
                 station_lat, station_lng
             )
-            effective_max_distance_km = max_distance_km or self.corridor_length_km
+            effective_max_distance_km = self.corridor_length_km if max_distance_km is None else max_distance_km
             if distance > effective_max_distance_km:
                 rej_far += 1
                 _record_reject(
@@ -908,7 +908,7 @@ class CorridorSearcher:
                 hotspot.location.lat, hotspot.location.lon,
                 station_lat, station_lon
             )
-            effective_max_distance_km = max_distance_km or self.corridor_length_km
+            effective_max_distance_km = self.corridor_length_km if max_distance_km is None else max_distance_km
             if distance > effective_max_distance_km:
                 _record_reject(
                     reject_audit,

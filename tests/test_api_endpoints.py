@@ -436,6 +436,27 @@ class TestInternalServiceAuth:
         assert body["success"] is False
         assert body["error"]["code"] == "INTERNAL_AUTH_REQUIRED"
 
+    def test_internal_auth_secret_rejects_unlisted_internal_prefix_without_header(self, client, monkeypatch):
+        monkeypatch.setenv("FASTAPI_INTERNAL_AUTH_SECRET", "test-secret")
+
+        response = client.post("/internal/probe/unlisted", json={})
+
+        assert response.status_code == 401
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "INTERNAL_AUTH_REQUIRED"
+
+    def test_internal_auth_secret_allows_unlisted_internal_prefix_with_valid_header_to_reach_router(self, client, monkeypatch):
+        monkeypatch.setenv("FASTAPI_INTERNAL_AUTH_SECRET", "test-secret")
+
+        response = client.post(
+            "/internal/probe/unlisted",
+            json={},
+            headers={"X-IYONTREE-Internal-Secret": "test-secret"},
+        )
+
+        assert response.status_code == 404
+
     @pytest.mark.parametrize("path", [
         "/optimize_route",
         "/internal/routes/optimize",

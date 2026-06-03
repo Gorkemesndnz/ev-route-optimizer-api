@@ -395,6 +395,82 @@ class TestCorridorSearchRadiusExpansion:
         assert len(expanded) == 1
         assert expanded[0].station_name == "Expanded Radius DC"
 
+    @pytest.mark.asyncio
+    async def test_zero_max_distance_is_applied_as_zero_for_google_station_filter(self):
+        from app.models import GeoPoint
+        from app.station_finder import CorridorSearcher
+
+        searcher = CorridorSearcher(
+            vehicle_model_id="test",
+            corridor_length_km=50.0,
+            vehicle_spec=SimpleNamespace(display_name="Test EV", connector_type="CCS"),
+        )
+        hotspot = SimpleNamespace(
+            location=GeoPoint(lat=40.0, lon=29.0),
+            route_polyline_coords=None,
+            soc_at_point=20.0,
+        )
+        nearby_station = {
+            "place_id": "google-nearby-but-not-zero-distance",
+            "name": "Nearby DC",
+            "business_status": "OPERATIONAL",
+            "geometry": {"location": {"lat": 40.01, "lng": 29.0}},
+            "connector_count": 2,
+            "max_power_kw": 150,
+            "types": ["electric_vehicle_charging_station"],
+            "rating": 4.5,
+            "user_ratings_total": 10,
+        }
+
+        filtered = await searcher._filter_and_score_google_stations(
+            [nearby_station],
+            hotspot,
+            max_distance_km=0.0,
+        )
+
+        assert filtered == []
+
+    @pytest.mark.asyncio
+    async def test_zero_max_distance_is_applied_as_zero_for_ocm_station_filter(self):
+        from app.models import GeoPoint
+        from app.station_finder import CorridorSearcher
+
+        searcher = CorridorSearcher(
+            vehicle_model_id="test",
+            corridor_length_km=50.0,
+            vehicle_spec=SimpleNamespace(display_name="Test EV", connector_type="CCS"),
+        )
+        hotspot = SimpleNamespace(
+            location=GeoPoint(lat=40.0, lon=29.0),
+            route_polyline_coords=None,
+            soc_at_point=20.0,
+        )
+        nearby_station = {
+            "ID": 42,
+            "AddressInfo": {
+                "Title": "Nearby OCM DC",
+                "Latitude": 40.01,
+                "Longitude": 29.0,
+            },
+            "Connections": [
+                {
+                    "PowerKW": 150,
+                    "ConnectionType": {"Title": "CCS (Type 2)"},
+                    "StatusType": {"IsOperational": True},
+                }
+            ],
+            "UsageType": {"IsPayAtLocation": True},
+            "OperatorInfo": {"Title": "Test Operator"},
+        }
+
+        filtered = await searcher._filter_and_score_stations(
+            [nearby_station],
+            hotspot,
+            max_distance_km=0.0,
+        )
+
+        assert filtered == []
+
 
 # =============================================================================
 # DERIN EDGE-CASE'LER (mevcut motorda bozuk olabilecek senaryolar)

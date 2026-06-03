@@ -78,21 +78,23 @@ app.add_middleware(
 )
 
 
+LEGACY_INTERNAL_AUTH_PATHS = {
+    "/optimize_route",
+    "/station_feedback",
+    "/switch_station",
+}
+
+
+def _is_trip_outcome_path(path: str, prefix: str) -> bool:
+    return path.startswith(prefix) and path.endswith("/outcome")
+
+
 def _requires_internal_auth(path: str) -> bool:
-    if path in {
-        "/internal/routes/optimize",
-        "/internal/stations/feedback",
-        "/internal/stations/switch",
-        "/optimize_route",
-        "/station_feedback",
-        "/switch_station",
-    }:
+    if path.startswith("/internal/"):
         return True
-    return (
-        path.startswith("/internal/trips/") and path.endswith("/outcome")
-    ) or (
-        path.startswith("/trips/") and path.endswith("/outcome")
-    )
+    if path in LEGACY_INTERNAL_AUTH_PATHS:
+        return True
+    return _is_trip_outcome_path(path, "/trips/")
 
 
 @app.middleware("http")
