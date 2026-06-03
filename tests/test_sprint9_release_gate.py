@@ -25,6 +25,7 @@ from app.infrastructure.station_catalog import (
     parse_google_place,
 )
 from app.models import GeoPoint, RoadAvoidances, RouteStrategy
+from app.models.route_models import DriveLeg
 from app.optimization.modes import OptimizationMode
 from app.optimization.pareto_solver import ParetoSolver, StationOptimizationInput
 from app.route_planning.orchestrator import (
@@ -33,6 +34,7 @@ from app.route_planning.orchestrator import (
     _snap_display_polyline_for_roads,
 )
 from app.route_planning.leg_builder import build_multi_legs
+from app.route_planning.response_builder import validate_plan_feasibility
 from app.route_planning.safe_harbor import (
     RescueStation,
     SafeHarborResult,
@@ -169,6 +171,64 @@ def test_multi_leg_builder_keeps_later_drive_leg_polyline_optional():
     assert drive_legs[1].polyline == ""
 
 
+def test_feasibility_uses_leg_consumption_before_route_average():
+    leg = DriveLeg(
+        type="drive",
+        start_point=GeoPoint(lat=40.0, lon=29.0),
+        end_point=GeoPoint(lat=40.5, lon=30.0),
+        distance_km=150.5,
+        duration_minutes=95.0,
+        consumption_kwh=19.92,
+        start_soc_percent=95.0,
+        end_soc_percent=12.0,
+    )
+
+    error = validate_plan_feasibility(
+        legs=[leg],
+        missing_station_warnings=[],
+        battery_capacity_kwh=24.0,
+        avg_consumption_wh_km=300.0,
+    )
+
+    assert error is None
+
+
+def test_multi_leg_builder_stops_when_required_hotspot_has_no_station():
+    hotspot = SimpleNamespace(
+        segment_index=2,
+        soc_at_point=12.0,
+        distance_from_start_km=542.0,
+        location=GeoPoint(lat=40.8, lon=30.2),
+        remaining_distance_km=161.0,
+        min_required_soc=15.0,
+        recommended_charge_to=95.0,
+    )
+    station_result = SimpleNamespace(
+        best_station=None,
+        stations=[],
+        weather_forecast=[],
+    )
+
+    legs, warnings = build_multi_legs(
+        start_point=GeoPoint(lat=40.0, lon=29.0),
+        end_point=GeoPoint(lat=41.0, lon=31.0),
+        total_distance_km=703.0,
+        total_duration_min=465.0,
+        segments_with_consumption=_segments(count=7, km_each=100.0, kwh_each=8.0),
+        start_soc=80.0,
+        final_soc=25.5,
+        hotspots=[hotspot],
+        station_results=[station_result],
+        polyline="_p~iF~ps|U_ulLnnqC",
+        battery_capacity_kwh=61.4,
+    )
+
+    assert legs == []
+    assert warnings
+    assert "542" in warnings[0]
+    assert "uygun DC istasyon bulunamadı" in warnings[0]
+
+
 def test_long_route_1250km_pareto_normalization_does_not_saturate_time_or_cost():
     segments = _segments(count=125, km_each=10.0, kwh_each=1.65)
     hotspots = [
@@ -212,6 +272,34 @@ def test_long_route_1250km_pareto_normalization_does_not_saturate_time_or_cost()
     assert 0.0 <= solution.breakdown.T_normalized < 1.0
     assert 0.0 <= solution.breakdown.C_normalized < 1.0
     assert solution.metrics.num_stops == 5
+
+
+def test_greedy_fallback_prefers_80_when_min_required_allows_it():
+    hotspots = [
+        SimpleNamespace(
+            segment_index=index,
+            soc_at_point=25.0,
+            distance_from_start_km=(index + 1) * 60.0,
+            location=GeoPoint(lat=40.0, lon=29.0),
+            remaining_distance_km=500.0 - ((index + 1) * 60.0),
+            min_required_soc=15.0,
+            recommended_charge_to=80.0,
+        )
+        for index in range(6)
+    ]
+
+    solution = ParetoSolver(OptimizationMode.BALANCED).solve(
+        hotspots=hotspots,
+        segments_with_consumption=_segments(count=30, km_each=20.0, kwh_each=1.2),
+        battery_kwh=82.0,
+        start_soc=80.0,
+        arrival_soc_target=15.0,
+        total_distance_km=600.0,
+    )
+
+    assert solution.fallback_used is True
+    assert solution.per_stop_target_soc
+    assert max(solution.per_stop_target_soc) <= 80.0
 
 
 def test_low_initial_soc_creates_origin_hotspot_before_route_is_consumed():

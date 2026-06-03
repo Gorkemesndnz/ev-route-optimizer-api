@@ -34,26 +34,14 @@ async def api_info() -> ApiResponse[Dict[str, Any]]:
 @router.get("/health", response_model=ApiResponse[Dict[str, Any]])
 async def health() -> ApiResponse[Dict[str, Any]]:
     """Detaylı sağlık kontrolü"""
-    try:
-        vehicle_ids = get_available_vehicle_ids()
-        if not vehicle_ids:
-            return ApiResponse.fail("No vehicles loaded in catalog")
-        
-        test_vehicle = get_vehicle_model(vehicle_ids[0])
-        data = {
-            "status": "ok",
-            "environment": config.get_environment(),
-            "timestamp": time.time(),
-            "vehicle_catalog_count": len(vehicle_ids),
-            "test_vehicle": {
-                "model": test_vehicle.display_name,
-                "battery_kwh": test_vehicle.battery_capacity_kwh
-            }
-        }
-        return ApiResponse.ok(data)
-    except Exception as e:
-        logger.error("Health check failed", error=str(e))
-        return ApiResponse.fail(f"Service unhealthy: {str(e)}")
+    data = {
+        "status": "ok",
+        "environment": config.get_environment(),
+        "timestamp": time.time(),
+        "vehicle_catalog_mode": "gateway_vehicle_spec",
+        "vehicle_catalog_count": None,
+    }
+    return ApiResponse.ok(data)
 
 @router.get("/test", response_model=ApiResponse[Dict[str, Any]])
 async def test_endpoint() -> ApiResponse[Dict[str, Any]]:

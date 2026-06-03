@@ -45,15 +45,14 @@ class TestHealthAndInfo:
         assert "message" in data
 
     def test_health_check(self, client):
-        """GET /health → ApiResponse içinde status='ok' veya fail dönmeli."""
+        """GET /health → ApiResponse içinde stateless compute health dönmeli."""
         response = client.get("/health")
         assert response.status_code == 200
         body = response.json()
-        # Vehicle catalog deprecated → fail beklenir; success ise status=='ok' olmalı
-        if body["success"]:
-            assert body["data"]["status"] == "ok"
-        else:
-            assert body["error"] is not None
+        assert body["success"] is True
+        assert body["data"]["status"] == "ok"
+        assert body["data"]["vehicle_catalog_mode"] == "gateway_vehicle_spec"
+        assert body["data"]["vehicle_catalog_count"] is None
 
 
 # =============================================================================

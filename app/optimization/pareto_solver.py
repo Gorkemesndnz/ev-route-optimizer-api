@@ -39,6 +39,7 @@ logger = get_logger("ParetoSolver")
 
 GRID_STEP = 5                       # %5'lik adım
 MAX_PARETO_STOPS = 5                # 5+ stop → greedy fallback
+COMFORT_CHARGE_TARGET = 80.0        # Feasible ise yüksek SOC yerine konfor hedefi
 DEFAULT_AVG_PRICE_TL_PER_KWH = 8.0  # TR public DC ortalama (Faz 2.5: pricing_service)
 DEFAULT_AVG_CHARGER_KW = 100.0      # Faz 2.5: per-stop seçilen istasyon gücü
 UNKNOWN_AC_POWER_PLANNING_KW = 22.0
@@ -185,6 +186,7 @@ class ParetoSolver:
         grids = [
             sorted(set(
                 list(range(int(p.min_target_soc), int(MAX_CHARGE_TARGET) + 1, GRID_STEP))
+                + ([int(COMFORT_CHARGE_TARGET)] if p.min_target_soc <= COMFORT_CHARGE_TARGET else [])
                 + [int(MAX_CHARGE_TARGET)]
             ))
             for p in planned
@@ -405,15 +407,11 @@ class ParetoSolver:
         """
         5+ stop için greedy fallback.
 
-        🔧 F-23: "Smart greedy" — sadece min_target_soc yerine min_target+15 kullan.
-        Eski: combo = (min_target_soc, ...) → her stop tam sınırdan şarj edilir
-              → sonraki durağa düşük SOC ile gelinir → zincir boyunca fazla stop.
-        Yeni: combo = min(95, min_target+15) → biraz ekstra şarj → stop sayısı azalır.
-        Paradoks: az şarj et → daha çok dur. Smart greedy bu paradoksu kırıyor.
+        80% konfor hedefi feasible ise onu seçer; 80 üstüne yalnızca
+        min_required zorlarsa çıkar.
         """
-        SMART_GREEDY_BOOST = 15.0  # Her duraklara +%15 şarj ekle
         combo = tuple(
-            int(min(MAX_CHARGE_TARGET, p.min_target_soc + SMART_GREEDY_BOOST))
+            int(min(MAX_CHARGE_TARGET, max(COMFORT_CHARGE_TARGET, p.min_target_soc)))
             for p in planned
         )
         metrics = self._evaluate_combo(

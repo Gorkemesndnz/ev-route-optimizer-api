@@ -203,24 +203,44 @@ def validate_plan_feasibility(
     if not legs:
         return None
 
-    # 1) Tüm hotspot'lar istasyonsuz mu?
+    # 1) Required hotspot istasyonsuzsa rota eksik kabul edilir. Kısmi planı
+    # başarılı route gibi göstermek, sonraki final leg'de fizik dışı sonuç üretir.
     charge_legs = [l for l in legs if getattr(l, "type", None) == "charge"]
-    if missing_station_warnings and not charge_legs:
+    if missing_station_warnings:
+        if charge_legs:
+            return missing_station_warnings[0]
         return (
             "Rotada hiçbir şarj durağı için uygun istasyon bulunamadı. "
             "Bataryanın tek seferde yetmediği bu rota tamamlanamıyor."
         )
 
-    # 2) Fiziksel imkansız leg: start SOC × kapasite < gerekli enerji
-    # Tipik 250 Wh/km tüketimle: bir leg max distance = (start_soc/100 × battery) / 0.25 km
+    # 2) Fiziksel imkansız leg: leg builder'ın ürettiği gerçek tüketim varsa
+    # onu esas al. Route-level ortalama tüketim özellikle küçük batarya/dağlık
+    # rotalarda geçerli leg'leri yanlış reddedebilir.
     for leg in legs:
         if getattr(leg, "type", None) == "drive":
             start_soc = float(getattr(leg, "start_soc_percent", 100) or 100)
+            end_soc = float(getattr(leg, "end_soc_percent", start_soc) or start_soc)
             d = float(getattr(leg, "distance_km", 0) or 0)
             if d <= 0 or start_soc >= 100:
                 continue
             available_kwh = (start_soc / 100.0) * battery_capacity_kwh
-            required_kwh = d * (avg_consumption_wh_km / 1000.0)
+            leg_consumption_kwh = float(getattr(leg, "consumption_kwh", 0) or 0)
+
+            if end_soc > start_soc + 1.0 and leg_consumption_kwh <= 0:
+                return (
+                    f"Fiziksel imkansız bir sürüş bacağı tespit edildi: "
+                    f"%{start_soc:.0f} batarya ile başlayan {d:.0f} km bacak "
+                    f"%{end_soc:.0f} batarya ile bitiyor. "
+                    f"Yeterli şarj istasyonu bulunamadı, rota planlanamıyor."
+                )
+
+            required_kwh = leg_consumption_kwh
+            if required_kwh <= 0 and end_soc < start_soc:
+                required_kwh = ((start_soc - end_soc) / 100.0) * battery_capacity_kwh
+            if required_kwh <= 0:
+                required_kwh = d * (avg_consumption_wh_km / 1000.0)
+
             # %10 buffer: gerçek tüketim kasıtla overshoot edebilir
             if required_kwh > available_kwh * 1.1:
                 return (

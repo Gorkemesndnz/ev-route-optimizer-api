@@ -302,36 +302,17 @@ def build_multi_legs(
     
     for i, (hotspot, station_result) in enumerate(zip(hotspots, station_results)):
         if not station_result.best_station:
-            # 🔧 V4.3 (CB-6 fix): İstasyon bulunamadı → eskiden `continue` ile atlanıyordu;
-            # current_soc ve current_point güncellenmiyor, sonraki leg fiziksel olarak
-            # imkansız mesafe gösteriyordu (örn. start_soc=15% iken DRIVE 216km @ 15→17%).
-            #
-            # Düzeltme: physics state'i ilerlet — sürüş YAŞANIYOR ama şarj YAPILMIYOR.
-            # Bu, sonraki leg'in doğru başlangıç koşullarıyla devam etmesini sağlar.
-            # Tüm hotspot'lar boş gelirse final SOC < 0 olarak yansır → orchestrator
-            # post-validate (validate_plan_sanity) bunu yakalar.
             warning_msg = (
-                f"⚠️ {hotspot.distance_from_start_km:.0f}. km'de şarj durağı gerekiyor "
-                f"(SOC: %{hotspot.soc_at_point:.0f}) ancak yakında uygun istasyon bulunamadı. "
-                f"Rotanız eksik olabilir, manuel şarj planlaması önerilir."
+                f"{hotspot.distance_from_start_km:.0f}. km civarında şarj durağı gerekiyor "
+                f"(SOC: %{hotspot.soc_at_point:.0f}) ancak yakında uygun DC istasyon bulunamadı. "
+                f"Rota bu istasyon boşluğuyla güvenli tamamlanamıyor."
             )
             missing_station_warnings.append(warning_msg)
             logger.warning(
                 f"Hotspot {i+1}: No station found at {hotspot.distance_from_start_km:.0f}km "
-                f"(SOC: {hotspot.soc_at_point:.0f}%) — advancing physics state without charging"
+                f"(SOC: {hotspot.soc_at_point:.0f}%) — stopping leg build"
             )
-
-            # Physics state'i ilerlet:
-            # - Konum: hotspot lokasyonuna ilerle (rota üzerinde)
-            # - SOC: bu hotspot'a kadar olan tüketimi düş (current_soc → hotspot.soc_at_point)
-            # - remaining_distance/duration: bu leg'i düş
-            advanced_distance = max(0, hotspot.distance_from_start_km - (total_distance_km - remaining_distance))
-            advanced_duration = (advanced_distance / total_distance_km) * total_duration_min if total_distance_km > 0 else 0
-            current_point = hotspot.location  # Konum ilerle
-            current_soc = hotspot.soc_at_point  # SOC bu seviyeye düşmüş durumda
-            remaining_distance = max(0, remaining_distance - advanced_distance)
-            remaining_duration = max(0, remaining_duration - advanced_duration)
-            continue
+            return legs, missing_station_warnings
         
         station = station_result.best_station
         station_location = station.location
@@ -446,6 +427,19 @@ def build_multi_legs(
         else:
             final_soc_drop = current_soc - final_soc
             final_leg_consumption = (final_soc_drop / 100) * battery_capacity_kwh
+            if final_leg_consumption < -0.01 or final_soc > current_soc + 1.0:
+                warning_msg = (
+                    f"Son sürüş bacağı fiziksel olarak tutarsız: %{current_soc:.0f} batarya ile "
+                    f"başlayıp %{final_soc:.0f} batarya ile bitiyor. "
+                    f"Rota güvenli tamamlanamıyor."
+                )
+                missing_station_warnings.append(warning_msg)
+                logger.warning(
+                    f"Final leg inconsistent: dist={remaining_distance:.1f}km, "
+                    f"soc={current_soc:.1f}%->{final_soc:.1f}%, "
+                    f"cons={final_leg_consumption:.2f}kWh"
+                )
+                return legs, missing_station_warnings
             
         final_leg_distance = remaining_distance
         final_leg_duration = remaining_duration

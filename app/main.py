@@ -15,7 +15,6 @@ from fastapi.responses import JSONResponse
 
 from app.utils.logger import get_logger
 from app.utils.config_manager import config
-from app.infrastructure.vehicle_catalog import get_available_vehicle_ids
 from app.services.base_service import close_global_client, ExternalAPIError
 from app.core.api_response import ApiResponse
 
@@ -36,8 +35,9 @@ async def lifespan(app: FastAPI):
     )
     
     logger.info(
-        "Available vehicle models",
-        vehicle_count=len(get_available_vehicle_ids()),
+        "Vehicle catalog mode",
+        mode="gateway_vehicle_spec",
+        source=".NET MSSQL payload",
     )
     
     yield
