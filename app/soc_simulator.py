@@ -377,12 +377,18 @@ class SOCSimulator:
             # SOC bitiş değeri
             seg_with_cons.soc_at_end = current_soc
         
-        # Çok yakın hotspotları birleştir (36 dk gibi kısa aralıkları önle)
+        # Çok yakın hotspotları birleştir (36 dk gibi kısa aralıkları önle).
+        # Düşürülen durağın şarj borcu sonraki checkpoint SOC'larına yansıtılır;
+        # borç varışa kadar kapanmadıysa final SOC'tan düşülür (PMR-20260612-002).
         if len(hotspots) > 1:
             original_count = len(hotspots)
-            hotspots = self._merge_close_hotspots(hotspots, avg_consumption_per_km)
+            hotspots, final_soc_debt = self._merge_close_hotspots(hotspots, final_soc=current_soc)
             if len(hotspots) < original_count:
-                logger.info(f"Hotspots merged: {original_count} → {len(hotspots)}")
+                current_soc = max(0.0, current_soc - final_soc_debt)
+                logger.info(
+                    f"Hotspots merged: {original_count} -> {len(hotspots)} "
+                    f"(final SOC debt: -{final_soc_debt:.1f}%)"
+                )
         
         # Sonuç
         can_complete = len(hotspots) == 0 or current_soc >= self.target_arrival_soc
@@ -423,49 +429,79 @@ class SOCSimulator:
     def _merge_close_hotspots(
         self,
         hotspots: List[ChargeHotspot],
-        avg_consumption_per_km: float,
+        final_soc: float,
         avg_speed_kmh: float = 80.0
-    ) -> List[ChargeHotspot]:
+    ) -> Tuple[List[ChargeHotspot], float]:
         """
-        Birbirine çok yakın hotspotları birleştir.
-        
-        36 dk gibi kısa sürüş aralıklarını önler.
-        İlk hotspot'u korur (daha erken şarj = daha güvenli).
-        
+        Birbirine çok yakın hotspotları fizibilite koruyarak birleştir.
+
+        36 dk gibi kısa sürüş aralıklarını önler; ilk hotspot'u korur
+        (daha erken şarj = daha güvenli).
+
+        Simülasyon döngüsü TÜM hotspot'larda şarj uygulayarak ilerlediği için,
+        bir durak buradan düşürüldüğünde o durağın eklediği şarj
+        (recommended_charge_to - varış SOC) sonraki checkpoint'lerin SOC
+        değerlerinde "borç" olarak geri alınmalıdır. Borç sonraki checkpoint'i
+        (sonraki durak veya varış) taban eşiğin altına indirecekse merge İPTAL
+        edilir — aksi halde leg'ler iyimser SOC ile kurulup plan fiziksel olarak
+        tutarsız hale gelir (PMR-20260612-002).
+
         Args:
             hotspots: Hotspot listesi
-            avg_consumption_per_km: Ortalama tüketim
+            final_soc: Simülasyonun (tüm duraklar şarjlı) hesapladığı varış SOC'u
             avg_speed_kmh: Ortalama hız (sürüş süresi hesabı için)
-        
+
         Returns:
-            Birleştirilmiş hotspot listesi
+            (merged_hotspots, final_soc_debt) — final_soc_debt, varışa kadar
+            telafi edilmemiş şarj borcu (% SOC); caller final SOC'tan düşmeli.
         """
         if len(hotspots) <= 1:
-            return hotspots
-        
+            return hotspots, 0.0
+
         merged = [hotspots[0]]
-        
+        debt = 0.0  # Düşürülen durakların telafi edilmemiş şarj borcu (% SOC)
+
         for i in range(1, len(hotspots)):
             current = hotspots[i]
             last = merged[-1]
-            
+            arrival_soc = current.soc_at_point - debt
+
             # İki hotspot arası mesafe ve süre
             distance_between = current.distance_from_start_km - last.distance_from_start_km
             driving_minutes = (distance_between / avg_speed_kmh) * 60
-            
-            # MIN_DRIVING_INTERVAL'dan kısa ise birleştir
+
+            # MIN_DRIVING_INTERVAL'dan kısa ise birleştirmeyi dene
             if driving_minutes < MIN_DRIVING_INTERVAL_MINUTES:
+                drop_delta = max(0.0, current.recommended_charge_to - arrival_soc)
+                is_last = i == len(hotspots) - 1
+                next_checkpoint_soc = (
+                    final_soc if is_last else hotspots[i + 1].soc_at_point
+                ) - (debt + drop_delta)
+                floor = self.target_arrival_soc if is_last else MIN_CHARGE_THRESHOLD_PERCENT
+
+                if next_checkpoint_soc >= floor:
+                    debt += drop_delta
+                    logger.info(
+                        f"Merging hotspot: {current.distance_from_start_km:.0f}km "
+                        f"(only {driving_minutes:.0f}min after previous, "
+                        f"charge debt {drop_delta:.1f}%) - keeping earlier one"
+                    )
+                    continue
+
                 logger.info(
-                    f"Merging hotspot: {current.distance_from_start_km:.0f}km "
-                    f"(only {driving_minutes:.0f}min after previous) - keeping earlier one"
+                    f"Merge skipped at {current.distance_from_start_km:.0f}km: "
+                    f"dropping stop would push next checkpoint to "
+                    f"{next_checkpoint_soc:.1f}% (< {floor:.0f}%)"
                 )
-                # İlk hotspot'u koru, sonrakini atla
-                # Ama son hotspot'un remaining_distance bilgisini güncelle
-                continue
-            
+
+            # Durak korunuyor — birikmiş borç bu durağın varış SOC'una yansır;
+            # şarj SOC'u target'a resetlediği için borç burada kapanır.
+            if debt > 0:
+                current.soc_at_point = round(max(0.0, arrival_soc), 1)
             merged.append(current)
-        
-        return merged
+            debt = 0.0
+
+        return merged, debt
     
     def _calculate_smart_charge_targets(
         self,

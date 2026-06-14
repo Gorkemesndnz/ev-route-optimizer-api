@@ -332,6 +332,29 @@ class TestPolylinePerpendicularFilter:
         assert threshold == 10.0
         assert flags == [False]
 
+    def test_sparse_polyline_uses_segment_distance_not_only_vertices(self):
+        from app.services.station_logic.polyline_filter import (
+            check_stations_on_polyline,
+            min_distance_to_polyline_km,
+        )
+
+        sparse_polyline = [(40.0, 29.0), (40.0, 30.0)]
+        station_near_mid_segment = (40.001, 29.5)
+
+        distance = min_distance_to_polyline_km(
+            station_near_mid_segment[0],
+            station_near_mid_segment[1],
+            sparse_polyline,
+        )
+        flags = check_stations_on_polyline(
+            [station_near_mid_segment],
+            sparse_polyline,
+            max_perp_km=1.0,
+        )
+
+        assert distance < 0.2
+        assert flags == [True]
+
 
 # =============================================================================
 # FIX #7 — DEFAULT_CHARGE_TARGET_SOC constant
@@ -394,6 +417,92 @@ class TestCorridorSearchRadiusExpansion:
         assert strict == []
         assert len(expanded) == 1
         assert expanded[0].station_name == "Expanded Radius DC"
+
+    @pytest.mark.asyncio
+    async def test_google_filtered_empty_uses_ocm_at_expanded_radius(self, monkeypatch):
+        import app.station_finder as station_finder
+        from app.models import GeoPoint
+        from app.station_finder import CorridorSearcher
+
+        google_ac_station = {
+            "place_id": "google-ac-only",
+            "name": "Google AC Only",
+            "business_status": "OPERATIONAL",
+            "geometry": {"location": {"lat": 40.01, "lng": 29.0}},
+            "connector_count": 1,
+            "max_power_kw": 11,
+            "types": ["electric_vehicle_charging_station"],
+        }
+        ocm_dc_station = {
+            "ID": 84,
+            "AddressInfo": {
+                "Title": "Expanded OCM DC",
+                "Latitude": 40.60,
+                "Longitude": 29.0,
+            },
+            "Connections": [
+                {
+                    "PowerKW": 150,
+                    "ConnectionType": {"Title": "CCS"},
+                    "StatusType": {"IsOperational": True},
+                }
+            ],
+            "StatusType": {"IsOperational": True},
+        }
+        requested_google_radii = []
+        requested_ocm_radii = []
+
+        async def fake_google_search(*, lat, lon, radius_m, max_results):
+            requested_google_radii.append(radius_m)
+            return [google_ac_station]
+
+        async def fake_ocm_search(*, lat, lon, radius_km):
+            requested_ocm_radii.append(radius_km)
+            return [ocm_dc_station]
+
+        async def fake_forecast(*, lat, lon):
+            return None
+
+        monkeypatch.setattr(
+            station_finder.google_maps,
+            "search_ev_charging_stations_new",
+            fake_google_search,
+        )
+        monkeypatch.setattr(
+            station_finder.ocm_service,
+            "get_nearby_stations_raw",
+            fake_ocm_search,
+        )
+        monkeypatch.setattr(
+            station_finder.weather_service,
+            "get_forecast_for_point",
+            fake_forecast,
+        )
+
+        searcher = CorridorSearcher(
+            vehicle_model_id="test",
+            corridor_length_km=50.0,
+            vehicle_spec=SimpleNamespace(display_name="Test EV", connector_type="CCS"),
+        )
+        hotspot = SimpleNamespace(
+            segment_index=1,
+            location=GeoPoint(lat=40.0, lon=29.0),
+            route_polyline_coords=None,
+            soc_at_point=14.0,
+            distance_from_start_km=533.0,
+            remaining_distance_km=200.0,
+        )
+
+        result = await searcher.search_for_hotspot(hotspot)
+
+        assert result.best_station is not None
+        assert result.best_station.station_name == "Expanded OCM DC"
+        assert result.best_station.source_provider == "ocm"
+        assert result.search_radius_km == 80
+        # PMR-20260612-004: Places API (New) 50 km ustunu clamp'ledigi icin
+        # genisletilmis turlarda (80/120 km) Google cagrilmaz; yalniz OCM genisler.
+        assert requested_google_radii == [50_000]
+        assert requested_ocm_radii == [50, 80]
 
     @pytest.mark.asyncio
     async def test_zero_max_distance_is_applied_as_zero_for_google_station_filter(self):

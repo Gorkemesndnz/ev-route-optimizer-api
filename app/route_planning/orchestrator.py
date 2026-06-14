@@ -95,6 +95,20 @@ weather_service = WeatherService()
 DEFAULT_MAX_LOGGED_STATION_CANDIDATES = 50
 DEFAULT_MAX_LOGGED_SEGMENT_FEATURES = 80
 MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM = 40.0
+# Uzun rotalarda final reroute (istasyon detour'ları) tüm downstream hotspot
+# km değerlerini meşru şekilde kaydırır; sabit 40 km toleransı 1200+ km
+# rotalarda yanlış 502 üretir (PMR-20260612-003). Tolerans rota uzunluğuna
+# oranlanır: kısa rotada 40 km taban korunur.
+ALIGNMENT_DRIFT_ROUTE_RATIO = 0.05
+
+
+def _alignment_drift_tolerance_km(route_distance_km: Optional[float]) -> float:
+    if not route_distance_km or route_distance_km <= 0:
+        return MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM
+    return max(
+        MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM,
+        float(route_distance_km) * ALIGNMENT_DRIFT_ROUTE_RATIO,
+    )
 
 
 # =============================================================================
@@ -170,7 +184,8 @@ def _run_soc_simulation(
     return plan.charge_target_soc, plan.sim_result
 
 
-def _align_station_results_to_hotspots(hotspots, station_results):
+def _align_station_results_to_hotspots(hotspots, station_results, drift_tolerance_km: Optional[float] = None):
+    tolerance_km = drift_tolerance_km if drift_tolerance_km is not None else MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM
     if not station_results:
         return station_results
     if not hotspots:
@@ -180,7 +195,7 @@ def _align_station_results_to_hotspots(hotspots, station_results):
         )
         return []
     if len(hotspots) == len(station_results):
-        _validate_station_alignment(hotspots, station_results)
+        _validate_station_alignment(hotspots, station_results, drift_tolerance_km=tolerance_km)
         return station_results
 
     remaining = list(station_results)
@@ -202,13 +217,13 @@ def _align_station_results_to_hotspots(hotspots, station_results):
             ),
         )
         drift_km = abs(_station_result_hotspot_distance_km(selected, target_km) - target_km)
-        if drift_km > MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:
+        if drift_km > tolerance_km:
             raise ExternalAPIError(
                 "HotspotAlignment",
                 502,
                 "Hotspot/station alignment drift exceeds tolerance: "
                 f"target={target_km:.1f}km drift={drift_km:.1f}km "
-                f"tolerance={MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:.1f}km",
+                f"tolerance={tolerance_km:.1f}km",
             )
         aligned.append(selected)
         remaining.remove(selected)
@@ -229,7 +244,8 @@ def _station_result_hotspot_distance_km(station_result, fallback_km: float) -> f
     )
 
 
-def _validate_station_alignment(hotspots, station_results) -> None:
+def _validate_station_alignment(hotspots, station_results, drift_tolerance_km: Optional[float] = None) -> None:
+    tolerance_km = drift_tolerance_km if drift_tolerance_km is not None else MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM
     if len(hotspots) != len(station_results):
         raise ExternalAPIError(
             "HotspotAlignment",
@@ -241,13 +257,13 @@ def _validate_station_alignment(hotspots, station_results) -> None:
     for hotspot, station_result in zip(hotspots, station_results):
         target_km = float(getattr(hotspot, "distance_from_start_km", 0.0) or 0.0)
         drift_km = abs(_station_result_hotspot_distance_km(station_result, target_km) - target_km)
-        if drift_km > MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:
+        if drift_km > tolerance_km:
             raise ExternalAPIError(
                 "HotspotAlignment",
                 502,
                 "Hotspot/station alignment drift exceeds tolerance: "
                 f"target={target_km:.1f}km drift={drift_km:.1f}km "
-                f"tolerance={MAX_HOTSPOT_STATION_ALIGNMENT_DRIFT_KM:.1f}km",
+                f"tolerance={tolerance_km:.1f}km",
             )
 
 
@@ -1210,7 +1226,11 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
             hotspots = sim_result.hotspots
             _relocate_low_soc_hotspot_to_origin(hotspots)
             if len(hotspots) != previous_hotspot_count:
-                station_results = _align_station_results_to_hotspots(hotspots, station_results)
+                station_results = _align_station_results_to_hotspots(
+                    hotspots,
+                    station_results,
+                    drift_tolerance_km=_alignment_drift_tolerance_km(route_distance_km),
+                )
             charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0
             decision_reason = (
                 DecisionReason.FALLBACK_GRID
@@ -1450,7 +1470,11 @@ async def plan_route(request: RouteRequest) -> MultiStopRouteResponse:
                             previous_hotspots=prev_hotspot_count,
                             final_hotspots=len(hotspots),
                         )
-                        station_results = _align_station_results_to_hotspots(hotspots, station_results)
+                        station_results = _align_station_results_to_hotspots(
+                            hotspots,
+                            station_results,
+                            drift_tolerance_km=_alignment_drift_tolerance_km(route_distance_km),
+                        )
                     charge_stops = sum(1 for r in station_results if r.best_station) if station_results else 0
 
                     avg_speed_kmh = (route_distance_km / route_duration_min) * 60 if route_duration_min > 0 else 80.0

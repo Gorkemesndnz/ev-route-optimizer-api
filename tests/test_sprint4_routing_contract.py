@@ -109,13 +109,13 @@ def test_directions_step_polyline_is_valid_route_corridor_geometry():
         check_stations_on_polyline_with_relaxed_fallback,
     )
 
-    step1 = polyline.encode([(41.0, 29.0), (41.05, 29.10), (41.0, 29.2)])
+    step1 = polyline.encode([(41.0, 29.0), (41.15, 29.10), (41.0, 29.2)])
     route = _google_route()
     route["overview_polyline"] = {"points": polyline.encode([(41.0, 29.0), (41.0, 29.2)])}
     route["legs"][0]["steps"] = [{"polyline": {"points": step1}}]
 
     canonical = CanonicalRoute.from_google_directions_route(route, index=0)
-    station_near_step_geometry = (41.05, 29.10)
+    station_near_step_geometry = (41.15, 29.10)
 
     step_flags, step_threshold = check_stations_on_polyline_with_relaxed_fallback(
         [station_near_step_geometry],

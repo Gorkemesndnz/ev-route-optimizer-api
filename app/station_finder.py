@@ -88,6 +88,11 @@ MAX_REJECT_AUDIT_SAMPLES_PER_REASON = 3
 # Kademeli arama yarıçapları (istasyon bulunamazsa genişlet)
 SEARCH_RADII_KM = [50, 80, 120]  # km - 3 kademeli arama
 
+# Google Places API (New) searchNearby üst sınırı 50 km; daha geniş yarıçaplar
+# sessizce clamp'lenir ve aynı sonuç setini döndürür. Genişletilmiş turlar
+# yalnızca OCM üzerinden çalışır (PMR-20260612-004).
+GOOGLE_PLACES_MAX_RADIUS_KM = 50.0
+
 # Skorlama ve filtreleme sabitleri station_logic/ altına taşındı.
 # Import: from app.services.station_logic.scorer import WEIGHT_*, AMENITY_*, etc.
 
@@ -346,6 +351,7 @@ class CorridorSearcher:
         try:
             # Kademeli arama yarıçapı - istasyon bulunamazsa genişlet
             raw_stations = []
+            corridor_stations = []
             source = "none"
             used_radius = SEARCH_RADII_KM[0]
             
@@ -397,6 +403,28 @@ class CorridorSearcher:
                         self._last_reject_audit,
                         radius_km=radius,
                     )
+
+                    if source == "google" and not corridor_stations:
+                        ocm_stations = await self._fetch_stations_from_ocm(
+                            hotspot,
+                            search_radius_km=radius,
+                        )
+                        if ocm_stations:
+                            ocm_corridor_stations = await self._filter_and_score_stations(
+                                ocm_stations,
+                                hotspot,
+                                max_distance_km=radius,
+                            )
+                            result.reject_audit = _merge_reject_audit(
+                                result.reject_audit,
+                                self._last_reject_audit,
+                                radius_km=radius,
+                            )
+                            if ocm_corridor_stations:
+                                raw_stations = ocm_stations
+                                source = "ocm"
+                                corridor_stations = ocm_corridor_stations
+                                result.total_found = len(raw_stations)
                     
                     result.dc_compatible = len(corridor_stations)
                     
@@ -463,24 +491,32 @@ class CorridorSearcher:
         if search_radius_km is None:
             search_radius_km = max(self.corridor_length_km, self.corridor_width_km)
         search_radius_m = int(search_radius_km * 1000)
-        
-        # 1. Google Places API (New) - evChargeOptions ile gerçek güç bilgisi
+
+        # 1. Google Places API (New) - evChargeOptions ile gerçek güç bilgisi.
+        # API 50 km üstünü clamp'lediği için genişletilmiş turlarda (80/120 km)
+        # aynı sonuç seti döner; çağrıyı atla ve OCM'ye geç (PMR-20260612-004).
         google_stations = []
-        try:
-            google_stations = await google_maps.search_ev_charging_stations_new(
-                lat=hotspot.location.lat,
-                lon=hotspot.location.lon,
-                radius_m=search_radius_m,
-                max_results=20  # API (New) max 20
+        if search_radius_km > GOOGLE_PLACES_MAX_RADIUS_KM:
+            logger.info(
+                f"Skipping Google Places at {search_radius_km}km "
+                f"(API max {GOOGLE_PLACES_MAX_RADIUS_KM:.0f}km already searched), using OCM"
             )
-            
-            if google_stations:
-                logger.info(f"Google Places (New) returned {len(google_stations)} stations (radius={search_radius_km}km)")
-            else:
-                logger.info(f"Google Places (New) returned empty at {search_radius_km}km, falling back to OCM")
-                
-        except Exception as e:
-            logger.warning(f"Google Places search failed: {e}")
+        else:
+            try:
+                google_stations = await google_maps.search_ev_charging_stations_new(
+                    lat=hotspot.location.lat,
+                    lon=hotspot.location.lon,
+                    radius_m=search_radius_m,
+                    max_results=20  # API (New) max 20
+                )
+
+                if google_stations:
+                    logger.info(f"Google Places (New) returned {len(google_stations)} stations (radius={search_radius_km}km)")
+                else:
+                    logger.info(f"Google Places (New) returned empty at {search_radius_km}km, falling back to OCM")
+
+            except Exception as e:
+                logger.warning(f"Google Places search failed: {e}")
         
         # 2. Hibrit - Sadece connector_count>0 olan ama kW=0 olan istasyonlar için OCM crossref
         # Bu sayede yanlış POI'lere (oto yıkama gibi) OCM'den güç yapıştırılmaz
@@ -580,10 +616,18 @@ class CorridorSearcher:
                 return power
         return 0.0
 
-    async def _fetch_stations_from_ocm(self, hotspot: ChargeHotspot) -> List[Dict[str, Any]]:
+    async def _fetch_stations_from_ocm(
+        self,
+        hotspot: ChargeHotspot,
+        search_radius_km: float = None,
+    ) -> List[Dict[str, Any]]:
         """OCM API'den istasyonları çek (legacy - backward compatibility)."""
         try:
-            search_radius = max(self.corridor_length_km, self.corridor_width_km)
+            search_radius = (
+                search_radius_km
+                if search_radius_km is not None
+                else max(self.corridor_length_km, self.corridor_width_km)
+            )
             
             stations = await ocm_service.get_nearby_stations_raw(
                 lat=hotspot.location.lat,

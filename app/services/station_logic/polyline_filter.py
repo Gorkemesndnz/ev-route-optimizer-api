@@ -22,6 +22,7 @@ Karşı şerit istasyonları (perpendicular ~100 m) BU yöntemle ayırt EDİLEME
 bilinçli tradeoff (Seçenek B).
 """
 
+import math
 from typing import List, Optional, Tuple
 
 from app.services.base_service import ExternalAPIError
@@ -74,22 +75,37 @@ def decode_route_polyline_coords(route_polyline: str) -> List[Tuple[float, float
     if not coords:
         raise ExternalAPIError("PolylineCorridor", 502, "Route polyline decoded to zero points")
 
-    # Mesafe bazlı seyreltme — her ~500 m'de bir nokta.
+    # Adaptif örnekleme aralığı: rota _POLYLINE_MAX_SAMPLES × 500 m'den (~1000 km)
+    # uzunsa aralık büyütülür; örnekleme hiçbir zaman rotanın bir bölümünü
+    # kapsam dışı bırakmaz. Sabit aralık + erken break, >1000 km rotalarda
+    # varışa kadar olan geometriyi tek kirişe indirip yol üstü istasyonları
+    # yanlışlıkla off-route sayıyordu (PMR-20260612-001).
+    total_route_km = sum(
+        haversine_km(a_lat, a_lon, b_lat, b_lon)
+        for (a_lat, a_lon), (b_lat, b_lon) in zip(coords, coords[1:])
+    )
+    sample_interval_km = max(
+        _POLYLINE_SAMPLE_INTERVAL_KM,
+        total_route_km / max(1, _POLYLINE_MAX_SAMPLES - 1),
+    )
+
+    # Mesafe bazlı seyreltme — adaptif aralıkla tüm rota kapsanır.
+    # Birikim ardışık nokta mesafeleriyle (yol boyu) hesaplanır; önceki kod
+    # her adımda "son tutulan noktaya" olan mesafeyi yeniden ekleyerek
+    # birikimi şişiriyor ve örnek sayısını öngörülemez yapıyordu.
     sampled: List[Tuple[float, float]] = []
-    last_kept: Optional[Tuple[float, float]] = None
+    prev: Optional[Tuple[float, float]] = None
     accumulated = 0.0
     for lat, lon in coords:
-        if last_kept is None:
+        if prev is None:
             sampled.append((lat, lon))
-            last_kept = (lat, lon)
+            prev = (lat, lon)
             continue
-        accumulated += haversine_km(last_kept[0], last_kept[1], lat, lon)
-        if accumulated >= _POLYLINE_SAMPLE_INTERVAL_KM:
+        accumulated += haversine_km(prev[0], prev[1], lat, lon)
+        prev = (lat, lon)
+        if accumulated >= sample_interval_km:
             sampled.append((lat, lon))
-            last_kept = (lat, lon)
             accumulated = 0.0
-            if len(sampled) >= _POLYLINE_MAX_SAMPLES:
-                break
 
     # Son noktayı (varış) ekle — varışa yakın istasyonların kaybolmaması için.
     if coords[-1] != sampled[-1]:
@@ -104,18 +120,51 @@ def min_distance_to_polyline_km(
     polyline_coords: List[Tuple[float, float]],
 ) -> float:
     """
-    İstasyondan polyline'ın en yakın vertex'ine haversine mesafe (km).
+    İstasyondan polyline'ın en yakın segmentine mesafe (km).
     Boş polyline → +inf.
 
-    Not: Vertex bazlı (segment bazlı değil). 500 m örnekleme ile yaklaşık
-    perpendicular distance'a denk; worst case ~250 m fazla tahmin.
+    Kısa rota parçaları için lokal equirectangular projeksiyon yeterli
+    hassasiyet verir ve sparse overview polyline'larda vertex arası istasyonları
+    yanlışlıkla off-route saymayı önler.
     """
     if not polyline_coords:
         return float("inf")
+    if len(polyline_coords) == 1:
+        plat, plon = polyline_coords[0]
+        return haversine_km(station_lat, station_lon, plat, plon)
+
     return min(
-        haversine_km(station_lat, station_lon, plat, plon)
-        for plat, plon in polyline_coords
+        _point_to_segment_distance_km(station_lat, station_lon, a_lat, a_lon, b_lat, b_lon)
+        for (a_lat, a_lon), (b_lat, b_lon) in zip(polyline_coords, polyline_coords[1:])
     )
+
+
+def _point_to_segment_distance_km(
+    point_lat: float,
+    point_lon: float,
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+) -> float:
+    lat_scale_km = 110.574
+    lon_scale_km = 111.320 * math.cos(math.radians(point_lat))
+
+    ax = (start_lon - point_lon) * lon_scale_km
+    ay = (start_lat - point_lat) * lat_scale_km
+    bx = (end_lon - point_lon) * lon_scale_km
+    by = (end_lat - point_lat) * lat_scale_km
+
+    abx = bx - ax
+    aby = by - ay
+    ab_len_sq = abx * abx + aby * aby
+    if ab_len_sq <= 0:
+        return haversine_km(point_lat, point_lon, start_lat, start_lon)
+
+    t = max(0.0, min(1.0, -(ax * abx + ay * aby) / ab_len_sq))
+    closest_x = ax + t * abx
+    closest_y = ay + t * aby
+    return (closest_x * closest_x + closest_y * closest_y) ** 0.5
 
 
 def check_stations_on_polyline(
