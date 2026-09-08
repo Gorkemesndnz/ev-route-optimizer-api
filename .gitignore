@@ -1,3 +1,13 @@
+# --- Local logs and run artefacts (should never be committed) ---
+logs/
+*.log
+*.log.[0-9]*
+
+# --- Local secrets ---
+.env
+.env.*
+!.env.example
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
